@@ -1,12 +1,18 @@
 # Zwift Ride controllers — BLE protocol notes
 
-> **Status: unverified against hardware.** Everything below was written
-> from recollection of public protocol write-ups (blog posts and community
-> notes on the Play/Click/Ride controllers). No BLE capture of a real Ride
-> has been made for this project yet, and no code was taken from other
-> projects. Treat every value as a hypothesis until the checklist at the
-> bottom is ticked. The app has a keyboard fallback for shifting so it is
-> usable even if parts of this are wrong.
+> **Status: partly verified on hardware (2026-11-22).** Written from
+> recollection of public protocol write-ups; no code was taken from other
+> projects. A first test on a real Ride (Windows 11) confirmed: the
+> controllers pair through the chooser, the handshake is accepted, keypad
+> notifications flow, and **one shift button per side is decoded** — the
+> lower of the two buttons on the left grip shifts down, the lower one on
+> the right grip shifts up.
+>
+> **Known wrong or unknown:** the *upper* button on each grip did nothing.
+> With the default mapping all four `shift*` bits are mapped, so the upper
+> buttons do not arrive as the bits this table assigns to them. Which bits
+> (or which message) they use is unknown until a capture is read. Everything
+> else below is still a hypothesis. Keyboard shifting works regardless.
 
 The protocol is proprietary and undocumented by the vendor.
 
