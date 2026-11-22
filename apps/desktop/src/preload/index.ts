@@ -73,20 +73,35 @@ const edit = listenerSet<boolean>(IPC.overlayEditMode, (v) => {
 const settingsChanged = listenerSet<Settings>(IPC.settingsChanged);
 const pickerDevices = listenerSet<PickerDevice[]>(IPC.btPickerDevices);
 
-if (windowName === 'overlay') {
-  void ipcRenderer.invoke(IPC.liveGet).then((s: LiveState | null) => {
-    if (s && lastLive === undefined) {
-      lastLive = s;
-      live.deliver(s);
-    }
-  });
-}
-void ipcRenderer.invoke(IPC.overlayGetEditMode).then((v: boolean) => {
-  if (editMode === undefined) {
-    editMode = v;
-    edit.deliver(v);
+// Ask for the current values once the document has committed: before that the
+// frame has no app URL yet and main's sender check rejects the call.
+function prime(): void {
+  if (windowName === 'overlay') {
+    ipcRenderer
+      .invoke(IPC.liveGet)
+      .then((s: LiveState | null) => {
+        if (s && lastLive === undefined) {
+          lastLive = s;
+          live.deliver(s);
+        }
+      })
+      .catch(() => undefined); // the next broadcast delivers it anyway
   }
-});
+  ipcRenderer
+    .invoke(IPC.overlayGetEditMode)
+    .then((v: boolean) => {
+      if (editMode === undefined) {
+        editMode = v;
+        edit.deliver(v);
+      }
+    })
+    .catch(() => undefined);
+}
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', prime, { once: true });
+} else {
+  prime();
+}
 
 // ───────────── diagnostic log: batched to main ─────────────
 // Entries are stamped here (so ordering and timing are exact) and sent in
