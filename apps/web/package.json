@@ -13,6 +13,7 @@
     "test:e2e": "node e2e/web.e2e.mjs"
   },
   "dependencies": {
+    "@freilauf/community": "workspace:*",
     "@freilauf/devices": "workspace:*",
     "@freilauf/p2p": "workspace:*",
     "@freilauf/session": "workspace:*",

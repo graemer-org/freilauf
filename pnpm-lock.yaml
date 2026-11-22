@@ -23,6 +23,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@freilauf/community':
+        specifier: workspace:*
+        version: link:../../packages/community
       '@freilauf/devices':
         specifier: workspace:*
         version: link:../../packages/devices
@@ -91,6 +94,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@freilauf/community':
+        specifier: workspace:*
+        version: link:../../packages/community
       '@freilauf/devices':
         specifier: workspace:*
         version: link:../../packages/devices
@@ -131,6 +137,8 @@ importers:
       vite:
         specifier: ^8.3.8
         version: 8.3.8(@types/node@24.19.2)(jiti@2.7.0)
+
+  packages/community: {}
 
   packages/devices: {}
 

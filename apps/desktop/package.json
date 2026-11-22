@@ -26,6 +26,7 @@
     "test:e2e": "electron-vite build && playwright test --trace off"
   },
   "dependencies": {
+    "@freilauf/community": "workspace:*",
     "@freilauf/devices": "workspace:*",
     "@freilauf/p2p": "workspace:*",
     "@freilauf/session": "workspace:*",
