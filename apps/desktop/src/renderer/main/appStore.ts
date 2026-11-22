@@ -1,5 +1,6 @@
 import type {
   BlePeripheral,
+  BleTransport,
   Controller,
   DeviceKind,
   HeartRateSensor,
@@ -60,6 +61,27 @@ export interface JoinedGroup extends GroupLink {
   leave(): void;
 }
 
+/**
+ * What the app needs from a Bluetooth transport. `WebBluetoothTransport`
+ * (Electron, in-app chooser) is the default; other hosts inject their own
+ * through `AppOptions.createTransport` (e.g. the browser build, where the
+ * browser shows its own chooser).
+ */
+export interface AppBluetoothTransport extends BleTransport {
+  /**
+   * False when the platform shows its own device chooser: the in-app picker
+   * (`AppState.picker`) then never opens. Default true.
+   */
+  readonly usesInAppPicker?: boolean;
+  pick?(deviceId: string): void;
+  cancelPicker?(): void;
+}
+
+export interface AppOptions {
+  /** Replaces the default `WebBluetoothTransport` (not used in sim mode). */
+  createTransport?: (api: FreilaufApi) => AppBluetoothTransport;
+}
+
 const TICK_MS = 250;
 
 type AnyDevice = Trainer | HeartRateSensor | Controller;
@@ -85,7 +107,8 @@ export class App {
 
   readonly #api: FreilaufApi;
   readonly #groupConnector: GroupConnector | null;
-  #transport: WebBluetoothTransport | null = null;
+  readonly #createTransport: (api: FreilaufApi) => AppBluetoothTransport;
+  #transport: AppBluetoothTransport | null = null;
   #controller: RideController | null = null;
   #devices: Partial<Record<DeviceKind, AnyDevice>> = {};
   #rig: SimulatedRig | null = null;
@@ -94,9 +117,15 @@ export class App {
   #noticeId = 0;
   #cleanup: (() => void)[] = [];
 
-  constructor(api: FreilaufApi, groupConnector: GroupConnector | null = null) {
+  constructor(
+    api: FreilaufApi,
+    groupConnector: GroupConnector | null = null,
+    options: AppOptions = {},
+  ) {
     this.#api = api;
     this.#groupConnector = groupConnector;
+    this.#createTransport =
+      options.createTransport ?? ((a) => new WebBluetoothTransport(a.bluetooth));
   }
 
   async init(): Promise<void> {
@@ -133,7 +162,7 @@ export class App {
     if (simMode) {
       this.#startSimulation();
     } else {
-      this.#transport = new WebBluetoothTransport(this.#api.bluetooth);
+      this.#transport = this.#createTransport(this.#api);
       void this.#reconnectRemembered(settings);
     }
   }
@@ -150,7 +179,11 @@ export class App {
 
   async pairDevice(kind: DeviceKind): Promise<void> {
     if (!this.#transport || this.store.getState().picker) return;
-    this.store.setState({ picker: { kind, devices: [] } });
+    // With a platform chooser (browser) the in-app picker must stay closed,
+    // or the UI would show an empty modal next to the browser's own dialog.
+    if (this.#transport.usesInAppPicker !== false) {
+      this.store.setState({ picker: { kind, devices: [] } });
+    }
     this.#setBusy(kind, 'pairing');
     try {
       const peripheral = await this.#transport.requestDevice(kind);
@@ -171,11 +204,11 @@ export class App {
   }
 
   pickDevice(deviceId: string): void {
-    this.#transport?.pick(deviceId);
+    this.#transport?.pick?.(deviceId);
   }
 
   cancelPicker(): void {
-    this.#transport?.cancelPicker();
+    this.#transport?.cancelPicker?.();
   }
 
   /** Disconnects and forgets the device. */
@@ -203,7 +236,16 @@ export class App {
     this.#setBusy(kind, 'searching');
     try {
       const peripheral = await this.#transport.findKnownDevice(kind, id);
-      if (peripheral) await this.#attach(kind, peripheral);
+      if (peripheral) {
+        await this.#attach(kind, peripheral);
+        // A transport may hand back the device under a new id (the browser
+        // build re-pairs through its chooser when it cannot re-acquire it).
+        if (peripheral.id !== id) {
+          await this.#api.settings.update({
+            devices: { [kind]: { id: peripheral.id, name: peripheral.name } },
+          });
+        }
+      }
     } catch (err) {
       this.notify('error', `Could not reconnect ${kind}: ${errorMessage(err)}`);
     } finally {

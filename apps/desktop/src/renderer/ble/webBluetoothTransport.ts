@@ -29,7 +29,8 @@ import type { FreilaufApi } from '../../shared/contract';
  * what the main process can match on the next start.
  */
 
-const FILTERS: Record<DeviceKind, RequestDeviceOptions> = {
+/** requestDevice() options per device kind (exported for other Web Bluetooth hosts). */
+export const FILTERS: Record<DeviceKind, RequestDeviceOptions> = {
   trainer: {
     filters: [{ services: [FTMS_SERVICE] }],
     optionalServices: [CYCLING_POWER_SERVICE, BATTERY_SERVICE],
@@ -100,7 +101,7 @@ export class WebBluetoothTransport implements BleTransport {
   }
 }
 
-class WebBluetoothPeripheral implements BlePeripheral {
+export class WebBluetoothPeripheral implements BlePeripheral {
   readonly id: string;
   readonly name: string;
   readonly #device: BluetoothDevice;
