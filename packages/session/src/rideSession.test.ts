@@ -112,7 +112,8 @@ describe('RideSession', () => {
     const before = ride(10, 200);
     advance(3_600_000);
     const after = ride(1, 200);
-    expect(after.elapsedS).toBeCloseTo(before.elapsedS + 1, 6);
+    // The tick spanning the gap is discarded, the three after it count.
+    expect(after.elapsedS).toBeCloseTo(before.elapsedS + 0.75, 6);
     expect(after.distanceM - before.distanceM).toBeLessThan(20);
   });
 

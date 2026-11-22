@@ -1,3 +1,6 @@
+// This package has no DOM/Node typings; every runtime we target has console.
+declare const console: { error(...data: unknown[]): void };
+
 export type Unsubscribe = () => void;
 export type Listener<T> = (value: T) => void;
 
