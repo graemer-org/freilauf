@@ -6,6 +6,7 @@ import { statLabel, statUnit, statValue } from './format';
 import { rangeFill } from './fields';
 import { isEditableTarget, useApp, useAppState } from './hooks';
 import { GroupCountdown, WorkoutBanner, WorkoutPanel } from './WorkoutPanel';
+import { RideScene } from './scene/RideScene';
 
 export const GRADIENT_MIN = -10;
 export const GRADIENT_MAX = 15;
@@ -79,7 +80,7 @@ function StatTile({ stat, variant = 'tile' }: { stat: StatId; variant?: StatVari
   const value = useAppState((s) => (s.live ? statValue(stat, s.live.ride) : '–'));
   const unit = statUnit(stat);
   return (
-    <div className={STAT_CLASS[variant]} data-testid={`stat-${stat}`}>
+    <div className={`${STAT_CLASS[variant]} tile-${stat}`} data-testid={`stat-${stat}`}>
       <span className="tile-label">{statLabel(stat)}</span>
       <span className="tile-value">
         <span className="tile-number">{value}</span>
@@ -394,12 +395,18 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
         {phase === 'pending' && <WorkoutBanner />}
         {phase === 'none' && <FreeRideHint onOpenWorkouts={onOpenWorkouts} />}
         {phase !== 'none' && phase !== 'pending' && <WorkoutPanel />}
+        {/*
+          The scene is the centre; power anchors the left, the live rhythm
+          (cadence, speed, heart rate) the right, and the ride totals sit
+          under the scene. Placement is pure CSS grid (see .ride-grid).
+        */}
         <div className="ride-stats">
-          <PowerHero />
           <div className="ride-grid">
+            <PowerHero />
+            <RideScene />
             <StatTile stat="cadence" />
-            <StatTile stat="heartRate" />
             <StatTile stat="speed" />
+            <StatTile stat="heartRate" />
             <GearTile />
             <StatTile stat="time" />
             <StatTile stat="distance" />
@@ -420,7 +427,7 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
         </section>
         <p className="hint shortcuts">
           <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>+</kbd> <kbd>−</kbd> shift · <kbd>[</kbd> <kbd>]</kbd>{' '}
-          gradient ∓0.5 % · <kbd>Space</kbd> start / pause
+          gradient ∓0.5 % · <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>Space</kbd> start / pause
         </p>
       </div>
       <SimulationPanel />

@@ -154,6 +154,28 @@ describe('MainApp (SSR)', () => {
     expect(html).not.toContain('data-testid="trainer-missing"');
   });
 
+  it('puts the ride scene and its profile strip at the centre of the ride tab', () => {
+    const html = render({
+      ...baseState(),
+      simMode: true,
+      live: liveState({ ride: { ...liveState().ride, gradePercent: 4.5 } }),
+    });
+    expect(html).toContain('data-testid="ride-scene"');
+    expect(html).toContain('data-testid="ride-profile"');
+    expect(html).toContain('data-grade="4.5"');
+    expect(html).toContain('data-lateral="0.00"');
+    expect(html).toMatch(
+      /role="img"[^>]*aria-label="Climbing at 4.5 percent, 34 kilometres per hour, cadence 90 rpm."/,
+    );
+    // Scene sits in the stat grid between power and the other numbers.
+    const order = ['stat-power', 'ride-scene', 'stat-cadence', 'stat-distance'].map((id) =>
+      html.indexOf(`data-testid="${id}"`),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // Keyboard steering is documented next to the other shortcuts.
+    expect(html).toMatch(/<kbd>A<\/kbd> <kbd>D<\/kbd> steer/);
+  });
+
   it('defaults to the Devices tab when no trainer is known', () => {
     const state = {
       ...baseState(),
