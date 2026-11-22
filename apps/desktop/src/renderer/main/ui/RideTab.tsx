@@ -5,6 +5,7 @@ import type { StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from './format';
 import { rangeFill } from './fields';
 import { isEditableTarget, useApp, useAppState } from './hooks';
+import { GroupCountdown, WorkoutBanner, WorkoutPanel } from './WorkoutPanel';
 
 export const GRADIENT_MIN = -10;
 export const GRADIENT_MAX = 15;
@@ -30,8 +31,9 @@ function useRideShortcuts(app: App): void {
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
       if (isEditableTarget(e.target)) return;
-      // A modal (device picker) owns the keyboard while open.
-      if (app.store.getState().picker) return;
+      // A modal (device picker, FTP result) owns the keyboard while open.
+      const { picker, ftpOutcome } = app.store.getState();
+      if (picker || ftpOutcome) return;
       switch (e.key) {
         case 'ArrowUp':
         case '+':
@@ -354,13 +356,44 @@ function SimulationPanel() {
   );
 }
 
-export function RideTab() {
+/** 'none' | 'pending' (selected, not started) | 'erg' | 'free' | 'finished' — a primitive for cheap subscriptions. */
+function useWorkoutPhase(): 'none' | 'pending' | 'erg' | 'free' | 'finished' {
+  return useAppState((s) => {
+    const w = s.live?.workout;
+    if (!w) return 'none';
+    if (!w.started) return 'pending';
+    return w.finished ? 'finished' : w.mode;
+  });
+}
+
+function FreeRideHint({ onOpenWorkouts }: { onOpenWorkouts: (() => void) | undefined }) {
+  const idle = useAppState((s) => s.live?.ride.state === 'idle');
+  if (!idle || !onOpenWorkouts) return null;
+  return (
+    <p className="hint wo-free-hint" data-testid="ride-free-hint">
+      Free ride ·{' '}
+      <button type="button" className="link" onClick={onOpenWorkouts}>
+        Choose a workout
+      </button>
+    </p>
+  );
+}
+
+export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}) {
   const app = useApp();
   useRideShortcuts(app);
+  const phase = useWorkoutPhase();
+  const erg = phase === 'erg';
   return (
     <>
-      <div className="ride-stage">
+      <div
+        className={`ride-stage${phase === 'erg' || phase === 'free' || phase === 'finished' ? ' has-workout' : ''}`}
+      >
         <TrainerHint />
+        <GroupCountdown />
+        {phase === 'pending' && <WorkoutBanner />}
+        {phase === 'none' && <FreeRideHint onOpenWorkouts={onOpenWorkouts} />}
+        {phase !== 'none' && phase !== 'pending' && <WorkoutPanel />}
         <div className="ride-stats">
           <PowerHero />
           <div className="ride-grid">
@@ -374,7 +407,13 @@ export function RideTab() {
         </div>
         <section className="controls card" aria-label="Ride controls">
           <RideButtons />
-          <div className="adjust">
+          <div className={`adjust${erg ? ' is-muted' : ''}`}>
+            {erg && (
+              <p className="hint adjust-note" data-testid="erg-note">
+                The trainer holds the target power, so gear and gradient have no effect in this
+                step.
+              </p>
+            )}
             <GearControls />
             <GradientControls />
           </div>

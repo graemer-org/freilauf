@@ -21,7 +21,9 @@ import type {
 } from '../../shared/contract';
 import { WebBluetoothTransport } from '../ble/webBluetoothTransport';
 import { RideController } from '../core/rideController';
+import type { Workout } from '@freilauf/workouts';
 import type { GroupLink } from '../core/rideController';
+import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
 import type { ImportResult, KeyValueStorage, WorkoutEntry } from '../core/workoutLibrary';
 
@@ -58,6 +60,18 @@ export interface AppState {
   selectedWorkoutId: string | null;
   /** Result of the FTP test just finished, until accepted or dismissed. */
   ftpOutcome: FtpTestOutcome | null;
+  /** Workouts other riders in the group are offering. */
+  sharedWorkouts: SharedWorkout[];
+  /** The workout this rider is offering to the group, if any. */
+  sharingWorkoutId: string | null;
+  /** Seconds until a synchronised group start; null when none is pending. */
+  groupCountdownS: number | null;
+}
+
+export interface SharedWorkout {
+  peerId: string;
+  peerName: string;
+  workout: Workout;
 }
 
 /** Group rides are plugged in from outside so this module stays independent of the p2p wiring. */
@@ -68,6 +82,15 @@ export interface GroupConnector {
 export interface JoinedGroup extends GroupLink {
   readonly joinLink: string;
   leave(): void;
+  /** Offers an encoded workout to the group. Returns null, or why it was refused. */
+  shareWorkout(text: string): string | null;
+  stopSharingWorkout(): void;
+  /** Encoded workouts currently offered by other riders. */
+  getSharedWorkouts(): { peerId: string; peerName: string; text: string }[];
+  onSharedWorkoutsChange(listener: () => void): () => void;
+  /** Tells everyone to start in inMs milliseconds. */
+  announceStart(inMs: number): boolean;
+  onStart(listener: (startsInMs: number, peerName: string) => void): () => void;
 }
 
 /**
@@ -125,6 +148,9 @@ export class App {
     workouts: [],
     selectedWorkoutId: null,
     ftpOutcome: null,
+    sharedWorkouts: [],
+    sharingWorkoutId: null,
+    groupCountdownS: null,
   }));
 
   readonly #api: FreilaufApi;
@@ -136,6 +162,9 @@ export class App {
   #devices: Partial<Record<DeviceKind, AnyDevice>> = {};
   #rig: SimulatedRig | null = null;
   #group: JoinedGroup | null = null;
+  #groupCleanup: (() => void)[] = [];
+  /** Local clock time of a pending synchronised start. */
+  #startAt: number | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
   #noticeId = 0;
   #cleanup: (() => void)[] = [];
@@ -182,7 +211,10 @@ export class App {
       }),
     );
 
-    this.#timer = setInterval(() => this.#controller?.tick(), TICK_MS);
+    this.#timer = setInterval(() => {
+      this.#tickCountdown();
+      this.#controller?.tick();
+    }, TICK_MS);
     this.store.setState({ ready: true });
     void this.refreshRides();
 
@@ -466,10 +498,90 @@ export class App {
   }
 
   leaveGroup(): void {
+    for (const off of this.#groupCleanup) off();
+    this.#groupCleanup = [];
     this.#group?.leave();
     this.#group = null;
+    this.#startAt = null;
     this.#controller?.setGroup(null);
-    this.store.setState({ group: { phase: 'idle' } });
+    this.store.setState({
+      group: { phase: 'idle' },
+      sharedWorkouts: [],
+      sharingWorkoutId: null,
+      groupCountdownS: null,
+    });
+  }
+
+  /** Offers one of the rider's workouts to everyone in the group. */
+  shareWorkout(id: string): void {
+    const exported = this.#library.export(id, 'freilauf');
+    if (!this.#group || !exported) return;
+    const refused = this.#group.shareWorkout(exported.text);
+    if (refused) this.notify('error', `Could not share the workout (${refused}).`);
+    else this.store.setState({ sharingWorkoutId: id });
+  }
+
+  stopSharingWorkout(): void {
+    this.#group?.stopSharingWorkout();
+    this.store.setState({ sharingWorkoutId: null });
+  }
+
+  /** Adds a workout offered by another rider to the library and selects it. */
+  useSharedWorkout(peerId: string): void {
+    const shared = this.store.getState().sharedWorkouts.find((s) => s.peerId === peerId);
+    if (!shared) return;
+    const added = this.#library.add(shared.workout);
+    if (!added.ok) {
+      this.notify('error', added.errors.join(' '));
+      return;
+    }
+    this.store.setState({ workouts: this.#library.list() });
+    this.selectWorkout(shared.workout.id);
+  }
+
+  /** Starts the ride for everyone in the group after a countdown. */
+  startTogether(seconds: number): void {
+    if (!this.#group || this.#controller?.rideState !== 'idle') return;
+    const ms = Math.max(1, Math.min(600, seconds)) * 1000;
+    if (!this.#group.announceStart(ms)) {
+      this.notify('error', 'Could not announce the start to the group.');
+      return;
+    }
+    this.#startAt = Date.now() + ms;
+    this.#tickCountdown();
+  }
+
+  cancelGroupStart(): void {
+    // Only cancels locally; the others still start.
+    this.#startAt = null;
+    this.store.setState({ groupCountdownS: null });
+  }
+
+  #tickCountdown(): void {
+    if (this.#startAt === null) return;
+    const remainingMs = this.#startAt - Date.now();
+    if (remainingMs > 0) {
+      const groupCountdownS = Math.ceil(remainingMs / 1000);
+      if (groupCountdownS !== this.store.getState().groupCountdownS) {
+        this.store.setState({ groupCountdownS });
+      }
+      return;
+    }
+    this.#startAt = null;
+    this.store.setState({ groupCountdownS: null });
+    if (this.#controller?.rideState === 'idle') this.startRide();
+  }
+
+  #refreshSharedWorkouts(): void {
+    const sharedWorkouts: SharedWorkout[] = [];
+    for (const doc of this.#group?.getSharedWorkouts() ?? []) {
+      // Text from another rider: only a workout that validates is shown.
+      const decoded = decodeWorkout(doc.text);
+      if (decoded.ok) {
+        sharedWorkouts.push({ peerId: doc.peerId, peerName: doc.peerName, workout: decoded.workout });
+      }
+    }
+    this.store.setState({ sharedWorkouts });
   }
 
   async #enterGroup(
@@ -489,6 +601,17 @@ export class App {
       );
       this.#group = group;
       this.#controller?.setGroup(group);
+      this.#groupCleanup = [
+        group.onSharedWorkoutsChange(() => this.#refreshSharedWorkouts()),
+        group.onStart((startsInMs, peerName) => {
+          // A start only makes sense for someone who is not riding yet.
+          if (this.#controller?.rideState !== 'idle') return;
+          this.#startAt = Date.now() + Math.max(0, startsInMs);
+          this.notify('info', `${peerName} started a group countdown.`);
+          this.#tickCountdown();
+        }),
+      ];
+      this.#refreshSharedWorkouts();
       this.store.setState({
         group: { phase: 'joined', roomCode: group.roomCode, joinLink: group.joinLink },
       });

@@ -5,7 +5,8 @@ import type { DeviceKind } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
 import { DEFAULT_SETTINGS, type LiveState, type OverlaySettings } from '../../../shared/contract';
 import { OverlayView, type OverlayViewProps } from './OverlayView';
-import { MIN_HEIGHT, MIN_WIDTH, computeResizeBounds, deviceWarnings, groupRows } from './logic';
+import { MIN_HEIGHT, MIN_WIDTH, computeResizeBounds, deviceWarnings, groupRows, workoutStrip } from './logic';
+import type { WorkoutLive } from '../../../shared/contract';
 
 function rider(peerId: string, name: string, gapM: number, extra: Partial<GroupRider> = {}): GroupRider {
   return {
@@ -213,5 +214,67 @@ describe('deviceWarnings / groupRows', () => {
     expect(rows).toHaveLength(8);
     expect(rows.at(-1)?.local).toBe(true);
     expect(rows.filter((r) => r.local)).toHaveLength(1);
+  });
+});
+
+function workout(over: Partial<WorkoutLive> = {}): WorkoutLive {
+  return {
+    id: 'w',
+    name: 'Sweet spot',
+    mode: 'erg',
+    label: 'Interval 2/3 · on',
+    targetPowerW: 180,
+    elapsedS: 900,
+    totalDurationS: 3600,
+    segmentElapsedS: 180,
+    segmentRemainingS: 540,
+    totalRemainingS: 2700,
+    intensity: 1,
+    finished: false,
+    started: true,
+    ...over,
+  };
+}
+
+describe('workout strip', () => {
+  it('shows step, target, countdown, progress and cue above the tiles', () => {
+    const html = render({ live: makeLive({ workout: workout({ cue: 'Stay smooth.' }) }) });
+    expect(html).toContain('data-testid="overlay-workout"');
+    expect(html).toContain('Interval 2/3 · on');
+    expect(html).toContain('180 W');
+    expect(html).toContain('9:00');
+    expect(html).toContain('width:25%');
+    expect(html).toContain('Stay smooth.');
+    // Its own row, before the tiles; text carries the outline class.
+    expect(html.indexOf('overlay-workout')).toBeLessThan(html.indexOf('overlay-tile-'));
+    expect(html).toMatch(/ov-wo-target ov-text/);
+  });
+
+  it('is absent without a running workout', () => {
+    expect(render()).not.toContain('overlay-workout');
+    expect(render({ live: makeLive({ workout: null }) })).not.toContain('overlay-workout');
+    expect(render({ live: makeLive({ workout: workout({ started: false }) }) })).not.toContain('overlay-workout');
+  });
+
+  it('says free ride / done in plain words', () => {
+    expect(workoutStrip(workout({ mode: 'free', targetPowerW: null }))?.target).toBe('Free ride');
+    const done = workoutStrip(workout({ finished: true }));
+    expect(done).toMatchObject({ label: 'Workout complete', target: 'Done', countdown: '', progress: 1 });
+    expect(workoutStrip(workout({ segmentElapsedS: 0, segmentRemainingS: 0 }))?.progress).toBe(0);
+    expect(workoutStrip(workout({ segmentRemainingS: 3725 }))?.countdown).toBe('1:02:05');
+  });
+
+  it('feeds the target and step tiles', () => {
+    const tiles: OverlaySettings = {
+      ...settings,
+      tiles: [
+        { stat: 'targetPower', size: 'm' },
+        { stat: 'intervalRemaining', size: 'm' },
+      ],
+    };
+    const html = render({ live: makeLive({ workout: workout() }), settings: tiles });
+    expect(tileHtml(html, 'targetPower')).toContain('>180<');
+    expect(tileHtml(html, 'intervalRemaining')).toContain('9:00');
+    expect(tileHtml(html, 'targetPower')).toContain('Target power');
   });
 });

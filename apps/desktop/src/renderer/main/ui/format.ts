@@ -73,8 +73,8 @@ const LABELS: Record<StatId, string> = {
   time: 'Time',
   distance: 'Distance',
   gradient: 'Gradient',
-  targetPower: 'Target',
-  intervalRemaining: 'Interval',
+  targetPower: 'Target power',
+  intervalRemaining: 'Step left',
 };
 
 const UNITS: Record<StatId, string> = {

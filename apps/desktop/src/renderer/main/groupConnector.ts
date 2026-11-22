@@ -1,5 +1,7 @@
-import { GroupRide, parseJoinLink } from '@freilauf/p2p';
+import { GroupRide, contentHash, parseJoinLink } from '@freilauf/p2p';
 import type { GroupConnector, JoinedGroup } from './appStore';
+
+const WORKOUT_KIND = 'workout';
 
 /** Adapts @freilauf/p2p's GroupRide to what the app store expects. */
 function adapt(ride: GroupRide): JoinedGroup {
@@ -10,6 +12,24 @@ function adapt(ride: GroupRide): JoinedGroup {
     setLocalState: ({ name: _name, ...state }) => void ride.setLocalState(state),
     getRiders: () => ride.getRiders(),
     leave: () => ride.leave(),
+
+    shareWorkout: (text) => {
+      const result = ride.shareDocument(WORKOUT_KIND, text);
+      return result.ok ? null : result.reason;
+    },
+    stopSharingWorkout: () => void ride.unshareDocument(WORKOUT_KIND),
+    getSharedWorkouts: () =>
+      ride
+        .getSharedDocuments()
+        .filter((d) => d.kind === WORKOUT_KIND)
+        .map((d) => ({ peerId: d.peerId, peerName: d.peerName, text: d.text })),
+    onSharedWorkoutsChange: (listener) => ride.onDocument(() => listener()),
+    announceStart: (inMs) => {
+      // The start refers to whatever each rider has selected; the id only labels it.
+      const id = ride.getLocalDocuments().find((d) => d.kind === WORKOUT_KIND)?.id;
+      return ride.announceStart(WORKOUT_KIND, id ?? contentHash('start'), inMs).ok;
+    },
+    onStart: (listener) => ride.onStart((s) => listener(s.startsInMs, s.peerName)),
   };
 }
 

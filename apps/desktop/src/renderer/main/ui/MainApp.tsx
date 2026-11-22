@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { App, AppState } from '../appStore';
 import { DevicePicker, DevicesTab } from './DevicesTab';
+import { FtpOutcomeDialog } from './FtpOutcomeDialog';
 import { GroupTab } from './GroupTab';
 import { ConnectionBanners, DeviceChips } from './Header';
 import { HistoryTab } from './HistoryTab';
@@ -9,12 +10,14 @@ import { AppContext, useAppState } from './hooks';
 import { Notices } from './Notices';
 import { RideTab } from './RideTab';
 import { SettingsTab } from './SettingsTab';
+import { WorkoutsTab } from './WorkoutsTab';
 import './main.css';
 
-export type TabId = 'ride' | 'devices' | 'group' | 'history' | 'settings';
+export type TabId = 'ride' | 'workouts' | 'devices' | 'group' | 'history' | 'settings';
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: 'ride', label: 'Ride' },
+  { id: 'workouts', label: 'Workouts' },
   { id: 'devices', label: 'Devices' },
   { id: 'group', label: 'Group' },
   { id: 'history', label: 'History' },
@@ -87,7 +90,22 @@ function SimBadge() {
 }
 
 function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined }) {
-  const [tab, setTab] = useState<TabId>(() => initialTab ?? defaultTab(app.store.getState()));
+  const [tab, setTabState] = useState<TabId>(() => initialTab ?? defaultTab(app.store.getState()));
+  // Opening Workouts from an "FTP test" link scrolls to the tests.
+  const [ftpFocus, setFtpFocus] = useState(false);
+  const setTab = (next: TabId): void => {
+    setFtpFocus(false);
+    setTabState(next);
+  };
+  const openFtpTests = (): void => {
+    setTabState('workouts');
+    setFtpFocus(true);
+  };
+  // Each tab starts at the top (the panel element is shared between tabs).
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    mainRef.current?.scrollTo?.(0, 0);
+  }, [tab]);
   return (
     <div className="app">
       <div className="chrome">
@@ -105,19 +123,28 @@ function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined })
         <ConnectionBanners />
       </div>
       <main
+        ref={mainRef}
         className="app-main"
         role="tabpanel"
         id={`panel-${tab}`}
         aria-labelledby={`tab-${tab}`}
         data-testid={`panel-${tab}`}
       >
-        {tab === 'ride' && <RideTab />}
+        {tab === 'ride' && <RideTab onOpenWorkouts={() => setTab('workouts')} />}
+        {tab === 'workouts' && (
+          <WorkoutsTab
+            onGoToRide={() => setTab('ride')}
+            onOpenSettings={() => setTab('settings')}
+            focusFtpTests={ftpFocus}
+          />
+        )}
         {tab === 'devices' && <DevicesTab />}
         {tab === 'group' && <GroupTab onOpenSettings={() => setTab('settings')} />}
         {tab === 'history' && <HistoryTab />}
-        {tab === 'settings' && <SettingsTab />}
+        {tab === 'settings' && <SettingsTab onOpenFtpTests={openFtpTests} />}
       </main>
       <DevicePicker />
+      <FtpOutcomeDialog />
       <Notices />
     </div>
   );

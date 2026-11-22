@@ -2,7 +2,14 @@ import { memo, type CSSProperties, type PointerEventHandler } from 'react';
 import type { DeviceKind } from '@freilauf/devices';
 import type { LiveState, OverlaySettings, OverlayTile, StatId } from '../../../shared/contract';
 import { formatGap, statLabel, statUnit, statValue } from '../../main/ui/format';
-import { PLACEHOLDER_LIVE, deviceWarnings, groupRows, type GroupRow } from './logic';
+import {
+  PLACEHOLDER_LIVE,
+  deviceWarnings,
+  groupRows,
+  workoutStrip,
+  type GroupRow,
+  type WorkoutStrip,
+} from './logic';
 
 const PLACEHOLDER = '–';
 const NO_DEVICES: ReadonlySet<DeviceKind> = new Set();
@@ -66,7 +73,9 @@ function GroupPanel({ rows }: { rows: GroupRow[] }) {
           <li
             key={r.key}
             className={
-              'ov-group-row' + (r.local ? ' ov-group-row--local' : '') + (r.stale ? ' ov-group-row--stale' : '')
+              'ov-group-row' +
+              (r.local ? ' ov-group-row--local' : '') +
+              (r.stale ? ' ov-group-row--stale' : '')
             }
             data-local={r.local ? 'true' : undefined}
           >
@@ -87,6 +96,27 @@ function GroupPanel({ rows }: { rows: GroupRow[] }) {
   );
 }
 
+/** Current step, target and countdown; its own row above the tiles. */
+function WorkoutStripView({ strip }: { strip: WorkoutStrip }) {
+  return (
+    <div
+      className={'ov-workout' + (strip.finished ? ' ov-workout--done' : '')}
+      data-testid="overlay-workout"
+    >
+      <div className="ov-backdrop" aria-hidden="true" />
+      <div className="ov-wo-line">
+        <span className="ov-wo-label ov-text">{strip.label}</span>
+        <span className="ov-wo-target ov-text">{strip.target}</span>
+        {strip.countdown ? <span className="ov-wo-time ov-text">{strip.countdown}</span> : null}
+      </div>
+      <div className="ov-wo-bar" aria-hidden="true">
+        <span style={{ width: `${Math.round(strip.progress * 1000) / 10}%` }} />
+      </div>
+      {strip.cue ? <div className="ov-wo-cue ov-text">{strip.cue}</div> : null}
+    </div>
+  );
+}
+
 /** Presentational overlay: pure function of its props, no api access. */
 export function OverlayView({
   live: liveProp,
@@ -101,7 +131,11 @@ export function OverlayView({
   const live = liveProp ?? (editMode ? PLACEHOLDER_LIVE : null);
   const rideState = live?.ride.state;
   const warnings = deviceWarnings(live?.devices, everConnected);
-  const rows = live && settings.showGroup && live.group && live.group.riders.length > 0 ? groupRows(live) : null;
+  const rows =
+    live && settings.showGroup && live.group && live.group.riders.length > 0
+      ? groupRows(live)
+      : null;
+  const strip = workoutStrip(live?.workout);
   const opacity = Number.isFinite(settings.backdropOpacity)
     ? Math.min(1, Math.max(0, settings.backdropOpacity))
     : 0.55;
@@ -120,7 +154,9 @@ export function OverlayView({
     <div className={classes.join(' ')} style={style} data-testid="overlay-root">
       {editMode ? (
         <div className="ov-edit-bar" data-testid="overlay-edit-bar">
-          <span className="ov-edit-text">Overlay edit mode — drag to move, drag the corner to resize</span>
+          <span className="ov-edit-text">
+            Overlay edit mode — drag to move, drag the corner to resize
+          </span>
           <button type="button" className="ov-done" data-testid="overlay-done" onClick={onDone}>
             Done
           </button>
@@ -153,11 +189,18 @@ export function OverlayView({
           </div>
         ) : null}
 
+        {strip ? <WorkoutStripView strip={strip} /> : null}
+
         {settings.tiles.length > 0 ? (
           <div className="ov-tiles">
             <div className="ov-grid">
               {settings.tiles.map((t, i) => (
-                <Tile key={`${t.stat}-${i}`} stat={t.stat} size={t.size} value={safeValue(t.stat, live)} />
+                <Tile
+                  key={`${t.stat}-${i}`}
+                  stat={t.stat}
+                  size={t.size}
+                  value={safeValue(t.stat, live)}
+                />
               ))}
             </div>
           </div>

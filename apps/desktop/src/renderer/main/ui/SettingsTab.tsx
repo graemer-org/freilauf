@@ -276,7 +276,7 @@ function TileEditor({ tiles }: { tiles: OverlayTile[] }) {
   );
 }
 
-export function SettingsTab() {
+export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void }) {
   const app = useApp();
   const settings = useAppState((s) => s.settings);
   const editMode = useAppState((s) => s.overlayEditMode);
@@ -322,6 +322,30 @@ export function SettingsTab() {
             max={60}
             step={0.5}
             onCommit={(v) => v !== null && update({ rider: { bikeMassKg: v } })}
+          />
+          <NumberField
+            label="FTP"
+            unit="W"
+            testId="settings-ftp"
+            value={rider.ftpW}
+            min={50}
+            max={600}
+            step={1}
+            hint={
+              <>
+                Functional threshold power: roughly the power you can hold for an hour. Workout
+                targets are scaled to it.
+                {onOpenFtpTests && (
+                  <>
+                    {' '}
+                    <button type="button" className="link" onClick={onOpenFtpTests}>
+                      Measure it with an FTP test
+                    </button>
+                  </>
+                )}
+              </>
+            }
+            onCommit={(v) => v !== null && update({ rider: { ftpW: Math.round(v) } })}
           />
         </div>
       </section>

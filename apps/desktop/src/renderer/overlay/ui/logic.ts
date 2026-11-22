@@ -163,3 +163,52 @@ export function groupRows(live: LiveState, max = MAX_GROUP_ROWS): GroupRow[] {
   const local = rows.find((r) => r.local);
   return local ? [...rows.slice(0, max - 1), local] : top;
 }
+
+export interface WorkoutStrip {
+  label: string;
+  /** "240 W", "Free ride" or "Done". */
+  target: string;
+  /** Step countdown, e.g. "3:12"; empty once finished. */
+  countdown: string;
+  /** Progress through the current step, 0…1. */
+  progress: number;
+  cue: string | null;
+  finished: boolean;
+}
+
+function clock(seconds: number): string {
+  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const ss = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/** What the overlay's workout strip shows; null when there is no running workout. */
+export function workoutStrip(workout: LiveState['workout']): WorkoutStrip | null {
+  if (!workout || !workout.started) return null;
+  if (workout.finished) {
+    return {
+      label: 'Workout complete',
+      target: 'Done',
+      countdown: '',
+      progress: 1,
+      cue: null,
+      finished: true,
+    };
+  }
+  const span = workout.segmentElapsedS + workout.segmentRemainingS;
+  const progress = span > 0 ? Math.min(1, Math.max(0, workout.segmentElapsedS / span)) : 0;
+  const target =
+    workout.mode === 'erg' && workout.targetPowerW !== null && Number.isFinite(workout.targetPowerW)
+      ? `${Math.round(workout.targetPowerW)} W`
+      : 'Free ride';
+  return {
+    label: workout.label,
+    target,
+    countdown: clock(workout.segmentRemainingS),
+    progress,
+    cue: workout.cue ? workout.cue : null,
+    finished: false,
+  };
+}
