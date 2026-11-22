@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { utf8Length, type DocumentEvent, type StartAnnouncement } from './documents';
 import { BROADCAST_INTERVAL_MS, GroupRide, type LocalRiderState } from './group';
 import {
+  createTestNetwork,
   FakeClock,
-  FakeRtcNetwork,
-  InMemorySignallingHub,
+  TEST_TRANSPORTS,
   type FakeLinkConditions,
+  type TestTransportKind,
 } from './testing';
 
 function local(distanceM: number, speedMps = 0): LocalRiderState {
@@ -40,17 +41,10 @@ interface Options {
   documentMessageMaxBytes?: number;
 }
 
-async function setup(count: number, options: Options = {}) {
+async function setup(kind: TestTransportKind, count: number, options: Options = {}) {
   const clock = new FakeClock();
-  const hub = new InMemorySignallingHub();
-  const network = new FakeRtcNetwork({ seed: options.seed ?? 1, timers: clock.timers });
-  const deps = (peerId: string) => ({
-    signalling: hub.createChannel(peerId),
-    createPeerConnection: network.createPeerConnection,
-    now: clock.now,
-    timers: clock.timers,
-    documentMessageMaxBytes: options.documentMessageMaxBytes,
-  });
+  const network = createTestNetwork(kind, { clock, seed: options.seed ?? 1 });
+  const extra = { documentMessageMaxBytes: options.documentMessageMaxBytes };
   const rides: GroupRide[] = [];
   const events = new Map<GroupRide, DocumentEvent[]>();
   const starts = new Map<GroupRide, StartAnnouncement[]>();
@@ -64,17 +58,15 @@ async function setup(count: number, options: Options = {}) {
     rides.push(ride);
     return ride;
   };
-  const first = track(await GroupRide.create('Rider0', deps('peer-0')));
+  const first = track(await network.create('Rider0', 'peer-0', extra));
   const join = async (index: number) => {
-    const ride = track(
-      await GroupRide.join(first.roomCode, `Rider${index}`, deps(`peer-${index}`)),
-    );
+    const ride = track(await network.join(first, `Rider${index}`, `peer-${index}`, extra));
     await clock.advanceAsync(100);
     return ride;
   };
   for (let i = 1; i < count; i++) await join(i);
   // Connect on a perfect link, then apply the requested conditions.
-  network.conditions = { ...options.conditions };
+  network.setConditions({ ...options.conditions });
   return { clock, network, rides, events, starts, join };
 }
 
@@ -84,9 +76,9 @@ const texts = (ride: GroupRide) =>
     .map((d) => `${d.peerId}/${d.kind}:${d.text.length}`)
     .sort();
 
-describe('GroupRide shared documents', () => {
+describe.each(TEST_TRANSPORTS)('GroupRide shared documents (%s)', (kind) => {
   it('delivers a shared document to every rider', async () => {
-    const { clock, rides, events } = await setup(3);
+    const { clock, rides, events } = await setup(kind, 3);
     const [anna, ben, cleo] = rides as [GroupRide, GroupRide, GroupRide];
     const text = fakeWorkout('sweet-spot');
     const res = anna.shareDocument('workout', text);
@@ -117,7 +109,7 @@ describe('GroupRide shared documents', () => {
   });
 
   it('a late joiner receives the current documents automatically', async () => {
-    const { clock, rides, events, join } = await setup(2);
+    const { clock, rides, events, join } = await setup(kind, 2);
     const [anna, ben] = rides as [GroupRide, GroupRide];
     anna.shareDocument('workout', fakeWorkout('a'));
     ben.shareDocument('route', 'ben route');
@@ -130,7 +122,7 @@ describe('GroupRide shared documents', () => {
   });
 
   it('a replaced document supersedes the old one', async () => {
-    const { clock, rides, events } = await setup(2);
+    const { clock, rides, events } = await setup(kind, 2);
     const [anna, ben] = rides as [GroupRide, GroupRide];
     const v1 = anna.shareDocument('workout', fakeWorkout('v1'));
     await clock.advanceAsync(200);
@@ -148,7 +140,7 @@ describe('GroupRide shared documents', () => {
   });
 
   it('withdrawal and the sharer leaving remove documents', async () => {
-    const { clock, rides, events } = await setup(3);
+    const { clock, rides, events } = await setup(kind, 3);
     const [anna, ben, cleo] = rides as [GroupRide, GroupRide, GroupRide];
     const w = anna.shareDocument('workout', 'w1');
     const r = anna.shareDocument('route', 'r1');
@@ -183,23 +175,22 @@ describe('GroupRide shared documents', () => {
   });
 
   it('delivers chunked documents within the configured message size', async () => {
-    const { clock, network, rides } = await setup(2, { documentMessageMaxBytes: 250 });
+    const { clock, network, rides } = await setup(kind, 2, { documentMessageMaxBytes: 250 });
     const [anna, ben] = rides as [GroupRide, GroupRide];
     const text = fakeWorkout('chunky', 3_200);
     const res = anna.shareDocument('workout', text);
     if (!res.ok) throw new Error(res.reason);
     await clock.advanceAsync(300);
     expect(ben.getSharedDocuments()[0]?.text).toBe(text);
-    const chunks = network.connections
-      .flatMap((pc) => pc.channels.flatMap((c) => c.sent))
-      .filter((m) => m.includes('"doc-chunk"'));
+    const chunks = network.sentMessages().filter((m) => m.includes('"doc-chunk"'));
     expect(chunks.length).toBeGreaterThan(12);
     for (const c of chunks) expect(utf8Length(c)).toBeLessThanOrEqual(250);
   });
 
   for (const seed of [1, 2, 3, 4, 5]) {
+    // Relays: the channel is reliable and ordered, so only the delay applies there.
     it(`converges with 40 % loss, reordering and duplicates (seed ${seed})`, async () => {
-      const { clock, network, rides } = await setup(4, {
+      const { clock, network, rides } = await setup(kind, 4, {
         seed,
         conditions: { lossRate: 0.4, maxDelayMs: 80, duplicateRate: 0.1 },
       });
@@ -224,8 +215,10 @@ describe('GroupRide shared documents', () => {
         expect(byPeer.get('peer-0')).toBe(big);
         expect(byPeer.get('peer-2')).toBe(small);
       }
-      expect(network.dropped).toBeGreaterThan(0);
-      // Rider state keeps flowing alongside.
+      if (kind === 'self-hosted') expect(network.dropped).toBeGreaterThan(0);
+      // Rider state keeps flowing alongside (on the reliable relay channel the documents can
+      // be complete before the first 4 Hz tick of every rider has arrived).
+      await clock.advanceAsync(500);
       expect(
         ben
           .getRiders()
@@ -236,7 +229,7 @@ describe('GroupRide shared documents', () => {
   }
 
   it('rejects oversize and malformed input without side effects', async () => {
-    const { clock, network, rides } = await setup(2);
+    const { clock, network, rides } = await setup(kind, 2);
     const [anna, ben] = rides as [GroupRide, GroupRide];
     await clock.advanceAsync(300);
     const rejected = [
@@ -275,16 +268,14 @@ describe('GroupRide shared documents', () => {
     expect(anna.announceStart('Bad', '0123456789abcdef', 10)).toMatchObject({ ok: false });
     // No messages beyond the regular state broadcasts went out, nothing is shared.
     await clock.advanceAsync(10);
-    const docMessages = network.connections
-      .flatMap((pc) => pc.channels[0]!.sent.slice(0))
-      .filter((m) => m.includes('"doc-'));
+    const docMessages = network.sentMessages().filter((m) => m.includes('"doc-'));
     expect(docMessages).toEqual([]);
     expect(anna.getLocalDocuments()).toEqual([]);
     expect(ben.getSharedDocuments()).toEqual([]);
   });
 
   it('enforces the local caps on kinds and bytes', async () => {
-    const { rides } = await setup(1);
+    const { rides } = await setup(kind, 1);
     const [anna] = rides as [GroupRide];
     const full = 'x'.repeat(16 * 1024);
     expect(anna.shareDocument('a', full).ok).toBe(true);
@@ -298,11 +289,10 @@ describe('GroupRide shared documents', () => {
   });
 
   it('survives malformed and unknown messages from a peer; state sync is unaffected', async () => {
-    const { clock, network, rides } = await setup(2);
+    const { clock, network, rides } = await setup(kind, 2);
     const [anna, ben] = rides as [GroupRide, GroupRide];
     anna.setLocalState(local(500));
-    // Inject raw messages on Anna's side of the channel (as a buggy or newer client would).
-    const channel = network.open[0]!.channels[0]!;
+    // Inject raw messages on the channel (as a buggy or newer client would).
     for (const raw of [
       '{"v":1,"type":"doc-list","sid":"abcd","rev":1,"docs":[{"k":"w","id":"0000000000000000","n":99999,"c":1}]}',
       '{"v":1,"type":"doc-chunk","k":"w","id":"0000000000000000","n":1,"c":1,"i":0,"d":"x"}',
@@ -311,7 +301,7 @@ describe('GroupRide shared documents', () => {
       'garbage "doc-',
       '{"v":1,"type":"doc-req","k":"w","id":"0000000000000000","m":[0]}',
     ]) {
-      channel.send(raw);
+      network.inject(anna, ben, raw);
     }
     await clock.advanceAsync(500);
     expect(ben.getSharedDocuments()).toEqual([]);
@@ -321,24 +311,21 @@ describe('GroupRide shared documents', () => {
   });
 
   it('does not send document traffic until something is shared', async () => {
-    const { clock, network, rides } = await setup(2);
+    const { clock, network, rides } = await setup(kind, 2);
     rides[0]!.setLocalState(local(1));
     await clock.advanceAsync(3_000);
-    const all = network.connections.flatMap((pc) => pc.channels.flatMap((c) => c.sent));
+    const all = network.sentMessages();
     expect(all.length).toBeGreaterThan(0);
     expect(all.filter((m) => m.includes('"doc-'))).toEqual([]);
   });
 
   it('broadcasts the document list once per second, not with every state packet', async () => {
-    const { clock, network, rides } = await setup(2);
+    const { clock, network, rides } = await setup(kind, 2);
     const [anna] = rides as [GroupRide];
     anna.setLocalState(local(1));
     anna.shareDocument('workout', 'tiny');
     await clock.advanceAsync(100);
-    const count = () =>
-      network.connections
-        .flatMap((pc) => pc.channels.flatMap((c) => c.sent))
-        .filter((m) => m.includes('"doc-list"')).length;
+    const count = () => network.sentMessages().filter((m) => m.includes('"doc-list"')).length;
     const before = count();
     await clock.advanceAsync(5_000);
     expect(count() - before).toBeGreaterThanOrEqual(4);
@@ -346,10 +333,10 @@ describe('GroupRide shared documents', () => {
   });
 });
 
-describe('GroupRide synchronised start', () => {
+describe.each(TEST_TRANSPORTS)('GroupRide synchronised start (%s)', (kind) => {
   for (const seed of [1, 2, 3, 4, 5, 6]) {
     it(`receivers agree with the sender's start instant despite loss (seed ${seed})`, async () => {
-      const { clock, rides, starts } = await setup(4, {
+      const { clock, rides, starts } = await setup(kind, 4, {
         seed,
         conditions: { lossRate: 0.4, maxDelayMs: 80, duplicateRate: 0.5 },
       });
@@ -386,7 +373,7 @@ describe('GroupRide synchronised start', () => {
   }
 
   it('tells a rider who connects during the countdown', async () => {
-    const { clock, rides, starts, join } = await setup(2);
+    const { clock, rides, starts, join } = await setup(kind, 2);
     const [anna] = rides as [GroupRide];
     const res = anna.announceStart('workout', '0123456789abcdef', 30_000);
     if (!res.ok) throw new Error(res.reason);

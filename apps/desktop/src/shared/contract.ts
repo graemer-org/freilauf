@@ -117,11 +117,15 @@ export interface Settings {
   };
   overlay: OverlaySettings;
   /**
-   * `signallingUrl`: the group-ride signalling server this rider hosts rides on
-   * (and joins bare room codes with). '' = none set up: invite links still
-   * work, because they carry the host's server (docs/group-rides.md).
+   * Group rides. By default riders find each other through public relay
+   * servers and need no setup (docs/group-rides.md). Advanced:
+   * - `useOwnServer`: create rides on (and join bare codes through) the
+   *   signalling server at `signallingUrl` instead. Old-style invite links
+   *   (`…?s=<server>`) use their own server either way.
+   * - `relayUrls`: relays to use instead of the built-in ones ([] = built-in).
+   *   Every rider in a group needs at least one relay in common.
    */
-  group: { signallingUrl: string };
+  group: { useOwnServer: boolean; signallingUrl: string; relayUrls: string[] };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -157,7 +161,7 @@ export const DEFAULT_SETTINGS: Settings = {
     showGroup: true,
     editHotkey: 'CommandOrControl+Shift+O',
   },
-  group: { signallingUrl: '' },
+  group: { useOwnServer: false, signallingUrl: '', relayUrls: [] },
 };
 
 /**

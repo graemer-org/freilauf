@@ -70,9 +70,13 @@ function joinedGroup(roomCode: string, joinLink: string): AppState['group'] {
     phase: 'joined',
     roomCode,
     joinLink,
+    inviteCode: roomCode,
+    transport: 'relays',
+    relay: 'ready',
     role: 'host',
-    signallingUrl: 'wss://signal.example.org',
+    signallingUrl: '',
     peers: [],
+    notes: [],
   };
 }
 
@@ -256,7 +260,7 @@ describe('MainApp (SSR)', () => {
     expect(html).toContain('−1.2 km');
     expect(html).toContain('rider-local');
     expect(html).toContain('rider-stale');
-    expect(html).toContain('signal.example.org');
+    expect(html).toContain('data-testid="group-relay-state" data-state="ready"');
     expect(html).toContain('data-testid="group-link"');
     // Riders are visible, so the room is not shown as empty.
     expect(html).not.toContain('data-testid="group-empty"');

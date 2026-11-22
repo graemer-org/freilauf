@@ -271,6 +271,24 @@ function sanitizeSignallingUrl(raw: unknown, fallback: string, problems: Problem
   return fallback;
 }
 
+/** Advanced relay list: ws(s):// URLs only, de-duplicated, at most 16. */
+function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems): string[] {
+  if (raw === undefined) return [...fallback];
+  if (!Array.isArray(raw)) {
+    problems.push('group.relayUrls: expected a list of wss:// URLs');
+    return [...fallback];
+  }
+  const out: string[] = [];
+  for (const [i, u] of raw.entries()) {
+    if (typeof u === 'string' && u.length <= 300 && /^wss?:\/\/[^\s/?#]+[^\s]*$/i.test(u.trim())) {
+      if (!out.includes(u.trim())) out.push(u.trim());
+    } else {
+      problems.push(`group.relayUrls[${i}]: not a ws:// or wss:// URL, dropped`);
+    }
+  }
+  return out.slice(0, 16);
+}
+
 /**
  * Upgrades a stored settings value before `sanitizeSettings` (on load only,
  * never on updates). Returns a new value; `raw` is not changed.
@@ -384,11 +402,18 @@ export function sanitizeSettings(
       editHotkey,
     },
     group: {
+      useOwnServer: bool(
+        group.useOwnServer,
+        fallback.group.useOwnServer,
+        'group.useOwnServer',
+        problems,
+      ),
       signallingUrl: sanitizeSignallingUrl(
         group.signallingUrl,
         fallback.group.signallingUrl,
         problems,
       ),
+      relayUrls: sanitizeRelayUrls(group.relayUrls, fallback.group.relayUrls, problems),
     },
   };
 }

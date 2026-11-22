@@ -1,229 +1,178 @@
 # Ride with friends
 
-Group rides put up to eight riders in one room: you see each other's power, speed and gap,
-can share a workout and start it together. This page is for riders. The protocol and the code
-are described separately in [p2p.md](p2p.md) (technical).
+Group rides put up to eight riders in one ride: you see each other's power, speed and gap,
+can share a workout and start it together. **There is nothing to set up** — no server, no
+account. This page is for riders; the protocol and the code are described in
+[p2p.md](p2p.md) (technical).
 
+> **Status:** the zero-setup path described here is new and **has not been verified on real
+> networks yet** — it cannot be tried from the project's test machines. If you try it, please
+> report what happened (see [Help us verify it](#help-us-verify-it)). Until then, the
+> [own signalling server](#advanced-your-own-signalling-server) remains available as a
+> fallback.
+
+- [Start a ride and invite friends](#start-a-ride-and-invite-friends)
+- [Join a friend's ride](#join-a-friends-ride)
 - [How it works](#how-it-works)
-- [Join a friend's ride](#join-a-friends-ride) — 30 seconds, nothing to set up
-- [Host rides for your friends](#host-rides-for-your-friends) — one person runs a small server
-- [Privacy: what the server sees](#privacy-what-the-server-sees)
-- [Cost and size](#cost-and-size)
+- [Privacy: what the relay servers see](#privacy-what-the-relay-servers-see)
+- [When it does not work](#when-it-does-not-work)
 - [Troubleshooting](#troubleshooting)
 - [Limits](#limits)
+- [Advanced: your own signalling server](#advanced-your-own-signalling-server)
 
-## How it works
+## Start a ride and invite friends
 
-Your apps talk to each other **directly** over the internet — power, speed, heart rate,
-position and shared workouts go from rider to rider, encrypted, and never through a server.
+1. Open the **Group** tab and click **Create group ride**.
+2. An **invite link** appears at once, for example
+   `freilauf://join/ABCDEF#GHJKMNPQRSTU`. Click **Copy invite link** and send it in any
+   message.
+3. Below it, the status says _Looking for the relay servers…_ and, a moment later, _Ready:
+   friends with the invite can find you_. Friends who paste the link show up under **In the
+   room**.
 
-To _find_ each other, though, the apps need a meeting point that everyone can reach: a small
-**signalling server**. It passes on a few short handshake messages when someone joins, and
-that is all it does. There are no accounts.
+Hosting and joining are the same now: whoever starts the ride sends the link. A new ride has a
+new link; the ride exists as long as at least one rider is in it.
 
-```mermaid
-flowchart LR
-  A["Your app"] <-- "ride data, directly" --> B["Friend's app"]
-  A -. "handshake" .-> S[("Signalling server<br/>run by one of you")]
-  B -. "handshake" .-> S
-```
-
-**Freilauf has no public server.** One person in your group — the _host_ — runs one, once,
-and everyone else uses it through the invite link. The host's server is one small container,
-and if you already run the [web version with Docker](docker.md), you already have it.
+**Reading it out instead?** The invite also has a written form, the **invite code**, e.g.
+`ABC-DEF-GHJK-MNPQ-RSTU`, shown next to the link with its own copy button. Your friend can type
+it into the Group tab. The **whole** code is needed: the first six characters alone are only
+the room's name, not its key (see [Privacy](#privacy-what-the-relay-servers-see)). The last
+character is a check, so a mistyped or misheard code is caught at once ("The invite has a
+typo") instead of opening an empty ride.
 
 ## Join a friend's ride
 
-1. Your friend sends you an **invite link**. It looks like
-   `freilauf://join/ABCDEF?s=wss%3A%2F%2Fsignal.example.org`.
-2. Open the **Group** tab, paste the link into **A friend invited me** (or the "Join" field)
-   and click **Join**. You can paste the whole message the link came in.
-
-That is all. The link contains the address of your friend's server, so you do not need to set
-anything up, and your own settings are not changed.
+Open the **Group** tab, paste the link (or type the invite code) into the **Join** field and
+click **Join**. You can paste the whole message the link came in. That is all — your settings
+are not changed.
 
 Clicking the link does not open Freilauf yet — copy it and paste it into the Group tab.
 
-**Just a code?** A six-character code such as `ABC-DEF` only works if you have entered the
-_same_ server address as the host in **Settings → Group**. If you have no server set up, the
-app says so and asks for the link. If you have a different server set up, the code opens a new,
-empty room there — the app then shows "Nobody else is here yet". The link avoids both.
+## How it works
 
-## Host rides for your friends
+Your apps talk to each other **directly** over the internet — power, speed, heart rate, position
+and shared workouts go from rider to rider over encrypted WebRTC connections.
 
-You need a signalling server that your friends can reach from the internet, over HTTPS
-(`wss://`). Pick the way that matches what you already have; each ends with an address that
-you enter **once** in Freilauf.
+To _find_ each other, the apps need a meeting point. Freilauf has no server of its own for
+that: it uses a handful of **public relay servers** (Nostr relays) that are **run by others**
+and used by many apps. Each app connects to them and leaves a short, **encrypted** handshake
+message for the others in the same ride; once the handshake is through, the riders are
+connected directly and the relays are no longer needed for that pair.
 
-> Status: the server itself and the app's side are tested end to end, but **group rides
-> between different homes have not been tried yet**, the Docker images have not been built and
-> run in a real deployment, and the NAS steps were written from the documentation, not on a
-> real device. Please report what worked and what did not.
-
-### (a) You already run the Docker / web version
-
-The web version's container is also a signalling server, at the path `/signal` on the same
-address. If you reach your web version at `https://freilauf.example.org` and that address
-works from outside your home (see (b) for a NAS), **your address is
-`wss://freilauf.example.org/signal`**.
-
-- Riders who open your web version use it automatically; nothing to enter.
-- In the desktop app, enter it once in **Settings → Group** (or in the Group tab under
-  **I want to host**).
-
-If your web version is only reachable at home (`http://<nas-ip>:8080`), friends elsewhere
-cannot reach it — continue with (b).
-
-### (b) On a NAS with a reverse proxy (example: Synology)
-
-The [Docker guide](docker.md#synology-nas-container-manager--reverse-proxy) covers running the
-container on a Synology NAS and putting it behind DSM's built-in reverse proxy with a free
-Let's Encrypt certificate — follow its steps 1 and 2. For group rides, three things matter in
-addition:
-
-1. **Reachable from the internet.** Your router must forward port 443 (or the HTTPS port you
-   chose) to the NAS, and the host name (for example a free `*.synology.me` DDNS name) must
-   point to your home's public address. Some internet connections (CGNAT, many mobile and some
-   fibre connections) do not allow incoming connections at all; then use (c).
-2. **WebSocket on.** In the reverse-proxy entry, **Custom Header → Create → WebSocket** must
-   be added. Without it, the page loads but group rides fail.
-3. **Your address is `wss://freilauf.yourname.synology.me/signal`** (your host name, with
-   `wss://` and `/signal`). Enter it once in **Settings → Group**.
-
-Other NAS systems with a reverse proxy work the same way: an HTTPS entry with a valid
-certificate that forwards to the container's port and passes WebSocket upgrades through.
-
-These steps were written for DSM 7.2 and have not been verified on a real NAS.
-
-### (c) On any small server
-
-A small rented server (VPS) with a public address and a domain name pointing to it is enough.
-Run only the signalling server, and put a web server with automatic HTTPS in front of it. From
-a copy of this repository on that server:
-
-```sh
-docker build -t freilauf-signalling apps/signalling
-docker run -d --restart unless-stopped --name freilauf-signalling \
-  -p 127.0.0.1:8787:8787 freilauf-signalling
+```mermaid
+flowchart LR
+  A["Your app"] <-- "ride data, directly (encrypted)" --> B["Friend's app"]
+  A -. "encrypted handshake" .-> R[("Public relay servers<br/>run by others")]
+  B -. "encrypted handshake" .-> R
 ```
 
-Then, for example with [Caddy](https://caddyserver.com/), which fetches the certificate itself:
+The library doing this is [Trystero](https://github.com/dmotz/trystero) (MIT licence); the
+decision and its trade-offs are recorded in
+[ADR 0003](adr/0003-signalling-via-public-relays.md).
 
-```caddyfile
-signal.example.org {
-  reverse_proxy 127.0.0.1:8787
-}
-```
+## Privacy: what the relay servers see
 
-**Your address is `wss://signal.example.org/signal`** (the standalone server answers on any
-path, so `wss://signal.example.org` works too). Enter it once in **Settings → Group**.
+The invite contains a **room code** (the six characters after `join/`) and a **secret** (the
+part after `#`). The secret never leaves the riders' apps: it is the key for the handshake.
 
-nginx, running without Docker, and the server's settings are in
-[the signalling server's README](../apps/signalling/README.md).
+The relay servers see:
 
-### Check that it works
+- each rider's **IP address** (like any server you connect to) and when they connect;
+- a **hashed room name** — with effort, the six-character room code can be guessed from it,
+  but not the secret;
+- short **encrypted** handshake messages and their timing, signed with throwaway keys.
 
-- **In the app:** Group tab → **Test connection**. It reports _Reachable_, _Not reachable_
-  (nothing answered — server off, wrong address, or not reachable from this network) or _Not a
-  signalling server_ (something answered, but not Freilauf — usually a wrong path or a proxy
-  without WebSocket support). If only the path is wrong, it offers the right address.
-- **From a browser or a terminal:**
+The relay servers do **not** see: your name, the secret, the contents of the handshake (which
+include your computers' network addresses), ride data, shared workouts or community standings.
+They cannot join the ride or read along without the secret.
 
-  ```sh
-  curl https://signal.example.org/healthz        # → ok
-  curl -i https://signal.example.org/signal      # → HTTP 426 "… connect via WebSocket"
-  ```
+**Elsewhere.** To find its public address, each app asks public STUN servers
+(`stun.l.google.com`, `stun.cloudflare.com`), which therefore see that rider's IP address.
+The other riders in the ride learn your network addresses — that is how a direct connection is
+made — and the name you chose in **Settings → Rider**.
 
-  `/healthz` answering `ok` shows the container runs and the proxy forwards to it. The `426`
-  answer on the signalling address shows that requests reach the signalling server; it does not
-  prove that the proxy passes WebSockets through — the in-app test does.
+## When it does not work
 
-Test from outside your home network too (for example a phone without Wi-Fi), because that is
-where your friends are.
-
-### What to send your friends
-
-Click **Create group ride** and then **Copy invite link**, and send the link in any message.
-Friends only need that link — no server address, no account. A new link is made for every
-ride; the room exists as long as at least one rider is in it.
-
-## Privacy: what the server sees
-
-The signalling server (`apps/signalling/src/server.ts`) keeps, **in memory only and only while
-a rider is connected**:
-
-- the **room code**,
-- a random **peer id** per rider,
-- the **name each rider chose** (Settings → Rider → Name).
-
-It writes nothing to disk and keeps no history; a room is gone when its last rider leaves or the
-server restarts.
-
-While someone joins, it **passes on the WebRTC handshake** (connection offers and answers and
-"ICE candidates") between the riders in a room, without reading or storing it. Those messages
-contain the network addresses at which your computer can be reached — typically your public IP
-address — because that is how a direct connection gets set up; the other riders in the room
-learn them as well. Like any server, it also sees the IP address each connection comes from.
-
-**Logs.** By default the server logs only one line when it starts. With `LOG_LEVEL=debug` it
-also logs when a room opens and closes, including the **room code**; the web version then also
-logs the method and path of each web request. Freilauf's server never logs IP addresses or
-names. Your reverse proxy (Caddy, nginx, the NAS) may log IP addresses and paths according to
-its own settings.
-
-**Elsewhere.** To find its public address, each rider's app asks public STUN servers
-(`stun.l.google.com` and `stun.cloudflare.com`), which therefore see that rider's IP address.
-Ride data, shared workouts and community standings go directly between the riders' apps over
-encrypted WebRTC connections, never through the signalling server.
-
-## Cost and size
-
-- **What runs:** one Node.js process. The standalone image is built on `node:22-alpine` with a
-  single dependency (`ws`); the web-version image adds the built web app. The image sizes have
-  not been measured yet.
-- **Memory:** about 80 MB for an idle server process (measured with Node 22 on Linux, outside a
-  container).
-- **Traffic:** a handful of short text messages per rider joining, plus a ping every 30 seconds
-  per connected rider. Ride data does not go through the server.
-- **Cost:** nothing extra if it runs on a NAS or server you already have; otherwise the
-  smallest plan of any VPS provider and a domain name, or a free DDNS name.
+- **No relay reachable.** If none of the relay servers can be reached from your network — some
+  company, school, hotel or public networks block them, or they are all down — the app says
+  _No relay server reachable_ within about 15 seconds. Try another network (home Wi-Fi, a phone
+  hotspot). Riders who are already connected keep riding if the relays go away; only new
+  riders cannot join until one is back.
+- **No direct connection.** Freilauf has no relay for ride data (no TURN). Riders behind some
+  networks — "symmetric NAT", common with mobile carriers, CGNAT and some company or university
+  networks — cannot connect directly. The app then says that a rider _could not be reached
+  directly_. Switching one of you to another network usually helps. The technical background is
+  in [p2p.md](p2p.md#nat-traversal-caveat).
+- **A different secret.** Someone with the right room code but another secret cannot get in;
+  the app notes it. Usually an old or shortened invite — send the whole link again.
 
 ## Troubleshooting
 
 The Group tab shows these messages; the details of every failure are also written to the
 [diagnostic log](diagnostics.md).
 
-| Message in the app                          | What it means                                                                                                           | What to do                                                                                                                                             |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **A code alone is not enough here**         | You entered a code, and this app has no server set up.                                                                  | Ask for the whole invite link and paste that.                                                                                                          |
-| **That is not an invite**                   | No link or room code was found in what you pasted.                                                                      | Paste the link that starts with `freilauf://join/`, or the six-character code.                                                                         |
-| **You appear to be offline**                | This computer has no network connection.                                                                                | Check Wi-Fi or cable, then try again.                                                                                                                  |
-| **Server not reachable**                    | Nothing answered at the address: the server is off, the address is mistyped, or it is not reachable from where you are. | Host: run **Test connection**, test from outside your home, check port forwarding. Guest: ask the host to check, then try the link again.              |
-| **That address is not a group-ride server** | Something answered, but not a Freilauf signalling server.                                                               | Check the path (`/signal` for the web version) and that the reverse proxy passes WebSockets through (on Synology: the _WebSocket_ custom header).      |
-| **This ride is full**                       | The room already has 8 riders.                                                                                          | Start a second ride.                                                                                                                                   |
-| **Nobody else is here yet** (after joining) | You are in the room, but alone. A wrong code does not fail — it opens a new, empty room.                                | Check the code, or use the invite link: it also makes sure you are on the host's server.                                                               |
-| **Cannot reach _name_ directly**            | You are both in the room, but your computers cannot connect to each other directly.                                     | Usually a restrictive network (some mobile, company or university networks). Try another network for one of you, e.g. home Wi-Fi instead of a hotspot. |
-| **The server address is not valid**         | The saved address does not start with `ws://` or `wss://`.                                                              | Correct it in **Settings → Group**.                                                                                                                    |
-| The link does nothing when clicked          | The app does not open `freilauf://` links from the operating system yet.                                                | Copy the link and paste it into the Group tab.                                                                                                         |
+| Message in the app                          | What it means                                                            | What to do                                                                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| **No relay server reachable**               | None of the public relay servers answered from this network.             | Check the internet connection; try another network. If it keeps failing, see [Help us verify it](#help-us-verify-it). |
+| **You appear to be offline**                | This computer has no network connection.                                 | Check Wi-Fi or cable, then try again.                                                                                 |
+| **This code is missing its secret part**    | You entered only the six-character room code.                            | Ask for the whole invite link, or the full code `ABC-DEF-GHJK-MNPQ-RSTU`.                                             |
+| **The invite has a typo**                   | It looks like an invite, but a character is wrong, missing or extra.     | Copy the link again, or compare the code character by character.                                                      |
+| **That is not an invite**                   | No link or code was found in what you pasted.                            | Paste the link that starts with `freilauf://join/`.                                                                   |
+| **This ride is full**                       | The ride already has 8 riders.                                           | Start a second ride.                                                                                                  |
+| **Nobody else is here yet** (after joining) | You are in the ride, but alone so far.                                   | Wait a few seconds; check that the link is from your friend's current ride.                                           |
+| A rider _could not be reached directly_     | You found each other, but your computers cannot connect directly.        | Usually a restrictive network. Try another network for one of you, e.g. home Wi-Fi instead of a hotspot.              |
+| _Someone tried to join … different secret_  | Someone used this ride's code with another secret.                       | Send your friend the whole invite link again.                                                                         |
+| The link does nothing when clicked          | The app does not open `freilauf://` links from the operating system yet. | Copy the link and paste it into the Group tab.                                                                        |
 
-More checks for the web version are in the [Docker guide](docker.md#troubleshooting).
+### Help us verify it
+
+The relay path could not be tested from the project's machines (they cannot reach public
+relays). If you try a ride between two homes, please send: whether it worked, both networks
+(home Wi-Fi, mobile hotspot, company …), and the lines tagged `p2p` from the diagnostic log
+(**Settings → Diagnostics → Export log**; names and invite codes are masked). The lines that
+matter: `joining via public relays`, `relay connected` (with `relaysOpen` / `relaysNotOpen`),
+`peer connected`, `no direct connection to a peer`, `a peer used another secret`, `giving up:
+no-relay`, `could not enter the group`.
 
 ## Limits
 
-- **Up to 8 riders** per room; everyone connects to everyone.
-- **No relay for difficult networks.** Freilauf uses public STUN servers only, no TURN relay.
-  Riders behind some networks — "symmetric NAT", common with mobile carriers, CGNAT and some
-  company or university networks — cannot connect directly; the app shows them as "cannot
-  connect". The technical background is in [p2p.md](p2p.md#nat-traversal-caveat).
-- **Trust-based.** Anyone with the link or code can join the room, and names are not verified.
-  There is no anti-cheat. Ride with people you know.
-- **The server is needed to join**, not to keep riding: riders already connected keep riding if
-  it goes away, but nobody new can join until it is back.
-- **No public server**, and links are not opened from the operating system yet (see above).
+- **Up to 8 riders** per ride; everyone connects to everyone.
+- **No relay for ride data (no TURN)** — see [When it does not work](#when-it-does-not-work).
+- **Depends on relays run by others.** Freilauf does not run or control them. All riders use
+  the same built-in set; at least one must be reachable from every rider's network.
+- **Trust-based.** Anyone with the whole invite can join, and names are not verified. There is
+  no anti-cheat. Ride with people you know.
+- Links are not opened from the operating system yet (see above).
 
-### Trying it on one computer
+## Advanced: your own signalling server
 
-To see group rides without any setup, run a server on your own computer — from the source
-folder, `pnpm signalling` — and in the Group tab choose **Use a server on this computer (for
-testing)**. Then a second copy of the app (or the web version) on the same computer can join
-with the invite link. Friends elsewhere cannot reach a server on `localhost` or `127.0.0.1`.
+Before the public relays, one person in the group had to run a small **signalling server**.
+That path still works, as a fallback while the relay path is being verified: in the **Group**
+tab, open **Advanced: use my own signalling server** (or **Settings → Group**), switch **Use my
+own signalling server** on and enter the address. Rides you create then go through that server,
+and the invite link carries its address (`freilauf://join/ABCDEF?s=wss%3A%2F%2F…`). Friends
+need nothing set up: such a link always uses the server it names, whatever their own setting
+is. With the option on, a bare six-character code also joins through your server.
+
+- **The server:** `apps/signalling` ([README](../apps/signalling/README.md)) — one small Node
+  process or container, reachable from the internet over HTTPS (`wss://`). The Docker web
+  version contains it at `/signal` on the same address ([Docker guide](docker.md)), so
+  `wss://<your-host>/signal` is your address there.
+- **Reachable from the internet:** a NAS behind a reverse proxy with a valid certificate
+  (WebSocket forwarding on; on Synology the _WebSocket_ custom header), port forwarding on the
+  router, or a small VPS. The [Docker guide](docker.md#synology-nas-container-manager--reverse-proxy)
+  covers the Synology steps; the [signalling README](../apps/signalling/README.md) covers a VPS
+  with Caddy or nginx.
+- **Check it:** the **Test connection** button reports _Reachable_, _Not reachable_ or _Not a
+  signalling server_ (and offers the right address if only the path is wrong). From a terminal:
+  `curl https://signal.example.org/healthz` → `ok`.
+- **What that server sees:** in memory only, while a rider is connected: the room code, a random
+  peer id and the name of each rider, and the IP address of each connection; it passes on the
+  (unencrypted) WebRTC handshake. By default it logs nothing but its start; with
+  `LOG_LEVEL=debug` it logs room codes. Your reverse proxy may log IP addresses.
+- **Its messages:** _Your signalling server is not reachable_, _That address is not a group-ride
+  server_ (wrong path or no WebSocket forwarding), _The server address is not valid_, _No server
+  address entered_.
+- **Trying it on one computer:** run `pnpm signalling` in the source folder and choose **Use a
+  server on this computer (for testing)** in the advanced section. Only windows on the same
+  computer can join.

@@ -1,8 +1,14 @@
 # Freilauf signalling server
 
-> Hosting rides for your friends? The step-by-step guide for riders, including a NAS and a
-> small server, is [docs/group-rides.md](../../docs/group-rides.md). This page is the
-> reference for the server itself.
+> **Optional.** Group rides need no server: by default riders find each other through public
+> relay servers ([docs/group-rides.md](../../docs/group-rides.md)). This server is the
+> advanced fallback behind **Use my own signalling server** (Group tab → Advanced, or Settings
+> → Group), kept until the relay path is confirmed on real networks
+> ([ADR 0003](../../docs/adr/0003-signalling-via-public-relays.md), which also lists what will
+> be removed with it). The rider-facing steps are in
+> [Advanced: your own signalling server](../../docs/group-rides.md#advanced-your-own-signalling-server);
+> the Docker web version contains this server at `/signal` ([docs/docker.md](../../docs/docker.md)).
+> This page is the reference for the server itself.
 
 A tiny WebSocket relay that lets Freilauf riders find each other for group rides. It only
 introduces peers and forwards their WebRTC handshake (SDP offers/answers and ICE candidates);
@@ -39,12 +45,14 @@ Environment variables:
 | `HOST`      | all     | Interface to bind, e.g. `127.0.0.1`                          |
 | `LOG_LEVEL` | (quiet) | `debug` logs room open/close events, including the room code |
 
-To try group rides on one computer, choose **Use a server on this computer (for testing)** in
-the app's Group tab (it sets `ws://127.0.0.1:8787`). Friends elsewhere cannot reach that
+To try the own-server path on one computer, choose **Use a server on this computer (for
+testing)** under **Advanced** in the app's Group tab (it sets `ws://127.0.0.1:8787` and switches
+the option on). Friends elsewhere cannot reach that
 address; for them the server must be reachable from the internet over `wss://` (below).
 
 What the server keeps and logs, and what it never sees, is listed under
-[Privacy](../../docs/group-rides.md#privacy-what-the-server-sees) in the rider guide.
+[Advanced: your own signalling server](../../docs/group-rides.md#advanced-your-own-signalling-server)
+in the rider guide.
 
 ## Self-host with Docker
 
@@ -59,8 +67,8 @@ docker run -d --restart unless-stopped --name freilauf-signalling \
 ## TLS (wss://)
 
 The server speaks plain `ws://` only. For anything reachable from the internet, terminate TLS in
-a reverse proxy and enter the resulting `wss://` address once in the app (**Settings → Group**,
-or **I want to host** in the Group tab). Friends do not enter it: it travels inside the invite
+a reverse proxy and enter the resulting `wss://` address once in the app (**Settings → Group**
+with **Use my own signalling server** on, or **Advanced** in the Group tab). Friends do not enter it: it travels inside the invite
 link. The proxy must pass the WebSocket
 upgrade through and should use a read timeout above the 30 s heartbeat.
 

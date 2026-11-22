@@ -1,4 +1,10 @@
-import { SignallingError } from '@freilauf/p2p';
+import {
+  buildInviteLink,
+  formatInviteCode,
+  generateInviteSecret,
+  GroupError,
+  SignallingError,
+} from '@freilauf/p2p';
 import { describe, expect, it } from 'vitest';
 import {
   classifyGroupError,
@@ -6,10 +12,13 @@ import {
   describeGroupFailure,
   emptyRoomHint,
   GroupSetupError,
+  groupNotes,
   PEER_TROUBLE_AFTER_MS,
   peerViews,
-  resolveHostServer,
+  relayStateFrom,
+  resolveHostTarget,
   resolveJoinTarget,
+  type GroupSettings,
   serverLabel,
   signallingUrlKind,
   signallingUrlProblem,
@@ -70,10 +79,50 @@ describe('signallingUrlProblem', () => {
   });
 });
 
+const RELAYS: GroupSettings = { useOwnServer: false, signallingUrl: '', relayUrls: [] };
+const own = (signallingUrl: string): GroupSettings => ({
+  useOwnServer: true,
+  signallingUrl,
+  relayUrls: [],
+});
+const SECRET = generateInviteSecret('ABCDEF');
+const INVITE = buildInviteLink('ABCDEF', SECRET);
+
 describe('resolveJoinTarget', () => {
-  it('takes the server from the link, whatever is configured', () => {
-    for (const configured of ['', 'wss://mine.example.org']) {
-      expect(resolveJoinTarget(LINK, configured)).toEqual({
+  const kind = (input: string, settings: GroupSettings): GroupFailureKind | null => {
+    try {
+      resolveJoinTarget(input, settings);
+      return null;
+    } catch (err) {
+      return err instanceof GroupSetupError ? err.kind : null;
+    }
+  };
+
+  it('a relay invite (link or full code) joins over the relays, whatever is configured', () => {
+    for (const settings of [RELAYS, own('wss://mine.example.org')]) {
+      for (const input of [INVITE, formatInviteCode('ABCDEF', SECRET)]) {
+        expect(resolveJoinTarget(input, settings)).toEqual({
+          transport: 'relays',
+          roomCode: 'ABCDEF',
+          secret: SECRET,
+          relayUrls: [],
+          input,
+        });
+      }
+    }
+    const custom = { ...RELAYS, relayUrls: ['wss://relay.example'] };
+    expect(resolveJoinTarget(INVITE, custom)).toMatchObject({ relayUrls: ['wss://relay.example'] });
+  });
+
+  it('finds the link inside a longer message', () => {
+    const t = resolveJoinTarget(`Ride with me tonight: ${INVITE} see you!`, RELAYS);
+    expect(t).toMatchObject({ roomCode: 'ABCDEF', secret: SECRET, input: INVITE });
+  });
+
+  it('an old-style link takes its server from the link, whatever is configured', () => {
+    for (const settings of [RELAYS, own('wss://mine.example.org')]) {
+      expect(resolveJoinTarget(LINK, settings)).toEqual({
+        transport: 'self-hosted',
         roomCode: 'ABCDEF',
         signallingUrl: 'wss://nas.example.org/signal',
         fromLink: true,
@@ -82,39 +131,41 @@ describe('resolveJoinTarget', () => {
     }
   });
 
-  it('finds the link inside a longer message', () => {
-    const t = resolveJoinTarget(`Ride with me tonight: ${LINK} see you!`, '');
-    expect(t.roomCode).toBe('ABCDEF');
-    expect(t.input).toBe(LINK);
-  });
-
-  it('uses the configured server for a bare code', () => {
-    expect(resolveJoinTarget('abc-def', 'wss://mine.example.org')).toMatchObject({
+  it('a bare code uses the own server when switched on', () => {
+    expect(resolveJoinTarget('abc-def', own('wss://mine.example.org'))).toMatchObject({
+      transport: 'self-hosted',
       roomCode: 'ABCDEF',
       signallingUrl: 'wss://mine.example.org',
       fromLink: false,
     });
   });
 
-  it('refuses a bare code without a server, and anything that is not an invite', () => {
-    const kind = (input: string, url: string): GroupFailureKind | null => {
-      try {
-        resolveJoinTarget(input, url);
-        return null;
-      } catch (err) {
-        return err instanceof GroupSetupError ? err.kind : null;
-      }
-    };
-    expect(kind('ABC-DEF', '')).toBe('no-server');
-    expect(kind('ABC-DEF', 'nonsense')).toBe('invalid-server');
-    expect(kind('hello', 'wss://x.example')).toBe('invalid-invite');
-    // A link without a server behaves like a bare code.
-    expect(kind('freilauf://join/ABCDEF', '')).toBe('no-server');
+  it('a bare code alone lacks the secret; typos and garbage are told apart', () => {
+    expect(kind('ABC-DEF', RELAYS)).toBe('secret-missing');
+    // A link without a server or secret behaves like a bare code.
+    expect(kind('freilauf://join/ABCDEF', RELAYS)).toBe('secret-missing');
+    expect(kind('ABC-DEF', own(''))).toBe('no-server');
+    expect(kind('ABC-DEF', own('nonsense'))).toBe('invalid-server');
+    expect(kind('hello', RELAYS)).toBe('invalid-invite');
+    const typo = INVITE.slice(0, -1) + (INVITE.endsWith('A') ? 'B' : 'A');
+    expect(kind(typo, RELAYS)).toBe('invite-typo');
+    expect(kind(`Join: ${typo}`, RELAYS)).toBe('invite-typo');
   });
+});
 
-  it('needs a server to host', () => {
-    expect(resolveHostServer(' wss://x.example ')).toBe('wss://x.example');
-    expect(() => resolveHostServer('')).toThrow(GroupSetupError);
+describe('resolveHostTarget', () => {
+  it('relays by default, the own server when switched on', () => {
+    expect(resolveHostTarget(RELAYS)).toEqual({ transport: 'relays', relayUrls: [] });
+    // A saved address alone does not switch anything.
+    expect(resolveHostTarget({ ...RELAYS, signallingUrl: 'wss://x.example' })).toEqual({
+      transport: 'relays',
+      relayUrls: [],
+    });
+    expect(resolveHostTarget(own(' wss://x.example '))).toEqual({
+      transport: 'self-hosted',
+      signallingUrl: 'wss://x.example',
+    });
+    expect(() => resolveHostTarget(own(''))).toThrow(GroupSetupError);
   });
 });
 
@@ -126,6 +177,16 @@ describe('classifyGroupError', () => {
     expect(classifyGroupError(new SignallingError('invalid-room', 'x'))).toBe('invalid-invite');
     expect(classifyGroupError(new GroupSetupError('no-server', 'x'))).toBe('no-server');
     expect(classifyGroupError(new Error('boom'))).toBe('unknown');
+  });
+
+  it('maps relay failures', () => {
+    const noRelay = new GroupError('no-relay', 'none answered');
+    expect(classifyGroupError(noRelay)).toBe('no-relay');
+    expect(classifyGroupError(noRelay, { online: false })).toBe('offline');
+    expect(classifyGroupError({ code: 'no-relay', message: 'x' })).toBe('no-relay');
+    expect(classifyGroupError(new GroupError('invalid-secret', 'x'))).toBe('invite-typo');
+    expect(classifyGroupError(new GroupError('room-full', 'x'))).toBe('room-full');
+    expect(classifyGroupError(new GroupError('relay-unavailable', 'x'))).toBe('unknown');
   });
 
   it('uses the probe to explain a timeout', () => {
@@ -157,6 +218,9 @@ describe('describeGroupFailure', () => {
   const kinds: GroupFailureKind[] = [
     'no-server',
     'invalid-invite',
+    'invite-typo',
+    'secret-missing',
+    'no-relay',
     'invalid-server',
     'offline',
     'unreachable',
@@ -198,6 +262,14 @@ describe('describeGroupFailure', () => {
   it('room full mentions the limit', () => {
     expect(describeGroupFailure('room-full').message).toContain('8 riders');
   });
+
+  it('no relay: says who runs them and what to try, plainly', () => {
+    const f = describeGroupFailure('no-relay');
+    expect(f.title).toBe('No relay server reachable');
+    expect(f.message).toMatch(/public relay servers run by others/);
+    expect(f.next).toMatch(/another network/);
+    expect(describeGroupFailure('secret-missing').next).toMatch(/whole invite link/);
+  });
 });
 
 describe('peerViews', () => {
@@ -220,10 +292,27 @@ describe('peerViews', () => {
 });
 
 describe('emptyRoomHint', () => {
-  it('tells a guest that a wrong code opens an empty room', () => {
-    expect(emptyRoomHint('guest', 'ABCDEF').message).toMatch(/wrong code.*empty room/);
-    expect(emptyRoomHint('guest', 'ABCDEF').message).toContain('ABC-DEF');
+  it('own server: tells a guest that a wrong code opens an empty room', () => {
+    const own = emptyRoomHint('guest', 'ABCDEF', 'self-hosted');
+    expect(own.message).toMatch(/wrong code.*empty room/);
+    expect(own.message).toContain('ABC-DEF');
     expect(emptyRoomHint('host', 'ABCDEF').title).toBe('Waiting for friends');
+  });
+
+  it('relays: points at the current invite', () => {
+    expect(emptyRoomHint('guest', 'ABCDEF', 'relays').message).toMatch(/current ride/);
+  });
+});
+
+describe('relay state and notes', () => {
+  it('maps transport states and problem codes to plain text', () => {
+    expect(relayStateFrom('connecting')).toBe('connecting');
+    expect(relayStateFrom('joined')).toBe('ready');
+    expect(relayStateFrom('reconnecting')).toBe('reconnecting');
+    expect(groupNotes(['secret-mismatch', 'peer-unreachable', 'other']).map((n) => n.code)).toEqual(
+      ['peer-unreachable', 'secret-mismatch'],
+    );
+    expect(groupNotes(['peer-unreachable'])[0]?.text).toMatch(/restrictive network/);
   });
 });
 

@@ -1,14 +1,14 @@
 /**
  * Community sync end to end: CommunityService participants over the real `GroupRide` (via the
- * app's `adaptGroupRide`), the fake WebRTC network and the in-process signalling hub, on a
- * fake clock. Covers meeting, standings, challenges, relaying and the peer-join no-leak rule
+ * app's `adaptGroupRide`) on both transports — the fake WebRTC network with the in-process
+ * signalling hub, and the fake relay (Trystero) network — on a fake clock. Covers meeting, standings, challenges, relaying and the peer-join no-leak rule
  * under delays, duplicates, loss and reordering.
  */
 import { KIND_STANDING } from '@freilauf/community';
 import { GroupRide } from '@freilauf/p2p';
 import type { DocumentEvent } from '@freilauf/p2p';
-import { FakeClock, FakeRtcNetwork, InMemorySignallingHub } from '@freilauf/p2p/testing';
-import type { FakeLinkConditions } from '@freilauf/p2p/testing';
+import { createTestNetwork, FakeClock, TEST_TRANSPORTS } from '@freilauf/p2p/testing';
+import type { FakeLinkConditions, TestTransportKind } from '@freilauf/p2p/testing';
 import { describe, expect, it } from 'vitest';
 import { adaptGroupRide } from '../main/groupConnector';
 import { CommunityService } from './communityService';
@@ -23,10 +23,9 @@ interface Rider {
   received: { from: string; kind: string; text: string }[];
 }
 
-function world(seed: number) {
+function world(kind: TestTransportKind, seed: number) {
   const clock = new FakeClock(T0);
-  const hub = new InMemorySignallingHub();
-  const network = new FakeRtcNetwork({ seed, timers: clock.timers });
+  const network = createTestNetwork(kind, { clock, seed });
   let peerCounter = 0;
   let randomState = seed * 7919;
   const random = () => {
@@ -51,21 +50,15 @@ function world(seed: number) {
     return r;
   };
 
-  let roomCode: string | null = null;
+  let host: GroupRide | null = null;
   const enter = async (r: Rider) => {
     // Peer ids sort in join order unless prefixed: vary who offers.
     r.peerId = `p${String(++peerCounter).padStart(2, '0')}-${r.name.toLowerCase()}`;
-    const deps = {
-      signalling: hub.createChannel(r.peerId),
-      createPeerConnection: network.createPeerConnection,
-      now: clock.now,
-      timers: clock.timers,
-      documentMessageMaxBytes: 400,
-    };
-    const ride = roomCode
-      ? await GroupRide.join(roomCode, r.name, deps)
-      : await GroupRide.create(r.name, deps);
-    roomCode = ride.roomCode;
+    const extra = { documentMessageMaxBytes: 400 };
+    const ride = host
+      ? await network.join(host, r.name, r.peerId, extra)
+      : await network.create(r.name, r.peerId, extra);
+    host ??= ride;
     r.ride = ride;
     ride.onDocument((e: DocumentEvent) => {
       if (e.type === 'available') {
@@ -85,7 +78,7 @@ function world(seed: number) {
 
   const newRoom = () => {
     for (const r of riders) if (r.ride) leave(r);
-    roomCode = null;
+    host = null;
   };
 
   return { clock, network, rider, enter, leave, settle, newRoom, riders };
@@ -95,9 +88,9 @@ const idOf = (r: Rider) => r.svc.view.profile.riderId;
 const hour = (id: string, powerW: number, start = T0 - DAY) =>
   syntheticRide(id, start, 3600, powerW);
 
-describe('community sync over GroupRide', () => {
+describe.each(TEST_TRANSPORTS)('community sync over GroupRide (%s)', (kind) => {
   it('A and B meet, exchange standings, run a group goal; B relays A to C only when allowed', async () => {
-    const w = world(1);
+    const w = world(kind, 1);
     const anna = w.rider('Anna');
     const ben = w.rider('Ben');
     const cleo = w.rider('Cleo');
@@ -169,7 +162,7 @@ describe('community sync over GroupRide', () => {
 
   for (const seed of [1, 2, 3]) {
     it(`no leak: a newcomer never receives A's richer standing (unknown newcomer, seed ${seed})`, async () => {
-      const w = world(seed);
+      const w = world(kind, seed);
       const anna = w.rider('Anna');
       const ben = w.rider('Ben');
       const cleo = w.rider('Cleo');
@@ -188,7 +181,7 @@ describe('community sync over GroupRide', () => {
       );
       expect(fromAnnaToBen.at(-1)?.text).toContain('"l":"e"');
 
-      w.network.conditions = LINKS;
+      w.network.setConditions(LINKS);
       // Anna keeps re-publishing her rich standing to Ben while Cleo arrives.
       anna.svc.recordRide(syntheticRide('a2', T0 - 2 * DAY, 1300, 270), {
         ftpW: 250,
@@ -208,7 +201,7 @@ describe('community sync over GroupRide', () => {
     });
 
     it(`no leak: a known rider set to 'none' gets identity only, never A's standing (seed ${seed})`, async () => {
-      const w = world(seed + 10);
+      const w = world(kind, seed + 10);
       const anna = w.rider('Anna');
       const ben = w.rider('Ben');
       const cleo = w.rider('Cleo');
@@ -229,7 +222,7 @@ describe('community sync over GroupRide', () => {
       await w.settle();
       anna.svc.setContactVisibility(idOf(ben), 'everything');
       await w.settle();
-      w.network.conditions = LINKS;
+      w.network.setConditions(LINKS);
       await w.enter(cleo);
       await w.settle(10_000);
 

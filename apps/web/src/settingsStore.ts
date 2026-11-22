@@ -32,7 +32,11 @@ export interface MessageChannelLike {
   addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
 }
 
-/** Desktop defaults, with the signalling server on the page's own origin. */
+/**
+ * Desktop defaults (group rides over the public relays), with the page's own
+ * `/signal` prefilled as the own-server address, for the advanced "Use my own
+ * signalling server" fallback (the bundled server still serves it).
+ */
 export function webDefaultSettings(location: { protocol: string; host: string }): Settings {
   return deepMerge(DEFAULT_SETTINGS, {
     group: { signallingUrl: defaultSignallingUrl(location) },

@@ -4,9 +4,11 @@ import { DEFAULT_SETTINGS } from '../../desktop/src/shared/contract';
 export const SIGNALLING_PATH = '/signal';
 
 /**
- * Default signalling URL for the web build: the same origin the page came
+ * Own-server address prefilled in the web build: the same origin the page came
  * from, at `/signal`, so a single published port (or reverse-proxy entry)
- * serves the app and group rides. `wss:` when the page is served over HTTPS.
+ * serves the app and the fallback signalling. `wss:` when the page is served
+ * over HTTPS. Only used when "Use my own signalling server" is switched on;
+ * group rides go over the public relays by default.
  */
 export function defaultSignallingUrl(location: { protocol: string; host: string }): string {
   if (!location.host) return DEFAULT_SETTINGS.group.signallingUrl;

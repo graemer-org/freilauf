@@ -4,8 +4,8 @@
 
 - [getting-started.md](getting-started.md) — build or install, first start, pairing devices,
   the overlay and its hotkey, simulation mode, where the log is
-- [group-rides.md](group-rides.md) — ride with friends: join with an invite link, or host a
-  signalling server (Docker, NAS, small server), privacy, troubleshooting
+- [group-rides.md](group-rides.md) — ride with friends: create a ride and send the link (no
+  setup), what the public relay servers see, troubleshooting, and the advanced own-server option
 - [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
   NAS, and how it differs from the desktop app
 - [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it is, how to export
@@ -16,10 +16,11 @@ The rest of this page is technical: decisions, protocols and how features are bu
 
 ## Architecture decisions (`adr/`)
 
-| ADR                                  | Topic                                                                    |
-| ------------------------------------ | ------------------------------------------------------------------------ |
-| [0001](adr/0001-architecture.md)     | Package boundaries, device/transport layers, the BLE adapter in Electron |
-| [0002](adr/0002-virtual-shifting.md) | Software virtual shifting via FTMS simulation parameters                 |
+| ADR                                              | Topic                                                                               |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [0001](adr/0001-architecture.md)                 | Package boundaries, device/transport layers, the BLE adapter in Electron            |
+| [0002](adr/0002-virtual-shifting.md)             | Software virtual shifting via FTMS simulation parameters                            |
+| [0003](adr/0003-signalling-via-public-relays.md) | Group-ride signalling via public relays (Trystero); removal plan for the own server |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.
@@ -35,9 +36,9 @@ Anything not yet confirmed on real hardware is marked unverified.
 
 ## Features (technical)
 
-- [p2p.md](p2p.md) — peer-to-peer group rides: room codes, the signalling
-  server, the WebRTC mesh and its message protocol, shared documents and the
-  synchronised start (for riders: [group-rides.md](group-rides.md))
+- [p2p.md](p2p.md) — peer-to-peer group rides: invites and secrets, the relay
+  transport (Trystero) and the fallback signalling server + WebRTC mesh, the
+  message protocol, shared documents and the synchronised start (for riders: [group-rides.md](group-rides.md))
 - [workouts.md](workouts.md) — structured workouts: model, ERG runner,
   `.zwo` import/export, built-in library, FTP tests
 - [community.md](community.md) — points, totals, friends, challenges and
@@ -55,18 +56,18 @@ Anything not yet confirmed on real hardware is marked unverified.
 Requires Node.js ≥ 22.18 and pnpm 10 (`corepack enable` picks up the version
 pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-| Command           | What it does                                                      |
-| ----------------- | ----------------------------------------------------------------- |
-| `pnpm dev`        | Start the desktop app in development mode (electron-vite)         |
-| `pnpm dev:sim`    | Same, with simulated devices (`FREILAUF_SIM=1`)                   |
-| `pnpm build`      | Production build of the desktop app                               |
-| `pnpm dist`       | Build installers for the current system (electron-builder)        |
-| `pnpm signalling` | Run the signalling server on port 8787 (see group-rides.md)       |
-| `pnpm test`       | Unit tests (Vitest) for all packages                              |
-| `pnpm test:watch` | Vitest in watch mode                                              |
-| `pnpm test:e2e`   | Build the desktop app and run the Electron e2e tests (Playwright) |
-| `pnpm typecheck`  | `tsc --noEmit` in every workspace package                         |
-| `pnpm format`     | Format with Prettier (`format:check` only checks)                 |
+| Command           | What it does                                                         |
+| ----------------- | -------------------------------------------------------------------- |
+| `pnpm dev`        | Start the desktop app in development mode (electron-vite)            |
+| `pnpm dev:sim`    | Same, with simulated devices (`FREILAUF_SIM=1`)                      |
+| `pnpm build`      | Production build of the desktop app                                  |
+| `pnpm dist`       | Build installers for the current system (electron-builder)           |
+| `pnpm signalling` | Run the optional own signalling server on port 8787 (group-rides.md) |
+| `pnpm test`       | Unit tests (Vitest) for all packages                                 |
+| `pnpm test:watch` | Vitest in watch mode                                                 |
+| `pnpm test:e2e`   | Build the desktop app and run the Electron e2e tests (Playwright)    |
+| `pnpm typecheck`  | `tsc --noEmit` in every workspace package                            |
+| `pnpm format`     | Format with Prettier (`format:check` only checks)                    |
 
 | Variable             | Used by    | Effect                                                                                                                    |
 | -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -82,10 +83,10 @@ pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 | `packages/devices`   | BLE transport interfaces, protocol parsers and device drivers (FTMS, HR, controllers) |
 | `packages/sim`       | Bike physics, virtual gearing, simulated devices                                      |
 | `packages/session`   | Ride state, recording, `.fit` encoding                                                |
-| `packages/p2p`       | Signalling client, WebRTC mesh, group state, shared documents                         |
+| `packages/p2p`       | Relay transport (Trystero), fallback signalling + WebRTC mesh, group state, documents |
 | `packages/workouts`  | Structured workouts, `.zwo` import/export, FTP tests                                  |
 | `packages/community` | Points, totals, contacts, challenges, leaderboards, sync                              |
 | `apps/desktop`       | Electron app: main window, overlay, Bluetooth chooser, persistence                    |
 | `apps/web`           | Browser build of the app (served by the Docker image)                                 |
-| `apps/signalling`    | Minimal WebSocket signalling server (self-hostable)                                   |
+| `apps/signalling`    | Optional WebSocket signalling server (self-hostable fallback)                         |
 | `docs/index.html`    | The project website (static, no build step)                                           |

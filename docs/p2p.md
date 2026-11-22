@@ -5,59 +5,83 @@
 
 Freilauf group rides connect up to 8 friends directly over WebRTC data channels. There is no
 game server: every rider broadcasts their own state, every client renders the others from what
-it receives. A tiny, self-hostable signalling server only introduces the peers.
+it receives. Only the introduction — the WebRTC handshake — needs a third party: by default
+**public Nostr relays via [Trystero](https://github.com/dmotz/trystero)** (no setup, no
+Freilauf server), or, as an advanced fallback, our own self-hostable signalling server. The
+decision, what we rely on in Trystero and the removal plan for the fallback are in
+[ADR 0003](adr/0003-signalling-via-public-relays.md). **The relay path is not yet verified on
+real networks.**
 
-Code: `packages/p2p` (client, runs in the renderer) and `apps/signalling` (server, Node).
+Code: `packages/p2p` (client, runs in the renderer) and `apps/signalling` (fallback server,
+Node).
 
 ## Architecture
 
 ```
-            ┌──────────────── signalling server (WebSocket, relay only) ────────────────┐
-            │  rooms: code -> peers        join / peer list / peer-joined / peer-left    │
-            │                              signal {to} -> signal {from}                  │
-            └──────▲───────────────────────────▲───────────────────────────▲─────────────┘
-                   │ SDP / ICE                  │                           │
-             ┌─────┴─────┐  data channel  ┌─────┴─────┐  data channel ┌─────┴─────┐
-             │  Rider A  │◄──────────────►│  Rider B  │◄─────────────►│  Rider C  │
-             └─────▲─────┘                └───────────┘               └─────▲─────┘
-                   └───────────────────────── data channel ─────────────────┘
+   public Nostr relays (run by others)              own signalling server (advanced fallback)
+   encrypted handshake on a hashed topic            rooms: code -> peers, relays SDP / ICE
+            ▲             ▲                                    ▲            ▲
+            │ Trystero    │                                    │ WebSocket  │
+      ┌─────┴─────┐ data channel ┌─────┴─────┐  data channel ┌─────┴─────┐
+      │  Rider A  │◄────────────►│  Rider B  │◄─────────────►│  Rider C  │
+      └─────▲─────┘              └───────────┘               └─────▲─────┘
+            └──────────────────────── data channel ────────────────┘
 ```
+
+A ride uses one of the two; the invite says which (see "Invites").
 
 Layers inside `@freilauf/p2p`:
 
-| Module                    | Responsibility                                                          |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `roomCode.ts`             | 6-char codes, input normalisation, `freilauf://join/…` links            |
-| `signalling/channel.ts`   | `SignallingChannel` interface (pluggable)                               |
-| `signalling/websocket.ts` | `WebSocketSignalling`: the shipped implementation, reconnects           |
-| `signalling/protocol.ts`  | Client copy of the wire protocol (see "Protocol source of truth")       |
-| `webrtc.ts`               | Structural WebRTC types, default STUN servers, default factory          |
-| `mesh.ts`                 | `PeerMesh`: one `RTCPeerConnection` + data channel per peer             |
-| `riderState.ts`           | Validation, ordering, extrapolation, smoothing, gaps                    |
-| `documents.ts`            | Shared documents (e.g. workouts) and synchronised start                 |
-| `group.ts`                | `GroupRide`: the API the app uses                                       |
-| `testing/`                | Fake WebRTC, in-memory signalling, fake clock (`@freilauf/p2p/testing`) |
+| Module                     | Responsibility                                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `roomCode.ts`              | Room codes, invite secrets, `freilauf://join/…` links, parsing incl. typos                                                            |
+| `transport.ts`             | `GroupTransport`: what `GroupRide` needs from the network; `GroupError`                                                               |
+| `transports/relay.ts`      | `RelayTransport` (default): a Trystero room; `DEFAULT_RELAY_URLS`, app id                                                             |
+| `transports/selfHosted.ts` | `SignallingMeshTransport` (fallback): signalling channel + `PeerMesh`                                                                 |
+| `ice.ts`                   | Default STUN servers                                                                                                                  |
+| `signalling/channel.ts`    | Fallback: `SignallingChannel` interface (pluggable)                                                                                   |
+| `signalling/websocket.ts`  | Fallback: `WebSocketSignalling`, reconnects                                                                                           |
+| `signalling/protocol.ts`   | Fallback: client copy of the wire protocol (see "Protocol source of truth")                                                           |
+| `webrtc.ts`                | Fallback: structural WebRTC types, default factory                                                                                    |
+| `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                 |
+| `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                  |
+| `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                               |
+| `group.ts`                 | `GroupRide`: the API the app uses                                                                                                     |
+| `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`) |
 
-All host dependencies (`WebSocket`, `RTCPeerConnection`, timers, clock) are injectable; the
-defaults use the renderer's globals. The package type-checks without DOM or Node libs.
+All host dependencies (Trystero, `WebSocket`, `RTCPeerConnection`, timers, clock) are
+injectable; the defaults use the renderer's globals. Trystero is loaded with a dynamic
+`import('trystero')` on first use (its own chunk), so nothing evaluates it at import time and
+the Electron main bundle never contains it. The package type-checks without DOM or Node libs.
 
 ### Using it
 
 ```ts
-import { GroupRide, parseJoinLink } from '@freilauf/p2p';
+import { GroupRide, parseInvite } from '@freilauf/p2p';
 
-const ride = await GroupRide.create('Anna', { signallingUrl: 'wss://signal.example.org' });
-share(ride.joinLink); // freilauf://join/ABCDEF?s=wss%3A%2F%2Fsignal.example.org
+// Default: public relays. A new code and secret are generated.
+const ride = await GroupRide.create('Anna', { relay: {} });
+share(ride.joinLink); // freilauf://join/ABCDEF#GHJKMNPQRSTU
+ride.inviteCode; // ABC-DEF-GHJK-MNPQ-RSTU (to read out)
 
 // on a friend's machine
-const link = parseJoinLink(input); // also accepts a bare "abc-def"
-const ride = await GroupRide.join(link.roomCode, 'Ben', {
-  signallingUrl: link.signallingUrl ?? DEFAULT_URL,
-});
+const parsed = parseInvite(input); // link, full code, legacy link or bare code; never throws
+if (parsed.ok && parsed.invite.secret) {
+  const ride = await GroupRide.join(parsed.invite.roomCode, 'Ben', {
+    relay: { secret: parsed.invite.secret },
+  });
+}
+// Fallback: an own signalling server (old-style links carry it as ?s=)
+await GroupRide.create('Anna', { signallingUrl: 'wss://signal.example.org' });
+
+ride.signallingState; // relays: 'connecting' until a relay answers, then 'joined'
+ride.onFailure(({ code }) => …); // e.g. 'no-relay' — the ride has ended
+ride.getProblems(); // [{ code: 'secret-mismatch' | 'peer-unreachable' | 'room-full', peerId, at }]
+ride.onLog((line) => …); // diagnostic lines (relays open / not open, peers, failures)
 
 ride.setLocalState({ distanceM, speedMps, powerW, cadenceRpm, heartRateBpm, gear }); // any rate
 requestAnimationFrame(() => render(ride.getRiders())); // extrapolated to "now"
-ride.onChange(() => …); // riders / connections / signalling state changed
+ride.onChange(() => …); // riders / connections / names / problems / signalling state changed
 
 // shared documents (opaque text, e.g. encodeWorkout(w)) and a synchronised start
 const shared = ride.shareDocument('workout', encodeWorkout(w)); // { ok: true, id } | { ok: false, reason }
@@ -68,10 +92,74 @@ ride.onStart(({ kind, id, startsInMs }) => …);
 ride.leave();
 ```
 
-`GroupRide.join` rejects with a `SignallingError` whose `code` is e.g. `room-full`,
-`invalid-room` or `join-timeout`.
+`GroupRide.join` rejects with a `GroupError` whose `code` is e.g. `invalid-room`,
+`invalid-secret`, `no-relay` (relays failed while starting), `relay-unavailable` (library did
+not load), `room-full` or, on the fallback, `join-timeout` (a `SignallingError`).
 
-### Mesh negotiation
+## Transports
+
+`GroupRide` talks to a `GroupTransport` (`transport.ts`): `start(room, name)`, `getPeers()`,
+`send(peerId, text)` / `broadcast(text)` (small messages, ≤ 16 KiB), `close()`, and the events
+`peer-joined` (synchronous, before any message for that peer passes), `peer-left`,
+`peer-updated` (name known), `status`, `message`, `state`, `problem`, `failed`, `log`.
+Everything above — rider state, documents, start, `onPeerJoined` — is transport-independent;
+the GroupRide test suites run on both transports (`TEST_TRANSPORTS` in `testing/harness.ts`).
+
+### Relay transport (default)
+
+- **Room:** `joinRoom({ appId: 'freilauf/group-ride/v1', password: <secret>, identity: 'none',
+maxUsers: 8, maxReceiveBytes: 64 KiB, relayConfig: { urls, redundancy: urls.length },
+rtcConfig: { iceServers: DEFAULT_ICE_SERVERS } }, <room code>)`. `identity: 'none'`: throwaway
+  keys per ride, no IndexedDB, nothing that links one ride to the next.
+- **Relays:** `DEFAULT_RELAY_URLS` (8 relays pinned from Trystero 0.27's list; see the ADR),
+  replaceable in Settings → Group (advanced). `redundancy` is set explicitly because Trystero
+  otherwise uses only the first 5 of a custom list.
+- **State:** `connecting` until a relay socket is open (`getRelaySockets()`, polled every
+  250 ms), then `joined`; `reconnecting` if all are lost later (connected peers are unaffected).
+  **Failure `no-relay`:** Trystero's `relay-failed` (every relay failed its first attempt), or no
+  relay open after 15 s (a hanging connection never fails by itself).
+- **Peers:** `onPeerJoin` → record created, `peer-joined` emitted (name unknown), our `fl-hello`
+  `{ "v": 1, "name": … }` sent to that peer, then `status: connected` (which makes `GroupRide`
+  send its state and document list). A message from a peer we have not announced yet would
+  announce it first — Trystero does not deliver messages before `onPeerJoin`, but the ordering
+  rule must not depend on that. `onPeerLeave` → `peer-left`.
+- **Messages:** one action `fl-msg`, strings only, the same JSON messages as on the mesh
+  channel. ≤ 16 KiB each, sent as one inline frame; larger outgoing messages are refused,
+  incoming ones are rejected by an `onReceive` gate. At most 64 sends per peer may be queued in
+  Trystero (it waits while the channel's `bufferedAmount` is above 64 KiB); further sends return
+  false.
+- **Problems:** `decrypt-failed` → `secret-mismatch`, `peer-connect-failed` →
+  `peer-unreachable`, `room-full` → fatal if we have no peer yet, otherwise a problem.
+
+**Reliability.** Trystero's data channel is reliable and ordered (browser defaults), unlike the
+mesh's unreliable, unordered one. The document protocol is pull-based with retries and works
+unchanged: on a reliable channel the retries just never fire. The cost is head-of-line
+blocking: a 4 Hz state packet queues behind document chunks already sent. The sharer serves at
+most 48 KiB in a burst and 24 KiB/s per peer in ≤ 1100-byte messages, so a state packet waits at
+most behind ~48 KiB once (≈ 0.4 s at 1 Mbit/s, ≈ 0.04 s at 10 Mbit/s) and behind ≤ 24 KiB/s
+afterwards — and only while a document is being fetched.
+
+### Invites
+
+| Form                           | Example                                  | Transport                                |
+| ------------------------------ | ---------------------------------------- | ---------------------------------------- |
+| Relay invite link              | `freilauf://join/ABCDEF#GHJKMNPQRSTU`    | relays, secret after `#`                 |
+| Full invite code (to read out) | `ABC-DEF-GHJK-MNPQ-RSTU`                 | relays (18 symbols; also in a link path) |
+| Old-style link                 | `freilauf://join/ABCDEF?s=wss%3A%2F%2F…` | that signalling server                   |
+| Bare room code                 | `ABC-DEF`                                | own server only (no secret)              |
+
+The secret is 11 random symbols of the room-code alphabet (≈ 54 bits) plus a check symbol
+`Σ (i+1)·value(sᵢ) mod 31` over code and secret: it catches every single wrong symbol and every
+swap of neighbours, so `parseInvite` reports `typo` instead of opening another room. The relays
+see `SHA-256(["Trystero", appId, code])` — enough to guess the 6-character code — but the
+handshake key is PBKDF2(secret, 600 000 iterations), so they cannot read or join without the
+secret. A bare code therefore cannot join a relay ride; the app asks for the whole invite.
+
+### Self-hosted transport (advanced fallback)
+
+The signalling server and `PeerMesh`, described below, unchanged.
+
+### Mesh negotiation (fallback transport)
 
 - **Offerer rule (no glare):** for each pair, the peer with the lexicographically smaller peer
   id creates the connection and sends the offer; the other only answers.
@@ -116,7 +204,7 @@ ride.leave();
 
 ## Wire formats
 
-### Signalling (JSON text frames over WebSocket)
+### Signalling (fallback transport; JSON text frames over WebSocket)
 
 Client → server:
 
@@ -164,7 +252,11 @@ server under Node; neither depends on the other at runtime).
 time plus identical constants at runtime; the integration tests round-trip against the real
 server. Change both files together.
 
-### Data channel (`freilauf-state`, JSON text)
+### Data messages (JSON text)
+
+The same messages travel on the mesh's `freilauf-state` channel (fallback) and in the relay
+transport's `fl-msg` action (default). The relay transport additionally sends one `fl-hello`
+action per peer, `{ "v": 1, "name": "Anna" }`, which never reaches `GroupRide`.
 
 ```jsonc
 {
@@ -216,7 +308,8 @@ Field rules (anything else drops the message): `k` matches `^[a-z0-9][a-z0-9-]{0
 
 ## Shared documents
 
-A small, generic mechanism on top of the unreliable channel — no second (reliable) channel. The
+A small, generic mechanism that works on the unreliable mesh channel (and therefore unchanged on
+the relay transport's reliable one) — no second channel. The
 app decides what a document means; `@freilauf/p2p` treats the text as opaque. Workouts are
 shared as `kind: 'workout'` with `encodeWorkout(w)` as text and must be decoded (and thereby
 validated) with `decodeWorkout` on receipt (see `docs/workouts.md`).
@@ -247,17 +340,22 @@ document, the old one is removed at once (`reason: 'replaced'`) and the new one 
 
 ### Peer-join ordering
 
-`onPeerJoined` fires **synchronously** from the event in which the mesh first learns of a peer
-(signalling `peers` / `peer-joined`, or a first signal from an unknown member) — before that
-peer's data channel can exist, because opening it needs further signalling round-trips. Since a
+`onPeerJoined` fires **synchronously** from the event in which the transport first learns of a
+peer, before any message can be exchanged with it through the ride. Fallback mesh: signalling
+`peers` / `peer-joined`, or a first signal from an unknown member — before that peer's data
+channel can exist, because opening it needs further signalling round-trips. Relay transport:
+`onPeerJoin`, or a first message from an unannounced peer — the transport emits `peer-joined`
+before it lets any message from or to that peer through (see "Relay transport"). Since a
 sharer only ever answers `doc-req` for its **current** id of a kind (stale ids are ignored, and
 chunks are sent only to the requesting peer, never broadcast), a document replaced or withdrawn
 inside the listener can never reach the newcomer: the first `doc-list` it gets is the one sent
 when its channel opens, listing the replaced documents. Apps that publish per-audience content
 (the community sync, see `docs/community.md`) narrow what they share in this listener.
-`groupPeerJoin.test.ts` checks this for both offer directions with delays, duplicates, loss and
-reordering, and while another peer is still fetching the old version; a control case shows the
-newcomer does get the old document without the reshare. (`onChange` also fires synchronously
+`groupPeerJoin.test.ts` checks this on both transports — for both offer directions with delays,
+duplicates, loss and reordering (fallback), with delays and with the newcomer's messages arriving
+before the host's `onPeerJoin` (relays), and while another peer is still fetching the old
+version; a control case shows the newcomer does get the old document without the reshare. The
+community no-leak tests (`communitySync.integration.test.ts`) also run on both. (`onChange` also fires synchronously
 for the same event, via the `connecting` status, but `onPeerJoined` is the documented contract.)
 
 ### Delivery algorithm
@@ -333,27 +431,28 @@ not have to be one of the announcer's own documents. There is no "cancel" messag
 
 ## Limits
 
-| What                    | Limit                                       |
-| ----------------------- | ------------------------------------------- |
-| Riders per room         | 8 (server rejects the 9th with `room-full`) |
-| Signalling message size | 64 KiB (error); > 128 KiB closes the socket |
-| Signalling rate         | burst 200, then 50 messages/s per socket    |
-| Heartbeat               | ping every 30 s, dropped if no pong         |
-| Name                    | 24 code points                              |
-| Data-channel message    | 16 KiB at the mesh, 2 KiB for state         |
-| Shared document         | 16 KiB UTF-8, kind `[a-z0-9-]`, ≤ 32 chars  |
-| Documents per rider     | 4 kinds, 32 KiB in total                    |
-| Document chunks         | ≤ 1100 bytes each (default), ≤ 128 per doc  |
-| Concurrent transfers    | 16 (all peers)                              |
-| Serving rate per peer   | 48 KiB burst, then 24 KiB/s                 |
-| Start delay             | 0 – 10 min                                  |
+| What                    | Limit                                              |
+| ----------------------- | -------------------------------------------------- |
+| Riders per room         | 8 (`room-full` for the 9th, both transports)       |
+| Signalling message size | 64 KiB (error); > 128 KiB closes the socket        |
+| Signalling rate         | burst 200, then 50 messages/s per socket           |
+| Heartbeat               | ping every 30 s, dropped if no pong                |
+| Name                    | 24 code points                                     |
+| Data-channel message    | 16 KiB (mesh and relay transport), 2 KiB for state |
+| Relay connect timeout   | 15 s, then `no-relay`                              |
+| Shared document         | 16 KiB UTF-8, kind `[a-z0-9-]`, ≤ 32 chars         |
+| Documents per rider     | 4 kinds, 32 KiB in total                           |
+| Document chunks         | ≤ 1100 bytes each (default), ≤ 128 per doc         |
+| Concurrent transfers    | 16 (all peers)                                     |
+| Serving rate per peer   | 48 KiB burst, then 24 KiB/s                        |
+| Start delay             | 0 – 10 min                                         |
 
 A full mesh of 8 means 7 connections per rider; that is fine for a few hundred bytes per
 second each but would not scale to large groups (that would need an SFU-like relay).
 
 ## NAT traversal caveat
 
-By default only public STUN servers are used:
+On both transports, by default only public STUN servers are used:
 
 - `stun:stun.l.google.com:19302`
 - `stun:stun.cloudflare.com:3478`
@@ -368,7 +467,7 @@ The fix is a TURN relay. Freilauf does not ship one, but any standard TURN serve
 
 ```ts
 await GroupRide.join(code, name, {
-  signallingUrl,
+  relay: { secret }, // or signallingUrl
   iceServers: [
     { urls: 'stun:stun.cloudflare.com:3478' },
     {
@@ -382,12 +481,12 @@ await GroupRide.join(code, name, {
 
 TURN relays all traffic of affected pairs through that server (still end-to-end encrypted by
 DTLS). Static credentials embedded in a client are visible to every user; for a public
-deployment use time-limited credentials (coturn's `use-auth-secret` / REST API scheme), which
-the signalling server could hand out on `joined` in a future protocol version.
+deployment use time-limited credentials (coturn's `use-auth-secret` / REST API scheme). There
+is no UI for it; on the relay transport the servers go into Trystero's `rtcConfig`.
 
-## Self-hosting the signalling server
+## Self-hosting the signalling server (fallback)
 
-See [`apps/signalling/README.md`](../apps/signalling/README.md). In short:
+Only needed with "Use my own signalling server" (Settings → Group, advanced). See [`apps/signalling/README.md`](../apps/signalling/README.md). In short:
 
 ```sh
 docker build -t freilauf-signalling apps/signalling
@@ -400,13 +499,20 @@ Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front and use the
 
 ## Trust model
 
-Trust-based, among friends: no anti-cheat, no authentication. Anyone with the room code can
-join. Peers can lie about their speed, but they cannot crash or corrupt other clients' UIs —
+Trust-based, among friends: no anti-cheat, no authentication. Anyone with the whole invite
+(relays) or the room code (own server) can join. Peers can lie about their speed, but they cannot crash or corrupt other clients' UIs —
 every incoming packet is validated and bounded.
 
 ## Testing
 
 `packages/p2p/src/testing` exports (via `@freilauf/p2p/testing`):
+
+- `FakeTrysteroNetwork` — in-memory stand-in for Trystero's `joinRoom` (`moduleFor(peerId)`):
+  rooms by app id + room id, `decrypt-failed` for different passwords, reliable ordered links
+  with `conditions.maxDelayMs`, `joinSkewMs` (messages before `onPeerJoin`), `relaysReachable`
+  / `relaysFailFast` / `restoreRelays()`, `blockDirect` (`peer-connect-failed`), `room-full`.
+- `createTestNetwork(kind, { clock, seed })` and `TEST_TRANSPORTS` — run a GroupRide test on
+  `self-hosted` and `relays` alike (`create`, `join`, `setConditions`, `sentMessages`, `inject`).
 
 - `FakeRtcNetwork` — in-memory `RTCPeerConnection` pairs (pre-negotiated channels only),
   with `fail(pc)` and `blockConnectivity` to simulate trouble, and `conditions`
@@ -416,7 +522,10 @@ timers })`; delays need the fake clock's timers and reorder messages) for data-c
 - `InMemorySignallingHub` — a `SignallingChannel` implementation with server semantics.
 - `FakeClock` — deterministic `now()` + timers, `advance()` / `advanceAsync()`.
 
-The integration tests run three `GroupRide`s through the real signalling server in-process
+`relayTransport.test.ts` covers the relay transport itself (config, names, ordering, relay
+failure fast and by timeout, reconnecting, wrong secret, no direct path, full room, limits) and
+checks that the pinned relays are in the installed Trystero's list. Nothing here talks to real
+relays. The integration tests run three `GroupRide`s through the real signalling server in-process
 (`ws`) on top of `FakeRtcNetwork`. `groupDocuments.test.ts` covers shared documents and the
 synchronised start, including 40 % loss with reordering and duplicates over several fixed seeds
 (across 300 seeds, four riders converged in median ≈ 5 s, worst 16 s simulated time; the test

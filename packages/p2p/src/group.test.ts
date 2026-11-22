@@ -1,40 +1,45 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SignallingServer } from '@freilauf/signalling';
 import { GroupRide, type LocalRiderState } from './group';
-import { FakeClock, FakeRtcNetwork, InMemorySignallingHub } from './testing';
+import {
+  createTestNetwork,
+  FakeClock,
+  FakeRtcNetwork,
+  InMemorySignallingHub,
+  TEST_TRANSPORTS,
+} from './testing';
 import { startServer, wsFactory } from './testing/wsTestUtils';
 
 function local(distanceM: number, speedMps = 10): LocalRiderState {
   return { distanceM, speedMps, powerW: 200, cadenceRpm: 90, heartRateBpm: null, gear: 11 };
 }
 
-describe('GroupRide (in-memory signalling, fake clock)', () => {
+describe.each(TEST_TRANSPORTS)('GroupRide (%s, fake clock)', (kind) => {
   async function setup() {
     const clock = new FakeClock();
-    const hub = new InMemorySignallingHub();
-    const network = new FakeRtcNetwork();
-    const deps = (peerId: string) => ({
-      signalling: hub.createChannel(peerId),
-      createPeerConnection: network.createPeerConnection,
-      now: clock.now,
-      timers: clock.timers,
-    });
-    const anna = await GroupRide.create('Anna', deps('peer-a'));
-    const ben = await GroupRide.join(anna.roomCode.toLowerCase(), 'Ben', deps('peer-b'));
+    const net = createTestNetwork(kind, { clock });
+    const anna = await net.create('Anna', 'peer-a');
+    const ben = await net.join(
+      { roomCode: anna.roomCode.toLowerCase(), secret: anna.secret },
+      'Ben',
+      'peer-b',
+    );
     await clock.advanceAsync(50);
-    return { clock, network, anna, ben };
+    return { clock, net, anna, ben };
   }
 
   it('broadcasts at 4 Hz and exposes extrapolated riders with gaps', async () => {
-    const { clock, network, anna, ben } = await setup();
+    const { clock, net, anna, ben } = await setup();
     expect(anna.getPeers().map((p) => p.status)).toEqual(['connected']);
     anna.setLocalState(local(1000, 10));
     ben.setLocalState(local(990, 8));
+    const before = net.sentMessages().length;
     await clock.advanceAsync(1000);
 
-    const channel = network.connections[0]?.channels[0];
-    expect(channel?.sent.length).toBeGreaterThanOrEqual(4);
-    expect(channel?.sent.length).toBeLessThanOrEqual(5);
+    // Two riders, 4–5 state packets each.
+    const sent = net.sentMessages().length - before;
+    expect(sent).toBeGreaterThanOrEqual(8);
+    expect(sent).toBeLessThanOrEqual(10);
 
     const [seenByBen] = ben.getRiders();
     expect(seenByBen).toMatchObject({ peerId: 'peer-a', name: 'Anna', stale: false });
@@ -44,6 +49,13 @@ describe('GroupRide (in-memory signalling, fake clock)', () => {
     const [seenByAnna] = anna.getRiders();
     expect(seenByAnna?.distanceM).toBeCloseTo(998, 0);
     expect(seenByAnna?.gapM).toBeCloseTo(-12, 0);
+  });
+
+  it('knows the other rider by name before any state was sent', async () => {
+    const { anna, ben } = await setup();
+    expect(anna.getPeers()).toMatchObject([{ peerId: 'peer-b', name: 'Ben', status: 'connected' }]);
+    expect(ben.getPeers()).toMatchObject([{ peerId: 'peer-a', name: 'Anna', status: 'connected' }]);
+    expect(anna.transport).toBe(kind);
   });
 
   it('marks riders stale after 3 s without updates and removes them on leave', async () => {
@@ -63,6 +75,7 @@ describe('GroupRide (in-memory signalling, fake clock)', () => {
     anna.leave();
     await clock.advanceAsync(50);
     expect(ben.getRiders()).toEqual([]);
+    expect(ben.getPeers()).toEqual([]);
     expect(changes).toBeGreaterThan(0);
     expect(anna.hasLeft).toBe(true);
   });

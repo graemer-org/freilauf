@@ -91,8 +91,11 @@ How it behaves over full-screen video on Windows and macOS has not been confirme
 
 ## 7. Ride with friends
 
-Paste a friend's invite link into the **Group** tab and you are in. To host rides yourself, one
-of you needs a small signalling server; [Ride with friends](group-rides.md) explains both.
+In the **Group** tab, click **Create group ride** and send the invite link; a friend pastes it
+into their Group tab and you are connected. Nothing to set up: the apps find each other through
+public relay servers and then connect directly (this path is not yet verified on real
+networks). [Ride with friends](group-rides.md) explains how it works, what the relays see and
+what to do when it does not work.
 
 ## When something goes wrong
 

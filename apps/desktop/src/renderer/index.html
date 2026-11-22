@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Strict CSP. ws:/wss: are for the group-ride signalling server. The dev
+    <!-- Strict CSP. wss: is for group rides: the public relay servers (any host,
+         since the relay list can be changed in Settings) and an own signalling
+         server; ws: only for an own server without TLS (local testing). WebRTC
+         itself is not governed by connect-src; nothing else leaves the app. The dev
          server additions are applied by electron.vite.config.ts only in dev. -->
     <meta
       http-equiv="Content-Security-Policy"

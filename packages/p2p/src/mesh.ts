@@ -1,6 +1,7 @@
 import { defaultTimers, Events, reportError, type Timers, type Unsubscribe } from './runtime';
 import type { SignallingChannel } from './signalling/channel';
 import type { PeerInfo } from './signalling/protocol';
+import type { MeshPeer, PeerStatus } from './transport';
 import {
   DEFAULT_ICE_SERVERS,
   defaultPeerConnectionFactory,
@@ -11,24 +12,8 @@ import {
   type PeerConnectionLike,
 } from './webrtc';
 
-/**
- * Per-peer connection status:
- * - `connecting`: negotiating (or waiting for the other side's offer)
- * - `connected`: the data channel is open
- * - `disconnected`: ICE lost connectivity; may recover on its own, otherwise becomes `failed`
- * - `failed`: torn down; a new attempt is scheduled (the offering side drives it)
- */
-export type PeerStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
-
-export interface MeshPeer {
-  peerId: string;
-  name: string;
-  status: PeerStatus;
-  /** True if this side sends the offers for this pair (lexicographically smaller peer id). */
-  isOfferer: boolean;
-  /** Connection attempts since the last successful connection. */
-  attempts: number;
-}
+// The peer types are shared with the relay transport (../transport.ts).
+export type { MeshPeer, PeerStatus };
 
 export interface PeerMeshEvents {
   'peer-joined': PeerInfo;

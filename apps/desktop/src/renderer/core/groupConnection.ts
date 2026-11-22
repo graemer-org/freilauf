@@ -1,19 +1,23 @@
 /**
- * Group rides, the rider-facing side of connecting: what kind of signalling
- * server address is configured, where a pasted invite points to, and what to
- * tell the rider when entering a room fails. Pure (unit-tested in
- * groupConnection.test.ts); the full error always goes to the diagnostic log.
+ * Group rides, the rider-facing side of connecting: where a pasted invite
+ * points to, how a new ride is opened, and what to tell the rider when it
+ * fails. Pure (unit-tested in groupConnection.test.ts); the full error always
+ * goes to the diagnostic log.
  *
- * Facts this relies on (packages/p2p, apps/signalling):
- * - An invite link `freilauf://join/<CODE>?s=<url>` carries the host's server;
- *   a bare code does not and uses the server configured in this app.
- * - The server creates a room on the first join. A wrong code is therefore not
- *   an error: it opens a new, empty room.
- * - `WebSocketSignalling.join()` keeps reconnecting until its 10 s timeout and
- *   then rejects with `join-timeout`, whatever the cause. `probeSignallingServer`
+ * Two ways to find each other (docs/group-rides.md, ADR 0003):
+ * - **Public relays (default, no setup).** An invite is
+ *   `freilauf://join/<CODE>#<SECRET>` or the full code `ABC-DEF-GHJK-MNPQ-RSTU`;
+ *   the secret encrypts the handshake on the relays. A bare six-character code
+ *   lacks the secret and cannot open a relay ride.
+ * - **Own signalling server (advanced).** Old-style links
+ *   `freilauf://join/<CODE>?s=<url>` carry the server; with "Use my own
+ *   signalling server" on, rides are created there and bare codes join there.
+ *   The server creates a room on the first join, so a wrong code is not an
+ *   error: it opens a new, empty room. `WebSocketSignalling.join()` rejects with
+ *   `join-timeout` whatever the cause; `probeSignallingServer`
  *   (signallingProbe.ts) tells the causes apart afterwards.
  */
-import { formatRoomCode, MAX_PEERS_PER_ROOM, parseJoinLink } from '@freilauf/p2p';
+import { formatRoomCode, MAX_RIDERS_PER_GROUP, parseInvite } from '@freilauf/p2p';
 import type { ProbeResult } from './signallingProbe';
 export { LEGACY_DEFAULT_SIGNALLING_URL } from '../../shared/contract';
 
@@ -115,17 +119,23 @@ export function signallingUrlProblem(text: string): string | null {
 // ─────────────────────────── join targets ───────────────────────────
 
 export type GroupFailureKind =
-  /** A bare code, and no server is configured in this app. */
+  /** Own server switched on, but no address entered. */
   | 'no-server'
   /** Neither an invite link nor a room code. */
   | 'invalid-invite'
-  /** The configured address is not a ws(s):// URL. */
+  /** Looks like an invite, but the check symbol does not match: a typo. */
+  | 'invite-typo'
+  /** A bare room code where the invite's secret is needed (relay rides). */
+  | 'secret-missing'
+  /** The configured own-server address is not a ws(s):// URL. */
   | 'invalid-server'
   /** navigator.onLine is false. */
   | 'offline'
-  /** Nothing answered at the address. */
+  /** None of the public relay servers could be reached. */
+  | 'no-relay'
+  /** Own server: nothing answered at the address. */
   | 'unreachable'
-  /** Something answered, but not a Freilauf signalling server. */
+  /** Own server: something answered, but not a Freilauf signalling server. */
   | 'not-signalling'
   /** The room already has the maximum number of riders. */
   | 'room-full'
@@ -141,63 +151,96 @@ export class GroupSetupError extends Error {
   }
 }
 
-export interface JoinTarget {
-  roomCode: string;
-  /** The server the room lives on. */
+/** The group-ride part of the settings (Settings → Group). */
+export interface GroupSettings {
+  useOwnServer: boolean;
   signallingUrl: string;
-  /** True when the server came from the invite link rather than this app's settings. */
-  fromLink: boolean;
-  /** What to hand to the connector: the bare link, without any surrounding text. */
-  input: string;
+  relayUrls: readonly string[];
+}
+
+/** Where a new ride is opened. */
+export type HostTarget =
+  | { transport: 'relays'; relayUrls: readonly string[] }
+  | { transport: 'self-hosted'; signallingUrl: string };
+
+/** Where a pasted invite points to. `input` is the bare link, without surrounding text. */
+export type JoinTarget =
+  | {
+      transport: 'relays';
+      roomCode: string;
+      secret: string;
+      relayUrls: readonly string[];
+      input: string;
+    }
+  | {
+      transport: 'self-hosted';
+      roomCode: string;
+      /** The server the room lives on. */
+      signallingUrl: string;
+      /** True when the server came from the invite link rather than this app's settings. */
+      fromLink: boolean;
+      input: string;
+    };
+
+function ownServer(settings: GroupSettings): string {
+  const kind = signallingUrlKind(settings.signallingUrl);
+  if (kind === 'none') throw new GroupSetupError('no-server', 'No own server address is set.');
+  if (kind === 'invalid') {
+    throw new GroupSetupError('invalid-server', 'The configured server address is not valid.');
+  }
+  return settings.signallingUrl.trim();
+}
+
+/** The default: public relays. Own server when switched on in Settings → Group. */
+export function resolveHostTarget(settings: GroupSettings): HostTarget {
+  if (settings.useOwnServer)
+    return { transport: 'self-hosted', signallingUrl: ownServer(settings) };
+  return { transport: 'relays', relayUrls: settings.relayUrls };
 }
 
 /**
  * Where a pasted invite points to. Accepts the link on its own or inside a
- * longer message ("Ride with me: freilauf://join/…"), or a bare room code.
- * Throws a `GroupSetupError` when it cannot work.
+ * longer message ("Ride with me: freilauf://join/…"), the full invite code, or
+ * a bare room code. Throws a `GroupSetupError` when it cannot work.
  */
-export function resolveJoinTarget(input: string, configuredUrl: string): JoinTarget {
+export function resolveJoinTarget(input: string, settings: GroupSettings): JoinTarget {
   const text = input.trim();
   const embedded = /freilauf:\/\/join\/[^\s<>"']+/i.exec(text)?.[0];
   const candidate = embedded ?? text;
-  const link = parseJoinLink(candidate);
-  if (!link) {
+  const parsed = parseInvite(candidate);
+  if (!parsed.ok) {
+    if (parsed.reason === 'typo') {
+      throw new GroupSetupError('invite-typo', 'The invite failed its check symbol.');
+    }
     throw new GroupSetupError(
       'invalid-invite',
       'Neither an invite link nor a room code was found in the input.',
     );
   }
-  if (link.signallingUrl) {
+  const { roomCode, secret, signallingUrl } = parsed.invite;
+  // An old-style link names the server its ride lives on.
+  if (signallingUrl) {
+    return { transport: 'self-hosted', roomCode, signallingUrl, fromLink: true, input: candidate };
+  }
+  if (secret) {
     return {
-      roomCode: link.roomCode,
-      signallingUrl: link.signallingUrl,
-      fromLink: true,
+      transport: 'relays',
+      roomCode,
+      secret,
+      relayUrls: settings.relayUrls,
       input: candidate,
     };
   }
-  const kind = signallingUrlKind(configuredUrl);
-  if (kind === 'none') {
-    throw new GroupSetupError('no-server', 'A bare room code, and no server is configured.');
+  if (settings.useOwnServer) {
+    return {
+      transport: 'self-hosted',
+      roomCode,
+      signallingUrl: ownServer(settings),
+      fromLink: false,
+      input: candidate,
+    };
   }
-  if (kind === 'invalid') {
-    throw new GroupSetupError('invalid-server', 'The configured server address is not valid.');
-  }
-  return {
-    roomCode: link.roomCode,
-    signallingUrl: configuredUrl.trim(),
-    fromLink: false,
-    input: candidate,
-  };
-}
-
-/** The server a new ride is created on; throws a `GroupSetupError` when there is none. */
-export function resolveHostServer(configuredUrl: string): string {
-  const kind = signallingUrlKind(configuredUrl);
-  if (kind === 'none') throw new GroupSetupError('no-server', 'No server is configured.');
-  if (kind === 'invalid') {
-    throw new GroupSetupError('invalid-server', 'The configured server address is not valid.');
-  }
-  return configuredUrl.trim();
+  throw new GroupSetupError('secret-missing', 'A bare room code has no secret.');
 }
 
 // ─────────────────────────── failures ───────────────────────────
@@ -239,7 +282,9 @@ export function classifyGroupError(err: unknown, ctx: FailureContext = {}): Grou
   const code = errorCode(err);
   if (code === 'room-full') return 'room-full';
   if (code === 'invalid-room') return 'invalid-invite';
+  if (code === 'invalid-secret') return 'invite-typo';
   if (ctx.online === false) return 'offline';
+  if (code === 'no-relay') return 'no-relay';
   if (code === 'join-timeout' || code === 'connect-failed') {
     switch (ctx.probe?.kind) {
       case 'offline':
@@ -271,24 +316,47 @@ export function describeGroupFailure(
     case 'no-server':
       return {
         kind,
-        title: 'A code alone is not enough here',
+        title: 'No server address entered',
         message:
-          'A room code does not say which server the ride is on, and no server is set up in this app.',
-        next: 'Ask your friend for the whole invite link (it starts with freilauf://join/) and paste that. If you host rides yourself, enter your server address first.',
+          '“Use my own signalling server” is switched on in Settings → Group, but no address is set.',
+        next: 'Enter your server address there, or switch the option off to ride without any setup.',
+      };
+    case 'secret-missing':
+      return {
+        kind,
+        title: 'This code is missing its secret part',
+        message:
+          'A six-character room code alone cannot open a ride: the invite also carries a secret that keeps the connection handshake private.',
+        next: 'Ask your friend for the whole invite link (it starts with freilauf://join/) or the full invite code, such as ABC-DEF-GHJK-MNPQ-RSTU, and paste that.',
+      };
+    case 'invite-typo':
+      return {
+        kind,
+        title: 'The invite has a typo',
+        message: 'This looks like an invite, but a character is wrong, missing or extra.',
+        next: 'Copy the invite link again, or compare the code character by character.',
+      };
+    case 'no-relay':
+      return {
+        kind,
+        title: 'No relay server reachable',
+        message:
+          'To find each other, Freilauf apps use public relay servers run by others. None of them answered from this network.',
+        next: `Check your internet connection and try again. Some company, school or public networks block these servers — another network (home Wi-Fi, a phone hotspot) usually works. ${LOG_HINT}`,
       };
     case 'invalid-invite':
       return {
         kind,
         title: 'That is not an invite',
-        message: 'No invite link or room code was found in what you entered.',
-        next: 'Paste the invite link your friend sent (it starts with freilauf://join/), or a six-character room code such as ABC-DEF.',
+        message: 'No invite link or code was found in what you entered.',
+        next: 'Paste the invite link your friend sent (it starts with freilauf://join/), or the full invite code such as ABC-DEF-GHJK-MNPQ-RSTU.',
       };
     case 'invalid-server':
       return {
         kind,
         title: 'The server address is not valid',
         message: 'A server address starts with wss:// (or ws://), e.g. wss://example.org/signal.',
-        next: 'Correct it in Settings → Group, or ask the host for a new invite link.',
+        next: 'Correct it in Settings → Group (advanced), switch “Use my own signalling server” off, or ask the host for a new invite link.',
       };
     case 'offline':
       return {
@@ -300,7 +368,7 @@ export function describeGroupFailure(
     case 'unreachable':
       return {
         kind,
-        title: 'Server not reachable',
+        title: 'Your signalling server is not reachable',
         message: `Nothing answered at ${server}. The server may be switched off, the address may be mistyped, or it may not be reachable from this network.`,
         next: asHost
           ? 'Check that your server is running and that the address is right — “Test connection” in the Group tab checks it. A server on a home network needs a reverse proxy to be reachable from outside.'
@@ -322,7 +390,7 @@ export function describeGroupFailure(
       return {
         kind,
         title: 'This ride is full',
-        message: `The room already has ${MAX_PEERS_PER_ROOM} riders, the most a group ride supports.`,
+        message: `The ride already has ${MAX_RIDERS_PER_GROUP} riders, the most a group ride supports.`,
         next: 'Ask the host to start a second ride for the rest of the group.',
       };
     case 'unknown':
@@ -386,6 +454,7 @@ export function peerViews(
 export function emptyRoomHint(
   role: 'host' | 'guest',
   roomCode: string,
+  transport: 'relays' | 'self-hosted' = 'relays',
 ): {
   title: string;
   message: string;
@@ -396,15 +465,62 @@ export function emptyRoomHint(
       message: 'Send them the invite link. They paste it into their Group tab — nothing to set up.',
     };
   }
+  if (transport === 'relays') {
+    return {
+      title: 'Nobody else is here yet',
+      message:
+        'If your friend should already be riding, check that you used the invite from their current ride — every new ride has a new link. It can also take a few seconds for riders to find each other.',
+    };
+  }
   return {
     title: 'Nobody else is here yet',
-    message: `If your friend should already be riding, check the code (${formatRoomCode(roomCode)}): a wrong code simply opens a new, empty room. With a code alone you also need the same server as the host — the invite link takes care of both.`,
+    message: `If your friend should already be riding, check the code (${formatRoomCode(roomCode)}): on your own server a wrong code simply opens a new, empty room. With a code alone you also need the same server as the host — the invite link takes care of both.`,
   };
 }
 
 /** Explains a rider who is in the room but cannot be reached directly. */
 export const PEER_TROUBLE_HINT =
   'You are both in the room, but your computers cannot connect to each other directly. This usually means a restrictive network (some mobile, company or university networks). Freilauf keeps trying; switching one of you to another network, e.g. home Wi-Fi instead of a phone hotspot, usually helps.';
+
+/** What a relay ride's connection to the relays looks like (Group tab). */
+export type RelayLinkState = 'connecting' | 'ready' | 'reconnecting';
+
+export function relayStateFrom(state: string): RelayLinkState {
+  if (state === 'joined') return 'ready';
+  if (state === 'reconnecting') return 'reconnecting';
+  return 'connecting';
+}
+
+export const RELAY_STATE_TEXT: Record<RelayLinkState, string> = {
+  connecting: 'Looking for the relay servers…',
+  ready: 'Ready: friends with the invite can find you.',
+  reconnecting:
+    'Lost the relay servers, trying again. Riders already connected keep riding; nobody new can join until one is back.',
+};
+
+/** Non-fatal trouble reported while in a ride (`GroupRide.getProblems()`). */
+export type GroupNoteCode = 'secret-mismatch' | 'peer-unreachable' | 'room-full';
+
+export interface GroupNote {
+  code: GroupNoteCode;
+  text: string;
+}
+
+const NOTE_TEXT: Record<GroupNoteCode, string> = {
+  'secret-mismatch':
+    'Someone tried to join with this ride’s code but a different secret, so they could not get in. If a friend is waiting, send them the whole invite link again.',
+  'peer-unreachable':
+    'A rider found this ride, but your computers could not connect directly. This usually means a restrictive network (some mobile, company or university networks); Freilauf has no relay for ride data. Switching one of you to another network usually helps.',
+  'room-full': `A rider could not join: the ride already has ${MAX_RIDERS_PER_GROUP} riders.`,
+};
+
+export function groupNotes(codes: readonly string[]): GroupNote[] {
+  const out: GroupNote[] = [];
+  for (const code of ['peer-unreachable', 'secret-mismatch', 'room-full'] as const) {
+    if (codes.includes(code)) out.push({ code, text: NOTE_TEXT[code] });
+  }
+  return out;
+}
 
 // ─────────────────────────── "Test connection" ───────────────────────────
 

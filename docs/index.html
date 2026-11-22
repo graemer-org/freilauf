@@ -205,8 +205,8 @@
             <li>
               <h3>In the browser, too</h3>
               <p>
-                A web version runs from Docker Compose, for example on a home server, with the
-                group-ride relay built in.
+                A web version runs from Docker Compose, for example on a home server; group rides
+                work there with no further setup.
               </p>
             </li>
           </ul>
@@ -219,17 +219,18 @@
             <h2 id="friends-title">Ride with friends</h2>
             <ul class="needs" role="list">
               <li>
-                <strong>To join,</strong> paste the invite link a friend sends you into the Group
-                tab. Nothing to set up.
+                <strong>No setup.</strong> Create a ride in the Group tab and send the invite link;
+                friends paste it into theirs and are in.
               </li>
               <li>
-                <strong>To host,</strong> one person in the group runs a small signalling server —
-                one container, already built into the Docker version — reachable over HTTPS, and
-                enters its address once.
+                <strong>No account, no Freilauf server.</strong> To find each other, the apps pass a
+                short handshake through public relay servers operated by others — encrypted with a
+                secret only the invite carries. Power, speed and position then go directly from
+                rider to rider.
               </li>
               <li>
-                <strong>No account, no Freilauf server.</strong> The signalling server only
-                introduces the riders; power, speed and position go directly from rider to rider.
+                <strong>Your own server, if you prefer.</strong> Running your own signalling server
+                is still possible as an advanced option.
               </li>
             </ul>
             <p>
@@ -237,13 +238,14 @@
               a countdown; everyone's targets follow their own FTP.
             </p>
             <p class="note">
-              Connections use public STUN servers and no TURN relay, so some networks (mobile
-              carriers, some company or university networks) will not connect. Group rides between
-              different homes have not been tried yet.
+              <strong>Status:</strong> this way of connecting is new and not yet verified on real
+              networks — group rides between different homes have not been tried yet. Connections
+              use public STUN servers and no TURN relay, so some networks (mobile carriers, some
+              company or university networks) will not connect.
             </p>
             <p class="links">
               <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
-                >How to join and host a group ride</a
+                >How group rides work</a
               >
               <span class="small"
                 >·
@@ -257,14 +259,14 @@
             <svg viewBox="0 0 420 340" role="img" aria-labelledby="dia-title dia-desc">
               <title id="dia-title">Peer-to-peer group ride</title>
               <desc id="dia-desc">
-                Three riders, A, B and C, each connected directly to the other two. A small
-                signalling server above them, run by one of the riders, is linked by dashed lines
-                and used only for the handshake.
+                Three riders, A, B and C, each connected directly to the other two. Public relay
+                servers above them, run by others, are linked by dashed lines and used only for the
+                encrypted handshake.
               </desc>
               <g class="d-sig">
                 <rect x="130" y="10" width="160" height="58" rx="12" />
-                <text x="210" y="34" text-anchor="middle">signalling</text>
-                <text x="210" y="56" text-anchor="middle" class="d-small">run by one of you</text>
+                <text x="210" y="34" text-anchor="middle">public relays</text>
+                <text x="210" y="56" text-anchor="middle" class="d-small">run by others</text>
               </g>
               <g class="d-dash">
                 <path d="M160 68 L88 196" />
@@ -290,7 +292,7 @@
                 ride data flows rider to rider
               </text>
               <text x="210" y="318" text-anchor="middle" class="d-cap d-small">
-                the server only passes on the handshake
+                the relays only pass on the encrypted handshake
               </text>
             </svg>
           </figure>
@@ -362,7 +364,8 @@
           <p>
             <strong>Not tried on real hardware yet:</strong> ERG workouts on a trainer, the FTP
             tests, steering with the controllers, group rides across real networks (only on one
-            machine so far), the Docker image build, and macOS in general.
+            machine so far; the new zero-setup connection over public relays not at all), the Docker
+            image build, and macOS in general.
           </p>
           <p>
             <strong>Community features</strong> — points, weekly and monthly totals, friends,
@@ -488,7 +491,7 @@
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
                     >Ride with friends</a
                   >
-                  — join with a link, or host a signalling server
+                  — create a ride, send the link; what the relays see
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/docker.md"

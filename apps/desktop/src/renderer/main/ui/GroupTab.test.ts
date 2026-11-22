@@ -10,9 +10,14 @@ import { DEFAULT_SETTINGS } from '../../../shared/contract';
 import { GroupTab } from './GroupTab';
 import { AppContext } from './hooks';
 
-function state(signallingUrl: string, group: AppState['group'] = { phase: 'idle' }): AppState {
+function state(
+  signallingUrl: string,
+  group: AppState['group'] = { phase: 'idle' },
+  useOwnServer = signallingUrl !== '',
+): AppState {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.group.signallingUrl = signallingUrl;
+  settings.group.useOwnServer = useOwnServer;
   return {
     ready: true,
     simMode: true,
@@ -49,57 +54,84 @@ function render(s: AppState): string {
 
 const testId = (id: string): string => `data-testid="${id}"`;
 const LINK = 'freilauf://join/ABCDEF?s=wss%3A%2F%2Fnas.example.org%2Fsignal';
+const INVITE = 'freilauf://join/ABCDEF#GHJKMNPQRSTU';
+
+function joined(
+  overrides: Partial<Extract<AppState['group'], { phase: 'joined' }>> = {},
+): AppState['group'] {
+  return {
+    phase: 'joined',
+    roomCode: 'ABCDEF',
+    joinLink: INVITE,
+    inviteCode: 'ABC-DEF-GHJK-MNPQ-RSTU',
+    transport: 'relays',
+    relay: 'ready',
+    role: 'host',
+    signallingUrl: '',
+    peers: [],
+    notes: [],
+    ...overrides,
+  };
+}
 
 describe('Group tab (SSR)', () => {
-  it('without a server: explains and offers "invited" and "host", no doomed Create button', () => {
+  it('fresh install: Create and Join right away, the honest note, own server tucked away', () => {
     const html = render(state(''));
     for (const id of [
-      'group-setup',
-      'group-path-join',
-      'group-path-host',
+      'group-start',
+      'group-create',
       'group-join-input',
       'group-join',
+      'group-how',
+      'group-advanced',
+      'group-own-server-toggle',
       'group-server-input',
-      'group-server-test',
-      'group-server-save',
       'group-use-local',
     ]) {
       expect(html).toContain(testId(id));
     }
-    expect(html).not.toContain(testId('group-create'));
-    expect(html).not.toContain(testId('group-server'));
-    expect(html).toContain('A friend invited me');
-    expect(html).toContain('I want to host');
-    expect(html).toContain('nothing to set up');
-    expect(html).toContain('ride data never goes through it');
+    expect(html).toContain('Nothing to set up');
+    expect(html).toContain('public relay servers');
+    expect(html).toContain('run by others');
+    expect(html).toContain('encrypted handshake');
     expect(html).toContain(`href="${GROUP_GUIDE_URL}"`);
-    expect(html).toContain('Use a server on this computer (for testing)');
-    expect(html).toContain('pnpm signalling');
-    // Test and Save stay disabled until an address is entered.
-    expect(html).toMatch(/data-testid="group-server-test" disabled=""/);
+    // The own server is an advanced option, closed by default.
+    expect(html).toMatch(
+      /<details class="disclosure group-advanced" data-testid="group-advanced">/,
+    );
+    expect(html).not.toContain(testId('group-own-server-note'));
+    expect(html).not.toContain('I want to host');
   });
 
-  it('shows an invalid saved address in the setup state', () => {
-    const html = render(state('signal.example.org'));
-    expect(html).toContain(testId('group-setup'));
-    expect(html).toContain(testId('group-server-invalid'));
-    expect(html).toContain('value="signal.example.org"');
+  it('a saved address alone does not switch to the own server', () => {
+    const html = render(state('wss://nas.example.org/signal', { phase: 'idle' }, false));
+    expect(html).toContain(testId('group-create'));
+    expect(html).not.toContain(testId('group-own-server-note'));
+    expect(html).toMatch(
+      /<details class="disclosure group-advanced" data-testid="group-advanced">/,
+    );
   });
 
-  it('with a server: Create, Join, the address with Test connection', () => {
+  it('own server switched on: says so, opens the section, offers Test connection', () => {
     const html = render(state('wss://nas.example.org/signal'));
     for (const id of [
       'group-create',
-      'group-join-input',
-      'group-join',
+      'group-own-server-note',
       'group-server',
       'group-server-test',
     ]) {
       expect(html).toContain(testId(id));
     }
-    expect(html).not.toContain(testId('group-setup'));
+    expect(html).toMatch(/data-testid="group-advanced" open=""/);
+    expect(html).toContain('nas.example.org');
     expect(html).not.toContain(testId('group-local-note'));
-    expect(html).toContain('Only the host needs a server set here');
+  });
+
+  it('own server switched on without an address: the form, no doomed Create in an error', () => {
+    const html = render(state('', { phase: 'idle' }, true));
+    expect(html).toContain(testId('group-server-input'));
+    expect(html).toMatch(/data-testid="group-server-test" disabled=""/);
+    expect(render(state('signal.example.org'))).toContain(testId('group-server-invalid'));
   });
 
   it('warns that a server on this computer or the home network is limited', () => {
@@ -108,6 +140,9 @@ describe('Group tab (SSR)', () => {
   });
 
   it('says what it is doing while connecting', () => {
+    expect(render(state('', { phase: 'connecting', action: 'create' }))).toContain(
+      'Opening a ride',
+    );
     expect(render(state('wss://x.example', { phase: 'connecting', action: 'create' }))).toContain(
       'Opening a room on your server',
     );
@@ -117,20 +152,32 @@ describe('Group tab (SSR)', () => {
   });
 
   it('shows a failure in plain words with what to do, and keeps the input', () => {
-    const failure = describeGroupFailure('unreachable', {
+    const failure = describeGroupFailure('no-relay', { action: 'join' });
+    const html = render(
+      state('', { phase: 'error', message: failure.title, failure, action: 'join', input: INVITE }),
+    );
+    expect(html).toContain('data-failure="no-relay"');
+    expect(html).toContain('No relay server reachable');
+    expect(html).toContain('What to do');
+    expect(html).toContain(`value="${INVITE}"`);
+    // Relays need no setup: a new ride can always be tried.
+    expect(html).toContain(testId('group-create'));
+
+    const ownFailure = describeGroupFailure('unreachable', {
       signallingUrl: 'wss://nas.example.org/signal',
       action: 'join',
     });
-    const html = render(
-      state('', { phase: 'error', message: failure.title, failure, action: 'join', input: LINK }),
+    const own = render(
+      state(
+        '',
+        { phase: 'error', message: '', failure: ownFailure, action: 'join', input: LINK },
+        true,
+      ),
     );
-    expect(html).toContain('data-failure="unreachable"');
-    expect(html).toContain('Server not reachable');
-    expect(html).toContain('Nothing answered at nas.example.org');
-    expect(html).toContain('What to do');
-    expect(html).toContain(`value="${LINK.replace(/&/g, '&amp;')}"`);
-    // No server of our own: no Create button that would fail again.
-    expect(html).not.toContain(testId('group-create'));
+    expect(own).toContain('Nothing answered at nas.example.org');
+    expect(own).toContain(`value="${LINK.replace(/&/g, '&amp;')}"`);
+    // Own server switched on but not set up: no Create button that would fail again.
+    expect(own).not.toContain(testId('group-create'));
 
     const hostFailure = describeGroupFailure('not-signalling', {
       probe: { kind: 'wrong-path', suggestion: 'wss://nas.example.org/signal' },
@@ -150,23 +197,54 @@ describe('Group tab (SSR)', () => {
     expect(host).toContain(testId('group-use-suggestion'));
   });
 
-  it('joined: the invite link first, the code, and per-rider connection status', () => {
+  it('joined over relays: the invite link first, the full code, relay state and notes', () => {
     const html = render(
-      state('', {
-        phase: 'joined',
-        roomCode: 'ABCDEF',
-        joinLink: LINK,
-        role: 'guest',
-        signallingUrl: 'wss://nas.example.org/signal',
-        peers: [
-          { peerId: 'p1', name: 'Ben', state: 'connected' },
-          { peerId: 'p2', name: 'Cleo', state: 'trouble' },
-          { peerId: 'p3', name: 'Dan', state: 'connecting' },
-        ],
-      }),
+      state(
+        '',
+        joined({
+          role: 'guest',
+          relay: 'connecting',
+          peers: [
+            { peerId: 'p1', name: 'Ben', state: 'connected' },
+            { peerId: 'p2', name: 'Rider', state: 'connected' },
+          ],
+          notes: [{ code: 'secret-mismatch', text: 'Someone tried to join with another secret.' }],
+        }),
+      ),
     );
     expect(html.indexOf(testId('group-link'))).toBeLessThan(html.indexOf(testId('group-code')));
+    expect(html).toContain(INVITE);
     expect(html).toContain('Friends only need this link.');
+    expect(html).toContain('ABC-DEF-GHJK-MNPQ-RSTU');
+    expect(html).toContain('the first six characters alone do not work');
+    expect(html).toContain('data-testid="group-relay-state" data-state="connecting"');
+    expect(html).toContain('Looking for the relay servers');
+    expect(html).toContain('data-code="secret-mismatch"');
+    expect(html).toContain(testId('group-how'));
+    expect(html).not.toContain(testId('group-server'));
+    expect(html).not.toContain(testId('group-advanced'));
+    const ready = render(state('', joined()));
+    expect(ready).toContain('friends with the invite can find you');
+  });
+
+  it('joined on an own server: per-rider status, the server, the old code hint', () => {
+    const html = render(
+      state(
+        '',
+        joined({
+          transport: 'self-hosted',
+          joinLink: LINK,
+          inviteCode: 'ABC-DEF',
+          role: 'guest',
+          signallingUrl: 'wss://nas.example.org/signal',
+          peers: [
+            { peerId: 'p1', name: 'Ben', state: 'connected' },
+            { peerId: 'p2', name: 'Cleo', state: 'trouble' },
+            { peerId: 'p3', name: 'Dan', state: 'connecting' },
+          ],
+        }),
+      ),
+    );
     expect(html).toContain(testId('group-copy-link'));
     expect(html).toContain('ABC-DEF');
     expect(html).toContain(testId('group-leave'));
@@ -178,24 +256,20 @@ describe('Group tab (SSR)', () => {
     expect(html).toContain('Cannot reach Cleo directly.');
     expect(html).toContain('restrictive network');
     expect(html).toContain('(from the invite link)');
+    expect(html).toContain('A code alone only works for friends who have set up the same server.');
+    expect(html).not.toContain(testId('group-relay-state'));
     expect(html).not.toContain(testId('group-empty'));
   });
 
-  it('joined alone: hosts wait, guests learn that a wrong code opens an empty room', () => {
-    const joined = (role: 'host' | 'guest'): AppState['group'] => ({
-      phase: 'joined',
-      roomCode: 'ABCDEF',
-      joinLink: LINK,
-      role,
-      signallingUrl: 'wss://nas.example.org/signal',
-      peers: [],
-    });
-    expect(render(state('wss://nas.example.org/signal', joined('host')))).toContain(
-      'Waiting for friends',
-    );
-    const guest = render(state('wss://nas.example.org/signal', joined('guest')));
+  it('joined alone: hosts wait; guests get the hint that fits the transport', () => {
+    expect(render(state('', joined({ role: 'host' })))).toContain('Waiting for friends');
+    const guest = render(state('', joined({ role: 'guest' })));
     expect(guest).toContain('Nobody else is here yet');
-    expect(guest).toContain('a wrong code simply opens a new, empty room');
-    expect(guest).not.toContain(testId('group-peer-trouble'));
+    expect(guest).toContain('current ride');
+    const own = render(
+      state('', joined({ role: 'guest', transport: 'self-hosted', signallingUrl: 'wss://x' })),
+    );
+    expect(own).toContain('a wrong code simply opens a new, empty room');
+    expect(own).not.toContain(testId('group-peer-trouble'));
   });
 });

@@ -1,4 +1,5 @@
-import { GroupRide, SignallingError, contentHash, parseJoinLink } from '@freilauf/p2p';
+import { GroupRide, contentHash, type GroupRideDeps } from '@freilauf/p2p';
+import type { HostTarget } from '../core/groupConnection';
 import type { GroupConnector, JoinedGroup } from './appStore';
 
 const WORKOUT_KIND = 'workout';
@@ -8,6 +9,13 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
   return {
     roomCode: ride.roomCode,
     joinLink: ride.joinLink,
+    inviteCode: ride.inviteCode,
+    secret: ride.secret,
+    transport: ride.transport,
+    getConnectionState: () => ride.signallingState,
+    getProblems: () => ride.getProblems().map((p) => p.code),
+    onFailure: (listener) => ride.onFailure(listener),
+    onLog: (listener) => ride.onLog(listener),
     // The group already knows the local name; it only wants the numbers.
     setLocalState: ({ name: _name, ...state }) => void ride.setLocalState(state),
     getRiders: () => ride.getRiders(),
@@ -61,20 +69,33 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
   };
 }
 
-/** Group rides over the renderer's own WebSocket and RTCPeerConnection. */
+function depsFor(target: HostTarget): GroupRideDeps {
+  if (target.transport === 'relays') {
+    // The relay library is loaded on first use (a separate chunk), see transports/relay.ts.
+    return { relay: target.relayUrls.length > 0 ? { relayUrls: target.relayUrls } : {} };
+  }
+  return { signallingUrl: target.signallingUrl };
+}
+
+/**
+ * Group rides over the renderer's own WebSocket and RTCPeerConnection: public relays by default
+ * (Trystero), or an own signalling server.
+ */
 export const webRtcGroupConnector: GroupConnector = {
-  async create(name, signallingUrl) {
-    return adaptGroupRide(await GroupRide.create(name, { signallingUrl }));
+  async create(name, target) {
+    return adaptGroupRide(await GroupRide.create(name, depsFor(target)));
   },
 
-  async join(codeOrLink, name, signallingUrl) {
-    const link = parseJoinLink(codeOrLink);
-    if (!link) throw new SignallingError('invalid-room', 'Not a valid room code or join link.');
-    // A link names the signalling server its group lives on; a bare code uses ours.
+  async join(target, name) {
+    if (target.transport === 'relays') {
+      const relay = {
+        secret: target.secret,
+        ...(target.relayUrls.length > 0 ? { relayUrls: target.relayUrls } : {}),
+      };
+      return adaptGroupRide(await GroupRide.join(target.roomCode, name, { relay }));
+    }
     return adaptGroupRide(
-      await GroupRide.join(link.roomCode, name, {
-        signallingUrl: link.signallingUrl ?? signallingUrl,
-      }),
+      await GroupRide.join(target.roomCode, name, { signallingUrl: target.signallingUrl }),
     );
   },
 };

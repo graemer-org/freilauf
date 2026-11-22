@@ -1,5 +1,6 @@
 import type { Unsubscribe } from '../runtime';
 import type { PeerInfo } from './protocol';
+import { GroupError, sanitizeName } from '../transport';
 
 export type SignallingState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'closed';
 
@@ -39,12 +40,11 @@ export interface SignallingChannel {
   ): Unsubscribe;
 }
 
-export class SignallingError extends Error {
-  readonly code: string;
+/** A `GroupError` raised by a signalling channel (self-hosted path). */
+export class SignallingError extends GroupError {
   constructor(code: string, message: string) {
-    super(message);
+    super(code, message);
     this.name = 'SignallingError';
-    this.code = code;
   }
 }
 
@@ -59,9 +59,5 @@ export const FATAL_SIGNALLING_ERRORS: ReadonlySet<string> = new Set([
   'join-timeout',
 ]);
 
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g;
-
-/** Trims, strips control / bidi characters and cuts to `max` code points. */
-export function sanitizeName(name: string, max = 24): string {
-  return [...name.replace(CONTROL_CHARS, '').trim()].slice(0, max).join('').trim();
-}
+// Moved to ../transport.ts (shared by both transports); re-exported for existing imports.
+export { sanitizeName };

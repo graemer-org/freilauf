@@ -83,7 +83,8 @@ frame, a Bluetooth heart-rate strap:**
 
 **Not tried on real hardware at all yet:** ERG workouts on a real trainer, the FTP tests,
 steering with the controllers, group rides between different machines and networks (so far
-only on one machine), building the Docker image, and macOS in general.
+only on one machine; the new zero-setup path over public relay servers has **not been verified
+on real networks** at all), building the Docker image, and macOS in general.
 
 **Community features** — points, weekly and monthly totals, friends with per-contact
 visibility, challenges and leaderboards that sync peer-to-peer without a server — are in the
@@ -112,30 +113,30 @@ have been published yet. When they are, they will be **unsigned**: Windows Smart
 your browser will warn about an unknown publisher, and macOS Gatekeeper will refuse to open the
 app until you allow it. [docs/releasing.md](docs/releasing.md) explains what to click.
 
-**In the browser.** `docker compose up -d` serves a web version on port 8080, including the
-group-ride signalling server. Bluetooth in the browser needs Chrome or Edge and HTTPS (or
+**In the browser.** `docker compose up -d` serves a web version on port 8080 (group rides work
+there without any further setup). Bluetooth in the browser needs Chrome or Edge and HTTPS (or
 `localhost`), and the stats overlay becomes a small pop-out window instead of a transparent one.
 See [docs/docker.md](docs/docker.md).
 
 ## Ride with friends
 
-- **Join:** a friend sends you an **invite link**; paste it into the **Group** tab. Nothing to
-  set up — the link carries everything.
-- **Host:** one person in the group runs a small **signalling server** — one container, already
-  included in the [browser version](docs/docker.md) — reachable over HTTPS, and enters its
-  address once.
-- **Direct:** there is no account and no Freilauf server. The signalling server only introduces
-  the riders; power, speed, heart rate and position go straight from rider to rider over
-  WebRTC.
+- **No setup:** click **Create group ride** in the **Group** tab and send the **invite link**.
+  Friends paste it into their Group tab — no account, no server to run.
+- **Direct:** power, speed, heart rate and position go straight from rider to rider over
+  encrypted WebRTC. There is no Freilauf server; to find each other, the apps exchange a short
+  handshake through **public relay servers operated by others**, encrypted with a secret that
+  only the invite carries.
+- **Status:** this path is new and **not yet verified on real networks**. If it does not work
+  for your group, running your own signalling server is still available as an advanced option.
 
-Up to eight riders in a room. Share a workout with the group and start it together on a
+Up to eight riders in a ride. Share a workout with the group and start it together on a
 countdown; each rider's targets follow their own FTP. Connections use public STUN servers and
 no TURN relay, so riders behind some networks (symmetric NAT, common on mobile carriers and
 some company or university networks) cannot connect.
 
-**[How to join and host a group ride](docs/group-rides.md)** — including a NAS or a small
-server, how to check it works, and what the server sees. Technical details:
-[docs/p2p.md](docs/p2p.md).
+**[How group rides work](docs/group-rides.md)** — inviting, what the relay servers see, when it
+does not work, and the advanced own-server option. Technical details:
+[docs/p2p.md](docs/p2p.md), [ADR 0003](docs/adr/0003-signalling-via-public-relays.md).
 
 ## Join in
 
@@ -199,19 +200,21 @@ Next, roughly in this order of interest — none of it is built yet:
 - A pnpm workspace in TypeScript: portable core packages (`devices`, `sim`, `session`, `p2p`,
   `workouts`, `community`) with no Electron, DOM or Node dependencies, tested with Vitest.
 - `apps/desktop` is the Electron app (main window, overlay, Bluetooth chooser), `apps/web` the
-  browser build, `apps/signalling` the WebSocket relay for group rides.
+  browser build, `apps/signalling` the optional self-hosted signalling server for group rides.
 - Two device layers: a GATT-shaped transport (Web Bluetooth today) and device drivers on top;
   every device has a simulated counterpart ([ADR 0001](docs/adr/0001-architecture.md)).
 - Virtual shifting scales the road sent to the trainer as FTMS simulation parameters
   ([ADR 0002](docs/adr/0002-virtual-shifting.md)).
-- Group rides are a WebRTC mesh; ride data never touches a server (technical:
-  [p2p](docs/p2p.md); for riders: [group-rides](docs/group-rides.md)).
+- Group rides are a WebRTC mesh; peers find each other through public Nostr relays (Trystero,
+  [ADR 0003](docs/adr/0003-signalling-via-public-relays.md)) and ride data never touches a
+  server (technical: [p2p](docs/p2p.md); for riders: [group-rides](docs/group-rides.md)).
 
 Commands, environment variables and the full documentation index: [docs/README.md](docs/README.md).
 
 ## Licence and disclaimer
 
-[MIT](LICENSE) © 2026 Freilauf contributors.
+[MIT](LICENSE) © 2026 Freilauf contributors. Bundled third-party libraries and their licences:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Freilauf is an independent project. It is not affiliated with, endorsed by or sponsored by
 Wahoo Fitness, Zwift, Strava or any other company mentioned here. Product names and trademarks

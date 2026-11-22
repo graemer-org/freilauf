@@ -1,7 +1,9 @@
 /**
  * HTTP security headers for the web build. The CSP matches the desktop
- * renderer's (apps/desktop/src/renderer/index.html): ws:/wss: are for the
- * group-ride signalling server, which may live on another host.
+ * renderer's (apps/desktop/src/renderer/index.html): wss: is for group rides —
+ * the public relay servers (any host: the relay list can be changed in
+ * Settings) and an own signalling server on another host; ws: only for an own
+ * server without TLS. No third-party scripts, no other connections.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",

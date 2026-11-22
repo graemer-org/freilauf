@@ -37,12 +37,13 @@ const quiet = { log: () => {} };
 const web = webDefaultSettings({ protocol: 'https:', host: 'nas.example:8443' });
 
 describe('BrowserSettingsStore', () => {
-  it('starts from web defaults with the same-origin signalling URL', () => {
+  it('starts from web defaults: public relays, the same-origin server prefilled as the fallback', () => {
     const store = new BrowserSettingsStore({
       storage: new MemoryStorage(),
       defaults: web,
       ...quiet,
     });
+    expect(store.get().group.useOwnServer).toBe(false);
     expect(store.get().group.signallingUrl).toBe('wss://nas.example:8443/signal');
     expect(store.get().rider).toEqual(DEFAULT_SETTINGS.rider);
   });
