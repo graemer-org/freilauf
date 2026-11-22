@@ -1,36 +1,13 @@
-import type { ControllerButton } from '@freilauf/devices';
 import { useId } from 'react';
-import { CONTROLLER_ACTION_LABELS } from '../../../shared/contract';
-import type { OverlayTile, Settings, ShiftAction, StatId } from '../../../shared/contract';
+import type { OverlayTile, StatId } from '../../../shared/contract';
 import { ALL_STATS } from '../../../shared/contract';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
+import { ButtonMapping, DiagnosticsCard } from './SettingsExtras';
 
 export const MAX_NAME_LENGTH = 24;
 const MAX_TILES = 12;
-
-const SHIFT_BUTTONS: readonly { button: ControllerButton; label: string }[] = [
-  { button: 'shiftUpRight', label: 'Right shift button, upper' },
-  { button: 'shiftDownRight', label: 'Right shift button, lower' },
-  { button: 'shiftUpLeft', label: 'Left shift button, upper' },
-  { button: 'shiftDownLeft', label: 'Left shift button, lower' },
-];
-
-const OTHER_BUTTONS: readonly { button: ControllerButton; label: string }[] = [
-  { button: 'up', label: 'Up' },
-  { button: 'down', label: 'Down' },
-  { button: 'left', label: 'Left' },
-  { button: 'right', label: 'Right' },
-  { button: 'a', label: 'A' },
-  { button: 'b', label: 'B' },
-  { button: 'y', label: 'Y' },
-  { button: 'z', label: 'Z' },
-  { button: 'powerUpLeft', label: 'Left power-up' },
-  { button: 'powerUpRight', label: 'Right power-up' },
-];
-
-const ACTION_LABEL = CONTROLLER_ACTION_LABELS;
 
 const SIZE_LABEL: Record<OverlayTile['size'], string> = { s: 'Small', m: 'Medium', l: 'Large' };
 
@@ -45,88 +22,6 @@ const validUrl = (text: string): string | undefined => {
   const t = text.trim();
   return t.length <= 500 && /^wss?:\/\/[^\s]+$/i.test(t) ? t : undefined;
 };
-
-function ButtonMapRow({
-  button,
-  label,
-  action,
-  onChange,
-}: {
-  button: ControllerButton;
-  label: string;
-  action: ShiftAction;
-  onChange: (button: ControllerButton, action: ShiftAction) => void;
-}) {
-  const id = useId();
-  return (
-    <tr>
-      <th scope="row">
-        <label htmlFor={id}>{label}</label>
-      </th>
-      <td>
-        <select
-          id={id}
-          data-testid={`button-map-${button}`}
-          value={action}
-          onChange={(e) => onChange(button, e.currentTarget.value as ShiftAction)}
-        >
-          {(Object.keys(ACTION_LABEL) as ShiftAction[]).map((a) => (
-            <option key={a} value={a}>
-              {ACTION_LABEL[a]}
-            </option>
-          ))}
-        </select>
-      </td>
-    </tr>
-  );
-}
-
-function ButtonMapping({ buttons }: { buttons: Settings['shifting']['buttons'] }) {
-  const app = useApp();
-  const onChange = (button: ControllerButton, action: ShiftAction): void => {
-    void app.updateSettings({ shifting: { buttons: { [button]: action } } });
-  };
-  return (
-    <>
-      <h3 className="subhead">Controller buttons</h3>
-      <div className="card">
-        <table className="map-table">
-          <tbody>
-            {SHIFT_BUTTONS.map(({ button, label }) => (
-              <ButtonMapRow
-                key={button}
-                button={button}
-                label={label}
-                action={buttons[button] ?? 'none'}
-                onChange={onChange}
-              />
-            ))}
-          </tbody>
-        </table>
-        <details className="disclosure">
-          <summary>More buttons</summary>
-          <table className="map-table">
-            <tbody>
-              {OTHER_BUTTONS.map(({ button, label }) => (
-                <ButtonMapRow
-                  key={button}
-                  button={button}
-                  label={label}
-                  action={buttons[button] ?? 'none'}
-                  onChange={onChange}
-                />
-              ))}
-            </tbody>
-          </table>
-        </details>
-      </div>
-      <p className="hint section-foot">
-        Smart frame controller support is experimental; if a button shifts the wrong way, change it
-        here. Keyboard shifting always works.
-      </p>
-    </>
-  );
-}
 
 function TileRow({
   tile,
@@ -446,6 +341,13 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
             onCommit={(signallingUrl) => update({ group: { signallingUrl } })}
           />
         </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="set-diagnostics">
+        <h2 id="set-diagnostics" className="section-title section-head">
+          Diagnostics
+        </h2>
+        <DiagnosticsCard />
       </section>
     </div>
   );

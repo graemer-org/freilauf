@@ -29,15 +29,23 @@ browser console, and in the console `freilaufDiagnostics()` prints the lines.
 
 ## Getting it out
 
-- **Export log** (Settings → Diagnostics): saves one text file that contains
+All three are buttons on the **Diagnostics** card at the bottom of the **Settings** tab:
+
+- **Export log…**: saves one text file that contains
   all log files, oldest first and the current one last, each preceded by a
   `----- freilauf.N.log -----` marker. This is the file to attach to an issue
   or hand to a developer. In the browser it is downloaded as
   `freilauf-log-<date>.txt`.
 - **Copy recent log**: copies the last 256 KB to the clipboard (for pasting
-  into a chat).
+  into a chat); a notice confirms how much was copied.
 - **Open log folder**: opens the folder above in Explorer / Finder / the file
   manager (in the browser: explains that the log is in memory).
+
+The card also repeats the short "Help decode the controllers" recipe from
+[protocols/zwift-ride.md → How to capture](protocols/zwift-ride.md#how-to-capture).
+While you press buttons, **Settings → Shifting → Controller buttons** shows
+"Last button: <grip> · <button>" and lights up that button's row for a moment,
+so you can see at once which button the app decoded (or that nothing arrived).
 
 For developers, the same is available on `window.freilauf.diagnostics`
 (`getLogInfo()`, `exportLog()`, `readRecent(maxBytes)`, `openLogFolder()`,

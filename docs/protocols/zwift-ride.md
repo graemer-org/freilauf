@@ -8,7 +8,7 @@
 > lower of the two buttons on the left grip shifts down, the lower one on
 > the right grip shifts up.
 >
-> **Known wrong or unknown:** the *upper* button on each grip did nothing.
+> **Known wrong or unknown:** the _upper_ button on each grip did nothing.
 > With the default mapping all four `shift*` bits are mapped, so the upper
 > buttons do not arrive as the bits this table assigns to them. Which bits
 > (or which message) they use is unknown until a capture is read. Everything
@@ -18,13 +18,13 @@ The protocol is proprietary and undocumented by the vendor.
 
 ## GATT
 
-| What | UUID | Confidence |
-| --- | --- | --- |
-| Service (Ride) | `0000fc82-0000-1000-8000-00805f9b34fb` | medium |
-| Service (older Play/Click) | `00000001-19ca-4651-86e5-fa29dcdd09d1` | high |
-| Async — notify, controller → app | `00000002-19ca-4651-86e5-fa29dcdd09d1` | high |
-| Sync RX — write, app → controller | `00000003-19ca-4651-86e5-fa29dcdd09d1` | high |
-| Sync TX — indicate, controller → app | `00000004-19ca-4651-86e5-fa29dcdd09d1` | high |
+| What                                 | UUID                                   | Confidence |
+| ------------------------------------ | -------------------------------------- | ---------- |
+| Service (Ride)                       | `0000fc82-0000-1000-8000-00805f9b34fb` | medium     |
+| Service (older Play/Click)           | `00000001-19ca-4651-86e5-fa29dcdd09d1` | high       |
+| Async — notify, controller → app     | `00000002-19ca-4651-86e5-fa29dcdd09d1` | high       |
+| Sync RX — write, app → controller    | `00000003-19ca-4651-86e5-fa29dcdd09d1` | high       |
+| Sync TX — indicate, controller → app | `00000004-19ca-4651-86e5-fa29dcdd09d1` | high       |
 
 The driver tries the Ride service first and falls back to the legacy one.
 
@@ -42,11 +42,11 @@ The driver does not require the answer: if notifications flow, it works.
 
 First byte = message type, rest = protobuf.
 
-| Type | Meaning | Confidence |
-| --- | --- | --- |
-| `0x23` | Keypad status | medium |
-| `0x19` | Battery/status; field 2 (varint) = percent | low |
-| `0x15` | Idle / empty | medium |
+| Type   | Meaning                                    | Confidence |
+| ------ | ------------------------------------------ | ---------- |
+| `0x23` | Keypad status                              | medium     |
+| `0x19` | Battery/status; field 2 (varint) = percent | low        |
+| `0x15` | Idle / empty                               | medium     |
 
 ### Keypad status (`0x23`)
 
@@ -55,16 +55,16 @@ First byte = message type, rest = protobuf.
 - Field 3, repeated message: analog paddle — field 1 = location
   (0 left, 1 right), field 2 = sint32 (zigzag) value, about −100…100.
 
-| Button | Mask | | Button | Mask |
-| --- | --- | --- | --- | --- |
-| D-pad left | `0x00001` | | Shift up, left | `0x00200` |
-| D-pad up | `0x00002` | | Shift down, left | `0x00400` |
-| D-pad right | `0x00004` | | Power-up, left | `0x00800` |
-| D-pad down | `0x00008` | | On/off, left | `0x01000` |
-| A | `0x00010` | | Shift up, right | `0x02000` |
-| B | `0x00020` | | Shift down, right | `0x04000` |
-| Y | `0x00040` | | Power-up, right | `0x10000` |
-| Z | `0x00100` | | On/off, right | `0x20000` |
+| Button      | Mask      |     | Button            | Mask      |
+| ----------- | --------- | --- | ----------------- | --------- |
+| D-pad left  | `0x00001` |     | Shift up, left    | `0x00200` |
+| D-pad up    | `0x00002` |     | Shift down, left  | `0x00400` |
+| D-pad right | `0x00004` |     | Power-up, left    | `0x00800` |
+| D-pad down  | `0x00008` |     | On/off, left      | `0x01000` |
+| A           | `0x00010` |     | Shift up, right   | `0x02000` |
+| B           | `0x00020` |     | Shift down, right | `0x04000` |
+| Y           | `0x00040` |     | Power-up, right   | `0x10000` |
+| Z           | `0x00100` |     | On/off, right     | `0x20000` |
 
 Confidence in individual bit positions: low to medium. Which physical
 lever is "shift up" vs "shift down" must be confirmed; the app therefore
@@ -83,14 +83,21 @@ makes the button → action mapping configurable.
 
 ## How to capture
 
-Capture is **always on**: Freilauf writes every *change* of the keypad frame
+Capture is **always on**: Freilauf writes every _change_ of the keypad frame
 to its diagnostic log (see [../diagnostics.md](../diagnostics.md) for where
 the log is and how to export it). Nothing has to be enabled.
 
 To produce a capture that answers the open questions:
 
 1. Start Freilauf, connect the controllers (Devices tab) and wait until they
-   show as connected.
+   show as connected. Then open **Settings → Shifting → Controller buttons**:
+   it lists all sixteen buttons by grip (left grip: lower and upper shift
+   button, D-pad up/right/down/left, power-up button, on/off button; right
+   grip: lower and upper shift button, A, B, Y, Z, power-up button, on/off
+   button). Each press lights up the row of the button the app decoded and
+   shows "Last button: …" above the list — a press that lights nothing up was
+   not decoded. The names follow the bit table above, so "upper"/"lower" is
+   itself still a guess until a capture confirms it.
 2. Press **each button once, in this order**, holding it for about a second
    and leaving about two seconds between buttons (so each press is a separate,
    easy-to-find group of lines):
@@ -105,9 +112,10 @@ To produce a capture that answers the open questions:
 
    Do not press the on/off buttons (they switch the controller off). If you
    deviate from the order, write down what you did.
-3. Export the log (Settings → Diagnostics → Export log, or copy
-   `freilauf.log` from the log folder) and attach it to an issue together
-   with the order you used.
+
+3. Export the log (**Settings → Diagnostics → Export log…**, or **Open log
+   folder** and copy `freilauf.log`) and attach it to an issue together with
+   the order you used and what the "Last button" line showed for each press.
 
 Reading it: each press shows up as two `controller` lines, the press and the
 release:
@@ -131,7 +139,8 @@ release:
   with hex and ASCII; the service used as `using Ride service FC82` or the
   legacy fallback.
 - `button <name> pressed: no action assigned` (source `ride`) means the
-  button was decoded but has no shift action in Settings.
+  button was decoded but has no action in Settings → Shifting → Controller
+  buttons ("Nothing").
 
 `FREILAUF_BLE_LOG=1` additionally logs **every** raw frame, uncollapsed, as
 `raw async …` / `raw syncTx …` debug lines — useful if the collapsing hides

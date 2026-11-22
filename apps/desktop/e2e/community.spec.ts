@@ -5,8 +5,8 @@ import { expect, test } from '@playwright/test';
 import { launch, windows } from './helpers';
 
 /**
- * Community totals are fed by finished rides. There is no Community UI yet, so this reads the
- * persisted community state through the page (localStorage key `freilauf.community.v1`).
+ * Community totals are fed by finished rides. This checks the persisted community state through
+ * the page (localStorage key `freilauf.community.v1`); community-ui.spec.ts checks the tab.
  */
 test('a finished sim ride counts towards this week with points', async () => {
   test.setTimeout(90_000);

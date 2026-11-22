@@ -33,7 +33,8 @@ function baseState(): AppState {
     sharedWorkouts: [],
     sharingWorkoutId: null,
     groupCountdownS: null,
-  community: new CommunityService({ storage: null }).view,
+    community: new CommunityService({ storage: null }).view,
+    lastButton: null,
   };
 }
 

@@ -39,12 +39,13 @@ ride stays on your machine, as plain files in open formats.
 
 ## What it does
 
-|                                                                                                                                                                                                                                               |                                                                                                                                                                                                                                     |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <img src="docs/assets/screenshots/overlay-over-video.webp" width="420" alt="The stats overlay: semi-transparent tiles for power, heart rate, cadence, speed, gear, time and distance, plus a small group list, over a colourful background."> | **An overlay over anything.** A transparent, always-on-top, click-through window with the numbers you choose, on top of a fullscreen video or any other app. A hotkey (`Ctrl/Cmd+Shift+O`) toggles edit mode to move and resize it. |
-| <img src="docs/assets/screenshots/workout-erg-dark.webp" width="420" alt="A structured workout in progress: target 91 W, the step name Warm-up, a coloured block chart of the whole workout, and the time left in the step.">                 | **Structured workouts in ERG mode.** The trainer holds the target power. Import `.zwo` files, use the built-in library, or measure your FTP with a 20-minute or a ramp test.                                                        |
-| <img src="docs/assets/screenshots/group-ride-light.webp" width="420" alt="The ride scene with three riders side by side on a flat road, two of them labelled Cleo and Ben.">                                                                  | **Group rides, peer-to-peer.** Up to eight riders in a room over WebRTC. Share a workout with the group and start it together on a countdown.                                                                                       |
-| <img src="docs/assets/screenshots/workouts-shared-light.webp" width="420" alt="The Workouts tab with a section ‘Shared by the group’ showing Ben’s VO2 session, and a section ‘My workouts’ with an imported workout.">                       | **Your library, in open formats.** Drop `.zwo` files onto the window; workouts shared in a group show up next to your own. Every ride is recorded locally and exports to `.fit`.                                                    |
+|                                                                                                                                                                                                                                                                                 |                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <img src="docs/assets/screenshots/overlay-over-video.webp" width="420" alt="The stats overlay: semi-transparent tiles for power, heart rate, cadence, speed, gear, time and distance, plus a small group list, over a colourful background.">                                   | **An overlay over anything.** A transparent, always-on-top, click-through window with the numbers you choose, on top of a fullscreen video or any other app. A hotkey (`Ctrl/Cmd+Shift+O`) toggles edit mode to move and resize it.                              |
+| <img src="docs/assets/screenshots/workout-erg-dark.webp" width="420" alt="A structured workout in progress: target 91 W, the step name Warm-up, a coloured block chart of the whole workout, and the time left in the step.">                                                   | **Structured workouts in ERG mode.** The trainer holds the target power. Import `.zwo` files, use the built-in library, or measure your FTP with a 20-minute or a ramp test.                                                                                     |
+| <img src="docs/assets/screenshots/group-ride-light.webp" width="420" alt="The ride scene with three riders side by side on a flat road, two of them labelled Cleo and Ben.">                                                                                                    | **Group rides, peer-to-peer.** Up to eight riders in a room over WebRTC. Share a workout with the group and start it together on a countdown.                                                                                                                    |
+| <img src="docs/assets/screenshots/workouts-shared-light.webp" width="420" alt="The Workouts tab with a section ‘Shared by the group’ showing Ben’s VO2 session, and a section ‘My workouts’ with an imported workout.">                                                         | **Your library, in open formats.** Drop `.zwo` files onto the window; workouts shared in a group show up next to your own. Every ride is recorded locally and exports to `.fit`.                                                                                 |
+| <img src="docs/assets/screenshots/community-light.webp" width="420" alt="The Community tab: this week's 234 points with distance, time, elevation, energy and rides, and a leaderboard of friends ranked by points, with your own row highlighted and older standings dimmed."> | **Points, leaderboards and challenges — without a server.** Points measure load relative to your own FTP (an hour at FTP is 100). Friends' standings and challenges travel peer-to-peer whenever you ride together, and you choose per friend what they may see. |
 
 And underneath:
 
@@ -55,14 +56,15 @@ And underneath:
 - **Free ride with gradient**, and an animated ride scene with an elevation profile and
   steering.
 - **An always-on diagnostic log** that leaves out your name and ride data, made to be attached
-  to a bug report ([diagnostics](docs/diagnostics.md)).
+  to a bug report: Settings → Diagnostics exports it, copies the recent part or opens its folder
+  ([diagnostics](docs/diagnostics.md)).
 - **A browser version** you can run with Docker Compose, for example on a home server
   ([docker](docs/docker.md)).
 
 ## Status
 
 Freilauf is **early**. There are no published releases yet. Everything above is built and
-tested end to end against simulated devices — about 650 unit tests, plus Playwright tests that
+tested end to end against simulated devices — over 800 unit tests, plus Playwright tests that
 drive the desktop app and the browser build — but very little has met real hardware so far.
 
 **First real-hardware test — 22 November 2026, Windows 11, Wahoo KICKR CORE, Zwift Ride smart
@@ -82,11 +84,9 @@ steering with the controllers, group rides between different machines and networ
 only on one machine), building the Docker image, and macOS in general.
 
 **Community features** — points, weekly and monthly totals, friends with per-contact
-visibility, challenges and leaderboards that sync peer-to-peer without a server: the core
-library is implemented and tested ([`packages/community`](packages/community),
-[design](docs/community.md)) and wired into the app (rides count towards your totals, group
-sessions sync standings and challenges in the background); the Community tab (UI) is in
-progress, so there is nothing to see in the app yet.
+visibility, challenges and leaderboards that sync peer-to-peer without a server — are in the
+app's **Community** tab ([design](docs/community.md)). They are tested against simulated
+riders only; standings and challenges between real machines have not been tried yet.
 
 ## Get it
 

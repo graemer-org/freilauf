@@ -2,6 +2,7 @@ import type {
   BlePeripheral,
   BleTransport,
   Controller,
+  ControllerButton,
   DeviceKind,
   HeartRateSensor,
   Trainer,
@@ -91,6 +92,25 @@ export interface AppState {
    * identity while unchanged, so selectors like `s => s.community.leaderboard` are cheap.
    */
   community: CommunityView;
+  /** The controller button pressed last (live indicator in Settings); null until one is. */
+  lastButton: LastButton | null;
+}
+
+export interface LastButton {
+  button: ControllerButton;
+  /** Local clock time of the press. */
+  at: number;
+}
+
+/** Reports each press (not the release) of a controller button. */
+export function watchButtonPresses(
+  controller: Pick<Controller, 'onButton'>,
+  onPress: (press: LastButton) => void,
+  now: () => number = Date.now,
+): () => void {
+  return controller.onButton((e) => {
+    if (e.pressed) onPress({ button: e.button, at: now() });
+  });
 }
 
 export interface SharedWorkout {
@@ -181,6 +201,7 @@ export class App {
     sharingWorkoutId: null,
     groupCountdownS: null,
     community,
+    lastButton: null,
   });
 
   readonly #api: FreilaufApi;
@@ -203,6 +224,7 @@ export class App {
   readonly #bleLog: ScopedLog;
   readonly #deviceMonitor: DeviceMonitor;
   #capture: ControllerCapture | null = null;
+  #buttonWatch: (() => void) | null = null;
   #lastCaptureFlush = 0;
   #groupPeers = new Set<string>();
   /** At least one other rider was in the group at some point during the current ride. */
@@ -300,6 +322,7 @@ export class App {
     this.#deviceMonitor.dispose();
     if (this.#timer) clearInterval(this.#timer);
     for (const off of this.#cleanup) off();
+    this.#buttonWatch?.();
     this.#community.dispose(); // withdraws its documents and writes pending changes
     this.#group?.leave();
     this.#controller?.dispose();
@@ -379,10 +402,13 @@ export class App {
     try {
       const peripheral = await this.#transport.findKnownDevice(kind, id);
       if (!peripheral) {
-        this.#bleLog.warn(`reconnect ${kind}: not found (off, asleep, out of range or connected elsewhere)`, {
-          id,
-          ms: Date.now() - started,
-        });
+        this.#bleLog.warn(
+          `reconnect ${kind}: not found (off, asleep, out of range or connected elsewhere)`,
+          {
+            id,
+            ms: Date.now() - started,
+          },
+        );
       }
       if (peripheral) {
         await this.#attach(kind, peripheral);
@@ -451,7 +477,13 @@ export class App {
   #setControllerDevice(device: AnyDevice): void {
     if (device.kind === 'trainer') this.#controller?.setDevice('trainer', device);
     else if (device.kind === 'heartRate') this.#controller?.setDevice('heartRate', device);
-    else this.#controller?.setDevice('controller', device);
+    else {
+      this.#controller?.setDevice('controller', device);
+      this.#buttonWatch?.();
+      this.#buttonWatch = watchButtonPresses(device, (lastButton) =>
+        this.store.setState({ lastButton }),
+      );
+    }
   }
 
   #startSimulation(): void {
@@ -463,7 +495,9 @@ export class App {
       this.#setControllerDevice(device);
       this.#deviceMonitor.watch(device);
       device.connect().catch((err: unknown) => {
-        this.#bleLog.error(`simulated ${device.kind} failed to connect`, { error: describeError(err) });
+        this.#bleLog.error(`simulated ${device.kind} failed to connect`, {
+          error: describeError(err),
+        });
         this.notify('error', errorMessage(err));
       });
     }
@@ -618,7 +652,8 @@ export class App {
   }
 
   leaveGroup(): void {
-    if (this.#group) this.#logger.log('info', 'p2p', 'left the group', { peers: this.#groupPeers.size });
+    if (this.#group)
+      this.#logger.log('info', 'p2p', 'left the group', { peers: this.#groupPeers.size });
     this.#groupPeers = new Set();
     for (const off of this.#groupCleanup) off();
     this.#groupCleanup = [];
@@ -705,7 +740,11 @@ export class App {
       // Text from another rider: only a workout that validates is shown.
       const decoded = decodeWorkout(doc.text);
       if (decoded.ok) {
-        sharedWorkouts.push({ peerId: doc.peerId, peerName: doc.peerName, workout: decoded.workout });
+        sharedWorkouts.push({
+          peerId: doc.peerId,
+          peerName: doc.peerName,
+          workout: decoded.workout,
+        });
       }
     }
     this.store.setState({ sharedWorkouts });
@@ -811,7 +850,10 @@ export class App {
     return this.#community.inviteToChallenge(challengeId, riderId);
   }
 
-  respondToChallenge(challengeId: string, response: 'accepted' | 'declined'): CommunityActionResult {
+  respondToChallenge(
+    challengeId: string,
+    response: 'accepted' | 'declined',
+  ): CommunityActionResult {
     return this.#community.respondToChallenge(challengeId, response);
   }
 
@@ -882,7 +924,10 @@ export class App {
       const clipboard = globalThis.navigator?.clipboard;
       if (!clipboard) throw new Error('the clipboard is not available');
       await clipboard.writeText(text);
-      this.notify('info', `Copied the last ${Math.max(1, Math.round(text.length / 1024))} KB of the log to the clipboard.`);
+      this.notify(
+        'info',
+        `Copied the last ${Math.max(1, Math.round(text.length / 1024))} KB of the log to the clipboard.`,
+      );
       return true;
     } catch (err) {
       this.notify('error', `Could not copy the log: ${errorMessage(err)}`);
@@ -903,12 +948,16 @@ export class App {
         const ids = new Set(this.#group.getRiders().map((r) => r.peerId));
         for (const id of ids) {
           if (!this.#groupPeers.has(id)) {
-            this.#logger.log('info', 'p2p', `peer connected (${id.slice(0, 6)})`, { peers: ids.size });
+            this.#logger.log('info', 'p2p', `peer connected (${id.slice(0, 6)})`, {
+              peers: ids.size,
+            });
           }
         }
         for (const id of this.#groupPeers) {
           if (!ids.has(id)) {
-            this.#logger.log('info', 'p2p', `peer disconnected (${id.slice(0, 6)})`, { peers: ids.size });
+            this.#logger.log('info', 'p2p', `peer disconnected (${id.slice(0, 6)})`, {
+              peers: ids.size,
+            });
           }
         }
         this.#groupPeers = ids;

@@ -39,11 +39,11 @@ function useRideShortcuts(app: App): void {
         case 'ArrowUp':
         case '+':
         case '=':
-          app.shift(1);
+          app.shift(1, 'keyboard');
           break;
         case 'ArrowDown':
         case '-':
-          app.shift(-1);
+          app.shift(-1, 'keyboard');
           break;
         case '[':
           nudgeGradient(app, -GRADIENT_STEP);

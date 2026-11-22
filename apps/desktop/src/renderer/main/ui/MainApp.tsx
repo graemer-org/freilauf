@@ -6,6 +6,7 @@ import { FtpOutcomeDialog } from './FtpOutcomeDialog';
 import { GroupTab } from './GroupTab';
 import { ConnectionBanners, DeviceChips } from './Header';
 import { HistoryTab } from './HistoryTab';
+import { CommunityTab } from './CommunityTab';
 import { AppContext, useAppState } from './hooks';
 import { Notices } from './Notices';
 import { RideTab } from './RideTab';
@@ -13,13 +14,15 @@ import { SettingsTab } from './SettingsTab';
 import { WorkoutsTab } from './WorkoutsTab';
 import './main.css';
 
-export type TabId = 'ride' | 'workouts' | 'devices' | 'group' | 'history' | 'settings';
+export type TabId =
+  'ride' | 'workouts' | 'devices' | 'group' | 'community' | 'history' | 'settings';
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: 'ride', label: 'Ride' },
   { id: 'workouts', label: 'Workouts' },
   { id: 'devices', label: 'Devices' },
   { id: 'group', label: 'Group' },
+  { id: 'community', label: 'Community' },
   { id: 'history', label: 'History' },
   { id: 'settings', label: 'Settings' },
 ];
@@ -140,6 +143,9 @@ function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined })
         )}
         {tab === 'devices' && <DevicesTab />}
         {tab === 'group' && <GroupTab onOpenSettings={() => setTab('settings')} />}
+        {tab === 'community' && (
+          <CommunityTab onOpenGroup={() => setTab('group')} onOpenFtpTests={openFtpTests} />
+        )}
         {tab === 'history' && <HistoryTab />}
         {tab === 'settings' && <SettingsTab onOpenFtpTests={openFtpTests} />}
       </main>

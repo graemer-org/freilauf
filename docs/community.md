@@ -446,6 +446,44 @@ Actions on `App`: `setLeaderboardView`, `communityLeaderboard`, `setContactVisib
 message for the rider). `CHALLENGE_TEMPLATES` describes the seven templates (metrics, target
 ranges) for the creation form.
 
+### The Community tab
+
+`apps/desktop/src/renderer/main/ui/CommunityTab.tsx` (with `CommunityChallenges.tsx`,
+`CommunityFriends.tsx` and the pure helpers in `communityView.ts`), after the Group tab, in the
+desktop app and the browser build alike:
+
+- **Your week**: points large, distance, ride time, elevation, energy and rides of the current
+  week, the month so far, a one-line explanation of points and a "How points work" disclosure
+  (1 h at FTP = 100, intensity squared, IF cap 1.3, 400 per ride / 500 per day, scored once with
+  the FTP of the time). While the FTP is still the default, or rides this week scored 0, a note
+  points to the FTP tests.
+- **Leaderboard**: this week / last week / this month / last month × points, distance, time,
+  elevation, energy, rides (`setLeaderboardView`); rows with rank (ties share it), value, the
+  difference to you, your own row highlighted, stale standings dimmed with their age
+  ("updated 5 d ago") and relayed ones marked "via <friend>". Riders who share nothing are
+  absent, which a footnote says. Without friends an empty state explains that friends appear
+  after the first group ride and that standings travel only between riders in a session.
+- **Challenges**: invitations first (accept / decline), then running, upcoming and finished
+  ones. Each card shows the type in plain words, the week, the time left and a visual per
+  type — bars for personal goals, one stacked bar of everyone's contributions for a group
+  goal, two opposing bars with the leader (or the result, marked provisional) for a duel, week
+  dots for a streak, day dots for consistency, "before" vs "this week" for beat-your-best,
+  ride dots for ride-together — plus the participants with their invitation state and the
+  actions (invite a contact, leave, join again, cancel for the creator). "New challenge" picks
+  one of the seven templates, then measure, target (in km / h / m / points, range from
+  `CHALLENGE_TEMPLATES`), week, optional title and friends to invite; errors from
+  `createChallenge` are shown as returned.
+- **Friends & privacy**: the session rule in plain words (everyone present receives the same
+  data, so only what the most restricted rider present may see is published) and, in a group,
+  the current level ("Sharing totals with this session" / "Sharing nothing: someone here is set
+  to Nothing or is not yet identified"); each contact with last seen, "here now", the age and
+  relayer of their standing, "They see: Nothing / Totals & points / Everything (incl. best
+  efforts)", rename, and remove with an inline confirmation that explains the blocking; the
+  removed riders with unblock; the default for new friends and the "friends of friends may see
+  my totals" switch with what it reveals.
+- Status lines for a running backfill ("Adding 12 earlier rides… 4 of 12 done") and a failed
+  save.
+
 ## Integration checklist (app)
 
 1. **State storage**: keep one `CommunityState` JSON per installation (e.g. in the app's user
@@ -468,14 +506,4 @@ utcOffsetMin: -new Date(startedAt).getTimezoneOffset(), groupRide })` with the F
    - On `onDocument` `available`: collect that peer's community documents from
      `getSharedDocuments()` and call `mergeIncoming(state, { peerId, peerName }, docs, now)`;
      update the map with `riderId`, store the state, show `changes`.
-5. **UI**:
-   - Friends list: contacts with name/alias, last seen, visibility selector (none / totals /
-     everything), rename, remove (explain that it blocks), "friends of friends may see my
-     totals" switch (default off; explain that friends' ids are shared with friends).
-   - Leaderboards: week / month switch, metric picker (no average speed), rows with rank, delta to
-     you and a stale marker; riders who share nothing are simply missing.
-   - Challenges: create from the seven templates (week picker, metric/target per template),
-     invite contacts, accept/decline/leave, progress from `challengeProgress(c,
-allStandings(state, now), now)` with remaining time, group sum, duel result (mark
-     provisional results).
-   - Show the own weekly/monthly totals and points with the formula explained (1 h at FTP = 100).
+5. **UI**: done in this app — see [The Community tab](#the-community-tab).
