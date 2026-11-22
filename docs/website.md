@@ -1,137 +1,34 @@
-# Project website
+# The project website
 
-The website lives in [`site/`](../site): one hand-written page (`index.html`, `style.css`), a
-self-contained `404.html`, `favicon.svg`, images in `site/assets/` and an empty `.nojekyll`
-(so GitHub Pages serves the files as they are, without Jekyll). There is no build step and the
-page loads nothing from other hosts. All URLs inside the site are relative, so it works at
-`https://graemer-org.github.io/freilauf/` as well as at a domain root. The Open Graph image
-and the 404 page's "home" link use absolute URLs, because they must.
+The website is published with GitHub Pages straight from the `docs/` folder of the `main` branch
+(_Settings → Pages → Deploy from a branch → `main` / `/docs`_). There is no build step.
 
-To preview it locally:
+- `docs/index.html`, `docs/style.css` — the page, hand-written, no framework, no external requests.
+- `docs/404.html` — self-contained (inline styles, absolute links) so it works at any path depth.
+- `docs/favicon.svg`, `docs/assets/site/` — the mark and the page's images (WebP) plus `og.png`.
+- `docs/.nojekyll` — tells Pages to serve the folder as it is, without running Jekyll.
 
-```sh
-python3 -m http.server -d site 8000     # then open http://localhost:8000/
+The Markdown documentation lives in the same folder. GitHub renders it in the repository view;
+on the website the `.md` files are served as plain text, so the page links to the docs on
+GitHub rather than to the files next to it.
+
+The site is expected at <https://graemer-org.github.io/freilauf/>. All asset URLs are relative,
+so it also works from another sub-path or a custom domain; only the Open Graph image URL is
+absolute and must be changed if the address changes.
+
+## Changing the site
+
+Edit the files and merge to `main`; Pages redeploys on its own. To preview locally:
+
+```bash
+python3 -m http.server --directory docs 8000
 ```
 
-## Publishing to GitHub Pages
+Then open <http://localhost:8000/>.
 
-GitHub Pages has two sources (_Settings → Pages → Build and deployment → Source_):
+## Things to check in the repository settings
 
-- **Deploy from a branch** — serves either the root (`/`) or `/docs` of one branch. Nothing
-  else: a folder called `site/` cannot be selected.
-- **GitHub Actions** — a workflow uploads any folder. This repository's Actions minutes are
-  currently used up, so no Pages workflow is committed (see the optional workflow below).
-
-Options for publishing `site/` without a build under those constraints:
-
-| Option                                               | Effort                 | Downside                                                                                                                      |
-| ---------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **A. A `gh-pages` branch with the site at its root** | One command per update | The live site is only as new as the last push to `gh-pages`                                                                   |
-| B. Move the site to `/docs` on `main`                | Once                   | `/docs` already holds the Markdown documentation; Pages would serve it too (and run Jekyll on it unless `.nojekyll` is there) |
-| C. Serve the repository root and link to `site/`     | None                   | The URL becomes `…/freilauf/site/`, and the whole repository is published                                                     |
-
-**Recommendation: A**, a `gh-pages` branch made from `site/` with `git subtree split`. The site
-stays in `site/` next to the code, the docs stay Markdown, and publishing is explicit.
-
-### First publish
-
-From a clean checkout of `main` (the site must be committed there):
-
-```sh
-git subtree split --prefix site -b gh-pages     # branch whose root is the content of site/
-git push origin gh-pages
-```
-
-Then on GitHub: _Settings → Pages → Source: Deploy from a branch → Branch: `gh-pages`, folder
-`/ (root)` → Save_. After a minute or two the site is at
-<https://graemer-org.github.io/freilauf/>.
-
-### Updating
-
-After the site changed on `main`:
-
-```sh
-git checkout main && git pull
-git subtree split --prefix site -b gh-pages-new
-git push --force origin gh-pages-new:gh-pages
-git branch -D gh-pages-new
-```
-
-`git subtree split` produces the same commits for the same history, so the push is usually a
-fast-forward; `--force` only matters if `gh-pages` was ever edited by hand. Do not edit
-`gh-pages` directly — it is generated.
-
-If `git subtree` is not installed (it ships in git's `contrib`, and some distributions package
-it separately), a worktree does the same:
-
-```sh
-git worktree add --orphan -B gh-pages ../freilauf-pages   # first time only (git ≥ 2.42)
-# later: git worktree add ../freilauf-pages gh-pages
-rsync -a --delete --exclude .git site/ ../freilauf-pages/
-cd ../freilauf-pages && git add -A && git commit -m "Publish site" && git push origin gh-pages
-cd - && git worktree remove ../freilauf-pages
-```
-
-### Things to check (not verified here)
-
-- **Pages on a private repository** needs a paid plan (GitHub Pro, Team or Enterprise); on a
-  public repository it is free.
-- **Branch deployments also run as a job.** With "Deploy from a branch", GitHub runs its own
-  `pages build and deployment` workflow. Whether that job counts against the repository's
-  Actions minutes, and whether it still runs once the minutes are used up, is not documented
-  clearly enough to state here — check _Settings → Billing_ (or the organisation's billing
-  page) and the _Actions_ tab after the first push to `gh-pages`. If it is blocked, the site
-  is simply not updated until minutes are available again.
-- After the first publish, open the site and check that the images and the 404 page load
-  (any missing path, e.g. `…/freilauf/nope`).
-
-### Optional workflow, for when minutes are available
-
-Not committed on purpose. Saved as `.github/workflows/pages.yml`, with _Settings → Pages →
-Source: GitHub Actions_, it would publish `site/` on every push to `main` that touches it (and
-replace the `gh-pages` branch):
-
-```yaml
-name: Pages
-
-on:
-  push:
-    branches: [main]
-    paths: ['site/**']
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-## Editing the site
-
-- Keep it dependency-free: no frameworks, fonts, scripts or analytics from other hosts.
-- Colours are CSS custom properties at the top of `style.css`, with a dark set under
-  `prefers-color-scheme: dark`; the accent matches the app.
-- Images: WebP, at most about 1280 px wide, with `width`/`height` and `loading="lazy"` below
-  the fold. The whole site should stay well under 600 kB.
-- Every claim on the page must be true of the repository; the status section in particular
-  mirrors the [README](../README.md#status). Product names only to state compatibility, with
-  the disclaimer.
+- Pages on a private repository needs a paid GitHub plan.
+- A branch deployment runs as a GitHub-managed job. Whether it counts against the Actions
+  minutes of a private repository, or is held back while they are used up, is shown under
+  _Settings → Billing_; it has not been verified for this repository.

@@ -71,10 +71,11 @@ drive the desktop app and the browser build — but very little has met real har
 frame, a Bluetooth heart-rate strap:**
 
 - Pairing worked for all three kinds of device.
-- Shifting from the frame's controllers worked with **one button per side** (the lower shift
-  button on each grip).
-- The **second shift button on each side and the other controller buttons are not decoded or
-  mapped yet**. Keyboard shifting works regardless
+- A second pass pressed every controller button: the d-pad, A, B, Y, both shift buttons on each
+  grip and the left power button are **decoded correctly** after correcting the button table.
+- **Z and the right power button** were not recognised in that pass; their codes are now
+  inferred from the pattern and still need confirming. The **brake/steering paddles are not
+  decoded** at all. Keyboard shifting and steering work regardless
   ([protocol notes](docs/protocols/zwift-ride.md)).
 - How the overlay behaves over fullscreen video on Windows and macOS has **not been confirmed**
   yet.

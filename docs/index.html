@@ -21,7 +21,7 @@
       content="Your own video, your friends, your data. Open source, local-first, no account."
     />
     <meta property="og:url" content="https://graemer-org.github.io/freilauf/" />
-    <meta property="og:image" content="https://graemer-org.github.io/freilauf/assets/og.png" />
+    <meta property="og:image" content="https://graemer-org.github.io/freilauf/assets/site/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta
@@ -34,7 +34,10 @@
       name="twitter:description"
       content="Your own video, your friends, your data. Open source, local-first, no account."
     />
-    <meta name="twitter:image" content="https://graemer-org.github.io/freilauf/assets/og.png" />
+    <meta
+      name="twitter:image"
+      content="https://graemer-org.github.io/freilauf/assets/site/og.png"
+    />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -93,9 +96,12 @@
           </div>
           <figure class="hero-shot">
             <picture>
-              <source media="(prefers-color-scheme: dark)" srcset="assets/ride-climb-dark.webp" />
+              <source
+                media="(prefers-color-scheme: dark)"
+                srcset="assets/site/ride-climb-dark.webp"
+              />
               <img
-                src="assets/ride-climb-light.webp"
+                src="assets/site/ride-climb-light.webp"
                 width="1280"
                 height="720"
                 fetchpriority="high"
@@ -124,7 +130,7 @@
             </div>
             <img
               class="shot"
-              src="assets/overlay.webp"
+              src="assets/site/overlay.webp"
               width="720"
               height="416"
               loading="lazy"
@@ -143,7 +149,7 @@
             </div>
             <img
               class="shot"
-              src="assets/workout-erg.webp"
+              src="assets/site/workout-erg.webp"
               width="960"
               height="540"
               loading="lazy"
@@ -162,7 +168,7 @@
             </div>
             <img
               class="shot"
-              src="assets/group-ride.webp"
+              src="assets/site/group-ride.webp"
               width="960"
               height="540"
               loading="lazy"
@@ -324,10 +330,13 @@
             <li class="ok">
               Pairing worked for the trainer, the frame's controllers and the heart-rate strap.
             </li>
-            <li class="ok">Shifting from the controllers worked with one button per side.</li>
+            <li class="ok">
+              The d-pad, A, B, Y, both shift buttons on each grip and the left power button are
+              decoded correctly.
+            </li>
             <li class="open">
-              The second shift button per side and the other controller buttons are not decoded yet.
-              Keyboard shifting always works.
+              Z and the right power button are inferred and unconfirmed; the brake and steering
+              paddles are not decoded yet. Keyboard shifting and steering always work.
             </li>
             <li class="open">
               The overlay over fullscreen video on Windows and macOS is not confirmed yet.

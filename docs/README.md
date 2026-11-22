@@ -35,8 +35,8 @@ Anything not yet confirmed on real hardware is marked unverified.
   HTTPS on a Synology NAS, and how it differs from the desktop app
 - [releasing.md](releasing.md) — installers, the release workflow, unsigned
   builds
-- [website.md](website.md) — the project website in `site/` and how it is
-  published to GitHub Pages
+- [website.md](website.md) — the project website (`index.html` in this folder) and how it is
+  published with GitHub Pages.
 
 ## Diagnostics
 
@@ -81,4 +81,4 @@ pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 | `apps/desktop`       | Electron app: main window, overlay, Bluetooth chooser, persistence                    |
 | `apps/web`           | Browser build of the app (served by the Docker image)                                 |
 | `apps/signalling`    | Minimal WebSocket signalling server (self-hostable)                                   |
-| `site`               | The project website (static, no build step)                                           |
+| `docs/index.html`    | The project website (static, no build step)                                           |
