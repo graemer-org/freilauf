@@ -28,6 +28,9 @@ import type {
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
+import { RateLimiter } from './logFormat';
+import type { ScopedLog } from './logger';
+import { NULL_LOG } from './logger';
 
 /** The part of a group ride the controller needs; implemented by @freilauf/p2p's GroupRide. */
 export interface GroupLink {
@@ -52,7 +55,12 @@ export interface RideControllerOptions {
   /** Persists a ride; called every autosave interval while riding and once when finished. */
   saveRide: (ride: RecordedRide, finished: boolean) => Promise<void>;
   onError?: (message: string) => void;
+  /** Diagnostic log (source "ride"). */
+  log?: ScopedLog;
 }
+
+/** Where a gear change came from, for the diagnostic log. */
+export type ShiftSource = 'ui' | 'keyboard' | `button:${string}` | (string & {});
 
 const AUTOSAVE_INTERVAL_MS = 30_000;
 /** Rides shorter than this are discarded on finish (accidental start). */
@@ -104,11 +112,17 @@ export class RideController {
   #gradePercent = 0;
   #lastAutosaveAt = 0;
   #plan: Plan | null = null;
+  readonly #log: ScopedLog;
+  /** Trainer commands are frequent while shifting: summarise beyond a few per 10 s. */
+  readonly #commandLimit: RateLimiter;
+  #lastSegment = '';
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
     this.#settings = options.settings;
     this.#now = options.now ?? Date.now;
+    this.#log = options.log ?? NULL_LOG;
+    this.#commandLimit = new RateLimiter(10, 10_000, this.#now);
     this.#session = this.#newSession();
     this.#shifter = this.#newShifter();
   }
@@ -211,8 +225,16 @@ export class RideController {
     return this.#plan?.runner?.setIntensity(factor) ?? 1;
   }
 
-  shift(delta: number): void {
+  shift(delta: number, source: ShiftSource = 'ui'): void {
+    const before = this.#shifter.gear;
     this.#shifter.shift(delta);
+    const after = this.#shifter.gear;
+    this.#log.info(`gear ${before} → ${after} (${source})`, {
+      delta,
+      source,
+      gearCount: this.#shifter.gearCount,
+      ...(before === after ? { atLimit: true } : {}),
+    });
   }
 
   setGradient(gradePercent: number): void {
@@ -224,7 +246,16 @@ export class RideController {
   start(): void {
     if (this.#session.state === 'paused') {
       this.#session.resume();
+      this.#log.info('ride resumed');
     } else if (this.#session.state === 'idle') {
+      this.#log.info('ride started', {
+        workout: this.#plan?.workout.name ?? null,
+        ftpTest: this.#plan?.ftpTest?.kind ?? null,
+        trainer: this.#devices.trainer?.state ?? 'none',
+        heartRate: this.#devices.heartRate?.state ?? 'none',
+        controller: this.#devices.controller?.state ?? 'none',
+      });
+      this.#lastSegment = '';
       this.#session = this.#newSession(this.#plan?.workout.name);
       this.#session.start();
       this.#lastAutosaveAt = this.#now();
@@ -240,6 +271,7 @@ export class RideController {
   }
 
   pause(): void {
+    if (this.#session.state === 'riding') this.#log.info('ride paused');
     this.#session.pause();
   }
 
@@ -252,6 +284,20 @@ export class RideController {
     // The workout is done with; the next ride is a free ride unless one is chosen again.
     this.#plan = null;
     this.#shifter.resync(); // leave ERG: back to the simulated road
+    const last = ride.samples.at(-1);
+    const avg =
+      ride.samples.length > 0
+        ? Math.round(ride.samples.reduce((a, x) => a + x.powerW, 0) / ride.samples.length)
+        : null;
+    // Coarse summary only (docs/diagnostics.md): no samples, no timestamps.
+    this.#log.info('ride finished', {
+      samples: ride.samples.length,
+      durationMin: last ? Math.round(last.elapsedS / 6) / 10 : 0,
+      distanceKm: last ? Math.round(last.distanceM / 100) / 10 : 0,
+      avgPowerW: avg,
+      kept: ride.samples.length >= MIN_RIDE_SAMPLES,
+      workout: plan?.workout.name ?? null,
+    });
     if (ride.samples.length < MIN_RIDE_SAMPLES) return null;
     await this.#options.saveRide(ride, true);
     return { ride, ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null };
@@ -267,9 +313,10 @@ export class RideController {
 
     if (ride.state !== 'idle' && now - this.#lastAutosaveAt >= AUTOSAVE_INTERVAL_MS) {
       this.#lastAutosaveAt = now;
-      this.#options
-        .saveRide(this.#session.toRecordedRide(), false)
-        .catch((err: unknown) => this.#options.onError?.(`Autosave failed: ${String(err)}`));
+      this.#options.saveRide(this.#session.toRecordedRide(), false).catch((err: unknown) => {
+        this.#log.error('autosave failed', { error: err });
+        this.#options.onError?.(`Autosave failed: ${String(err)}`);
+      });
     }
 
     this.#group?.setLocalState({
@@ -306,8 +353,21 @@ export class RideController {
   #onButton(event: ControllerButtonEvent): void {
     if (!event.pressed) return;
     const action = this.#settings.shifting.buttons[event.button];
-    if (action === 'shiftUp') this.shift(1);
-    else if (action === 'shiftDown') this.shift(-1);
+    if (action === 'shiftUp') this.shift(1, `button:${event.button}`);
+    else if (action === 'shiftDown') this.shift(-1, `button:${event.button}`);
+    else {
+      this.#log.info(`button ${event.button} pressed: no action assigned`, {
+        button: event.button,
+        action: action ?? 'unmapped',
+      });
+    }
+  }
+
+  /** Logs a trainer command; beyond 10 per 10 s only a count is kept and reported with the next one. */
+  #logCommand(kind: string, context: Record<string, unknown>): void {
+    const d = this.#commandLimit.take(kind);
+    if (!d.allowed) return;
+    this.#log.debug(`trainer ← ${kind}`, d.suppressed ? { ...context, suppressedBefore: d.suppressed } : context);
   }
 
   #bike(): BikeParams {
@@ -365,6 +425,18 @@ export class RideController {
     }
 
     const update = runner.update(ride.elapsedS);
+    const segmentKey = `${update.label}|${update.mode}`;
+    if (segmentKey !== this.#lastSegment) {
+      this.#lastSegment = segmentKey;
+      this.#log.info(`workout segment: ${update.label}`, {
+        mode: update.mode,
+        targetPowerW: update.targetPowerW,
+        gradePercent: update.gradePercent,
+        segmentRemainingS: Math.round(update.segmentRemainingS),
+        elapsedS: Math.round(update.elapsedS),
+        finished: update.finished,
+      });
+    }
 
     if (plan.ftpTest?.openEnded && !plan.endedEarly && ride.state === 'riding') {
       const second = Math.floor(ride.elapsedS);
@@ -392,11 +464,11 @@ export class RideController {
       if (mode === 'erg' && targetPowerW !== null) {
         if (applied?.mode !== 'erg' || applied.targetPowerW !== targetPowerW) {
           plan.applied = { mode, targetPowerW };
-          trainer
-            .setTargetPower(targetPowerW)
-            .catch((err: unknown) =>
-              this.#options.onError?.(`Trainer rejected target power: ${String(err)}`),
-            );
+          this.#logCommand('target power', { targetPowerW });
+          trainer.setTargetPower(targetPowerW).catch((err: unknown) => {
+            this.#log.warn('trainer rejected target power', { targetPowerW, error: err });
+            this.#options.onError?.(`Trainer rejected target power: ${String(err)}`);
+          });
         }
       } else if (applied?.mode !== 'free' || applied.gradePercent !== gradePercent) {
         plan.applied = { mode: 'free', targetPowerW: null, gradePercent };
@@ -456,6 +528,13 @@ export class RideController {
         if (!trainer || trainer.state !== 'connected') return Promise.resolve();
         // In ERG the trainer holds a power target; simulation parameters would end that.
         if (this.#ergActive) return Promise.resolve();
+        this.#logCommand('simulation', {
+          gradePercent: round(params.gradePercent, 2),
+          crr: round(params.crr, 5),
+          windResistanceKgM: round(params.windResistanceKgM, 3),
+          windSpeedMps: round(params.windSpeedMps, 2),
+          gear: this.#shifter?.gear,
+        });
         return trainer.setSimulation(params);
       },
       {
@@ -466,9 +545,17 @@ export class RideController {
       },
     );
     shifter.setGradient(this.#gradePercent);
-    shifter.onError((err) => this.#options.onError?.(`Trainer rejected resistance: ${String(err)}`));
+    shifter.onError((err) => {
+      this.#log.warn('trainer rejected simulation parameters', { error: err });
+      this.#options.onError?.(`Trainer rejected resistance: ${String(err)}`);
+    });
     return shifter;
   }
+}
+
+function round(n: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(n * f) / f;
 }
 
 function status(device: Device | undefined): DeviceStatus | null {

@@ -25,7 +25,7 @@ function keypad(pressedMask: number, paddles: number[] = []): DataView {
 describe('parseZwiftRideMessage', () => {
   it('reports no buttons when all bits are set', () => {
     const msg = parseZwiftRideMessage(view(0x23, 0x08, 0xff, 0xff, 0xff, 0xff, 0x0f));
-    expect(msg).toEqual({ type: 'keypad', pressed: new Set(), paddles: [] });
+    expect(msg).toEqual({ type: 'keypad', pressed: new Set(), paddles: [], bitmap: 0xffffffff });
   });
 
   it('decodes each button from its cleared bit', () => {

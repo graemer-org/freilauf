@@ -33,10 +33,11 @@ export function attachBluetoothChooser(
   // A reload/navigation or a crash abandons the request: answer it so the
   // callback is always called once (Chromium ignores a late answer).
   wc.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) chooser.dispose();
+    if (details.isMainFrame && !details.isSameDocument)
+      chooser.dispose('page navigated or reloaded');
   });
-  wc.on('render-process-gone', () => chooser.dispose());
-  wc.on('destroyed', () => chooser.dispose());
+  wc.on('render-process-gone', () => chooser.dispose('renderer process gone'));
+  wc.on('destroyed', () => chooser.dispose('window destroyed'));
   return chooser;
 }
 
@@ -55,6 +56,7 @@ export function installPairingHandler(
   ses.setBluetoothPairingHandler((details, callback) => {
     const win = mainWindow();
     const from = details.frame ? WebContentsStatic.fromFrame(details.frame) : undefined;
+    log(`pairing prompt for ${details.deviceId}: kind ${details.pairingKind}`);
     if (!win || win.isDestroyed() || from !== win.webContents) {
       log(`pairing request for ${details.deviceId} from an unknown frame: rejected`);
       callback({ confirmed: false });

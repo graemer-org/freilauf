@@ -7,13 +7,14 @@ import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { ipcMain } from 'electron';
 import type { LiveState } from '../shared/contract';
 import { IPC } from '../shared/ipc';
-import type { BleLog } from './bleLog';
+import { isLogLevel } from '../renderer/core/logFormat';
 import type { BluetoothChooser } from './bluetoothChooser';
+import type { DiagnosticLog } from './logFile';
 import type { OverlayController } from './overlay';
 import type { RideStore } from './rideStore';
 import type { AppOrigin } from './security';
 import { isAppUrl } from './security';
-import { isDeviceKind } from './settings';
+import { isDeviceKind, isPlainObject } from './settings';
 import type { SettingsStore } from './settingsStore';
 import { isAutoSelect, isBounds, isLiveState, isRecordedRide, isShortString } from './validate';
 
@@ -26,9 +27,11 @@ export interface IpcDeps {
   chooser(): BluetoothChooser | null;
   settings: SettingsStore;
   rides: RideStore;
-  bleLog: BleLog;
+  diag: DiagnosticLog;
   exportFit(id: string): Promise<string | null>;
   openRidesFolder(): Promise<void>;
+  openLogFolder(): Promise<void>;
+  exportLog(): Promise<string | null>;
   log(m: string): void;
 }
 
@@ -172,9 +175,35 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
   // diagnostics
   on(IPC.diagBleLog, both, (_who, line) => {
     if (typeof line !== 'string') return;
-    deps.bleLog.write(line);
+    deps.diag.log('debug', 'ble', line.slice(0, 4000));
   });
-  handle(IPC.diagLogFilePath, both, () => deps.bleLog.filePath);
+  on(IPC.diagLog, both, (who, batch) => {
+    if (!Array.isArray(batch)) return;
+    const now = Date.now();
+    for (const e of batch.slice(0, 500) as unknown[]) {
+      if (!isPlainObject(e)) continue;
+      const { time, level, source, message, context } = e;
+      if (!isLogLevel(level) || typeof source !== 'string' || typeof message !== 'string') continue;
+      deps.diag.write({
+        // The renderer's clock is the same machine's; still keep it plausible.
+        time: typeof time === 'number' && Math.abs(time - now) < 3_600_000 ? time : now,
+        level,
+        // Overlay entries are always marked as such, whatever the page says.
+        source: who === 'overlay' && source === 'renderer' ? 'overlay' : source,
+        message: message.slice(0, 4000),
+        context: isPlainObject(context) ? context : undefined,
+      });
+    }
+  });
+  handle(IPC.diagLogFilePath, both, () => deps.diag.file.filePath);
+  handle(IPC.diagLogInfo, mainOnly, () => deps.diag.file.info());
+  handle(IPC.diagOpenLogFolder, mainOnly, () => deps.openLogFolder());
+  handle(IPC.diagExportLog, mainOnly, () => deps.exportLog());
+  handle(IPC.diagReadRecent, mainOnly, (_who, maxBytes) => {
+    if (typeof maxBytes !== 'number' || !Number.isFinite(maxBytes) || maxBytes < 0)
+      bad(IPC.diagReadRecent);
+    return deps.diag.file.readRecent(maxBytes);
+  });
 
   return { lastLive: () => lastLive };
 }

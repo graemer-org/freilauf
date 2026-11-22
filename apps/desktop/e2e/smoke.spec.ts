@@ -155,7 +155,7 @@ test.describe('desktop smoke', () => {
       ).rejects.toThrow();
 
       expect(await main.evaluate(() => window.freilauf.diagnostics.logFilePath())).toContain(
-        'ble.log',
+        'freilauf.log',
       );
     } finally {
       await app.close();
@@ -178,4 +178,80 @@ test.describe('desktop smoke', () => {
       await app.close();
     }
   });
+});
+
+test('writes an always-on diagnostic log during a short simulated ride', async () => {
+  test.setTimeout(60_000);
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-log-'));
+  const riderName = 'Zelda Quixote';
+  try {
+    const app = await launch(userData);
+    try {
+      const { main, overlay } = await windows(app);
+      await main.evaluate(
+        (name) => window.freilauf.settings.update({ rider: { name } }),
+        riderName,
+      );
+      await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+
+      await main.getByTestId('ride-start').click();
+      await main.getByTestId('gear-up').click();
+      await main.waitForTimeout(1500);
+      await main.getByTestId('ride-pause').click();
+
+      // Both windows can log; the name is redacted wherever it appears.
+      await main.evaluate(
+        (name) =>
+          window.freilauf.diagnostics.log('info', 'e2e', `hello from ${name}`, { who: name }),
+        riderName,
+      );
+      await overlay.evaluate(() =>
+        window.freilauf.diagnostics.log('info', 'overlay', 'overlay says hi'),
+      );
+      await expect(
+        overlay.evaluate(() => window.freilauf.diagnostics.readRecent(100)),
+      ).rejects.toThrow(/not allowed/);
+
+      const info = await main.evaluate(() => window.freilauf.diagnostics.getLogInfo());
+      expect(info.directory).toBe(path.join(userData, 'logs'));
+      expect(info.files[0]?.name).toBe('freilauf.log');
+      expect(info.files[0]?.bytes).toBeGreaterThan(0);
+      const recent = await main.evaluate(() => window.freilauf.diagnostics.readRecent(64 * 1024));
+      expect(recent).toContain('hello from [rider]');
+    } finally {
+      await app.close();
+    }
+
+    const logFile = path.join(userData, 'logs', 'freilauf.log');
+    expect(fs.existsSync(logFile)).toBe(true);
+    const text = fs.readFileSync(logFile, 'utf8');
+    // Session header.
+    expect(text).toMatch(/INFO +session +===== Freilauf \S+ session [0-9a-f]{8} started =====/);
+    expect(text).toMatch(/INFO +session +versions \{"electron":/);
+    expect(text).toMatch(/INFO +session +os \{"platform":/);
+    expect(text).toMatch(/INFO +session +displays \{"count":\d/);
+    // The three simulated devices connect.
+    for (const device of [
+      'trainer "Simulated Trainer"',
+      'heartRate "Simulated HR"',
+      'controller "Simulated Controller"',
+    ]) {
+      expect(text).toContain(`${device} connecting → connected`);
+    }
+    expect(text).toMatch(/INFO +ride +ride started/);
+    expect(text).toMatch(/INFO +ride +gear \d+ → \d+ \(ui\)/);
+    expect(text).toMatch(/INFO +ride +ride paused/);
+    expect(text).toMatch(/INFO +settings +settings changed \{"changed":\["rider.name"\]/);
+    expect(text).toMatch(/INFO +overlay +overlay says hi/);
+    expect(text).toMatch(/INFO +main +session end/);
+    // Privacy: the rider's name never reaches the file.
+    expect(text).not.toContain('Zelda');
+    expect(text).not.toContain('Quixote');
+    // One event per line, each starting with an ISO timestamp.
+    for (const l of text.split('\n').filter(Boolean)) {
+      expect(l).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (DEBUG|INFO |WARN |ERROR) /);
+    }
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+  }
 });

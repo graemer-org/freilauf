@@ -47,6 +47,9 @@ export const RIDE_BUTTON_MASK: Readonly<Record<ControllerButton, number>> = {
 
 const ALL_BUTTONS = Object.keys(RIDE_BUTTON_MASK) as ControllerButton[];
 
+/** OR of every known button mask: bits outside it are not (yet) mapped to a button. */
+export const RIDE_KNOWN_BUTTON_BITS = ALL_BUTTONS.reduce((acc, b) => acc | RIDE_BUTTON_MASK[b], 0);
+
 export interface RidePaddle {
   side: 'left' | 'right';
   /** −1 … 1 */
@@ -54,7 +57,13 @@ export interface RidePaddle {
 }
 
 export type ZwiftRideMessage =
-  | { type: 'keypad'; pressed: ReadonlySet<ControllerButton>; paddles: RidePaddle[] }
+  | {
+      type: 'keypad';
+      pressed: ReadonlySet<ControllerButton>;
+      paddles: RidePaddle[];
+      /** The raw button bitmap (low 32 bits), for protocol captures. */
+      bitmap: number;
+    }
   | { type: 'battery'; percent: number }
   | { type: 'idle' }
   | { type: 'unknown'; messageType: number };
@@ -92,7 +101,7 @@ export function parseZwiftRideMessage(data: DataView): ZwiftRideMessage | null {
         const paddle = parsePaddle(f.bytes);
         if (paddle) paddles.push(paddle);
       }
-      return { type: 'keypad', pressed, paddles };
+      return { type: 'keypad', pressed, paddles, bitmap: bits >>> 0 };
     }
     case ZwiftMessageType.battery: {
       const fields = decodeProtobuf(body);

@@ -83,8 +83,57 @@ makes the button → action mapping configurable.
 
 ## How to capture
 
-Run the app with `FREILAUF_BLE_LOG=1`: every raw frame from the controller
-is written as hex with a timestamp to the log file shown in
-Settings → Diagnostics. Press each button once in a known order and attach
-the log to an issue. Alternatively use nRF Connect on a phone and enable
-notifications on the Async characteristic.
+Capture is **always on**: Freilauf writes every *change* of the keypad frame
+to its diagnostic log (see [../diagnostics.md](../diagnostics.md) for where
+the log is and how to export it). Nothing has to be enabled.
+
+To produce a capture that answers the open questions:
+
+1. Start Freilauf, connect the controllers (Devices tab) and wait until they
+   show as connected.
+2. Press **each button once, in this order**, holding it for about a second
+   and leaving about two seconds between buttons (so each press is a separate,
+   easy-to-find group of lines):
+   1. left grip: lower shift button, then upper shift button;
+   2. left grip: D-pad up, right, down, left;
+   3. left grip: the power-up button;
+   4. right grip: lower shift button, then upper shift button;
+   5. right grip: A, B, Y, Z;
+   6. right grip: the power-up button;
+   7. each brake paddle (if present): squeeze slowly all the way and release,
+      left then right.
+
+   Do not press the on/off buttons (they switch the controller off). If you
+   deviate from the order, write down what you did.
+3. Export the log (Settings → Diagnostics → Export log, or copy
+   `freilauf.log` from the log folder) and attach it to an issue together
+   with the order you used.
+
+Reading it: each press shows up as two `controller` lines, the press and the
+release:
+
+```
+… INFO  controller keypad 23 08 ff bf ff ff 0f → pressed shiftUpRight {"hex":"23 08 ff bf ff ff 0f","bitmap":"0xffffdfff","pressed":["shiftUpRight"],"down":["shiftUpRight"]}
+… INFO  controller keypad 23 08 ff ff ff ff 0f → pressed none {"hex":"23 08 ff ff ff ff 0f","bitmap":"0xffffffff","pressed":[],"up":["shiftUpRight"]}
+```
+
+- `bitmap` is field 1 of the keypad message (low 32 bits); a cleared bit is a
+  pressed button.
+- `unknownBits` lists cleared bits that are **not** in the table above — a
+  button we cannot map yet (`→ pressed unmapped bit(s)`).
+- `paddles` shows the analog values of field 3, if any.
+- `previous frame repeated N×` collapses identical frames (the controller
+  repeats its state).
+- `unknown message type 0x.. (first occurrence)` gives the first frame of a
+  message type the parser does not know, in full; later ones are counted
+  (`unknown message types seen`).
+- The handshake answer appears as `handshake answer (RideOn…) on sync TX`
+  with hex and ASCII; the service used as `using Ride service FC82` or the
+  legacy fallback.
+- `button <name> pressed: no action assigned` (source `ride`) means the
+  button was decoded but has no shift action in Settings.
+
+`FREILAUF_BLE_LOG=1` additionally logs **every** raw frame, uncollapsed, as
+`raw async …` / `raw syncTx …` debug lines — useful if the collapsing hides
+something. Alternatively use nRF Connect on a phone and enable notifications
+on the Async characteristic.

@@ -47,7 +47,13 @@ interface ActiveRequest {
   order: string[];
   lastSent: string;
   timer: unknown;
+  /** For the diagnostic log. */
+  startedAt: number;
+  events: number;
 }
+
+/** Devices listed individually in the log per request; beyond that only counted. */
+const MAX_LOGGED_DEVICES = 30;
 
 const MAX_TIMEOUT_MS = 5 * 60_000;
 
@@ -96,6 +102,8 @@ export class BluetoothChooser {
         order: [],
         lastSent: '',
         timer: null,
+        startedAt: Date.now(),
+        events: 0,
       };
       const req = this.active;
       this.deps.log(
@@ -118,6 +126,7 @@ export class BluetoothChooser {
     }
 
     const req = this.active;
+    req.events++;
     for (const d of devices) {
       if (typeof d.deviceId !== 'string' || d.deviceId === '') continue;
       const name = typeof d.deviceName === 'string' ? d.deviceName : '';
@@ -125,7 +134,13 @@ export class BluetoothChooser {
       if (!prev) {
         req.devices.set(d.deviceId, { id: d.deviceId, name });
         req.order.push(d.deviceId);
+        if (req.order.length <= MAX_LOGGED_DEVICES) {
+          this.deps.log(
+            `chooser: seen "${name}" (${d.deviceId}) after ${Date.now() - req.startedAt} ms`,
+          );
+        }
       } else if (isNamed(name) && name !== prev.name) {
+        this.deps.log(`chooser: ${d.deviceId} now named "${name}" (was "${prev.name}")`);
         prev.name = name;
       }
     }
@@ -154,15 +169,19 @@ export class BluetoothChooser {
       this.deps.log(`chooser: pick(${deviceId}) of a device not in the list; ignored`);
       return;
     }
+    this.deps.log(`chooser: user picked "${req.devices.get(deviceId)?.name ?? ''}" (${deviceId})`);
     this.finish(deviceId);
   }
 
-  cancel(): void {
-    if (this.active) this.finish('');
+  cancel(reason = 'cancelled by the user'): void {
+    if (this.active) {
+      this.deps.log(`chooser: ${reason}`);
+      this.finish('');
+    }
   }
 
-  dispose(): void {
-    this.cancel();
+  dispose(reason = 'window went away'): void {
+    this.cancel(`request abandoned (${reason})`);
     this.next = null;
   }
 
@@ -183,6 +202,14 @@ export class BluetoothChooser {
     if (!req) return;
     this.active = null;
     if (req.timer !== null) this.deps.clearTimer(req.timer);
+    const extra =
+      req.order.length > MAX_LOGGED_DEVICES
+        ? ` (${req.order.length - MAX_LOGGED_DEVICES} not listed)`
+        : '';
+    this.deps.log(
+      `chooser: request ended after ${Date.now() - req.startedAt} ms, ${req.events} scan update(s), ` +
+        `${req.order.length} device(s) seen${extra}; ${deviceId ? `selected ${deviceId}` : 'nothing selected'}`,
+    );
     try {
       req.callback(deviceId);
     } catch (e) {

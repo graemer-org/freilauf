@@ -58,7 +58,50 @@ const settings = new BrowserSettingsStore({
 });
 const rides = new RideRepository(rideRecordStore(), downloadFile);
 const pip = new StatsPipWindow();
-const api = createBrowserApi({ settings, rides, simMode, bleLogEnabled, overlayWindow: pip });
+const api = createBrowserApi({
+  settings,
+  rides,
+  simMode,
+  bleLogEnabled,
+  overlayWindow: pip,
+  sessionFacts: {
+    browser: {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      languages: navigator.languages,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+    screen: {
+      width: screen.width,
+      height: screen.height,
+      devicePixelRatio: window.devicePixelRatio,
+    },
+    bluetooth: {
+      hasBluetoothApi: bluetoothEnv.hasBluetoothApi,
+      secureContext: bluetoothEnv.isSecureContext,
+      available: availability.available,
+    },
+  },
+});
+window.addEventListener('error', (e) =>
+  api.diagnostics.log('error', 'renderer', `uncaught error: ${e.message}`, {
+    file: e.filename,
+    line: e.lineno,
+    column: e.colno,
+    stack: (e.error as { stack?: unknown } | null)?.stack,
+  }),
+);
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason as { message?: unknown; stack?: unknown } | null;
+  api.diagnostics.log(
+    'error',
+    'renderer',
+    `unhandled promise rejection: ${String(r?.message ?? r)}`,
+    {
+      stack: r?.stack,
+    },
+  );
+});
 (window as { freilaufDiagnostics?: () => readonly string[] }).freilaufDiagnostics = () =>
   api.diagnosticLines();
 
@@ -66,7 +109,13 @@ const app = new App(api, webRtcGroupConnector, {
   createTransport: () =>
     bluetoothEnv.hasBluetoothApi && bluetoothEnv.isSecureContext
       ? new BrowserBluetoothTransport(navigator.bluetooth, {
-          log: (line) => api.diagnostics.bleLog(`transport ${line}`),
+          log: (line) => api.diagnostics.log('info', 'ble', `transport: ${line}`),
+          gattLog: {
+            debug: (m, c) => api.diagnostics.log('debug', 'ble', m, c),
+            info: (m, c) => api.diagnostics.log('info', 'ble', m, c),
+            warn: (m, c) => api.diagnostics.log('warn', 'ble', m, c),
+            error: (m, c) => api.diagnostics.log('error', 'ble', m, c),
+          },
         })
       : new UnavailableBluetoothTransport(
           availability.available ? 'Web Bluetooth is unavailable.' : `${availability.title}.`,

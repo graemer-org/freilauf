@@ -32,7 +32,9 @@ import type { Display } from 'electron';
 import { BrowserWindow, Notification, globalShortcut, powerMonitor, screen } from 'electron';
 import type { Bounds, Settings } from '../shared/contract';
 import { IPC } from '../shared/ipc';
+import { RateLimiter } from '../renderer/core/logFormat';
 import { OVERLAY_MIN_SIZE, clampSize, defaultOverlayBounds, fitToDisplays } from './geometry';
+import type { MainLog } from './logFile';
 import type { SettingsStore } from './settingsStore';
 
 export interface OverlayDeps {
@@ -42,7 +44,7 @@ export interface OverlayDeps {
   load(win: BrowserWindow): void;
   /** Sends to every window of the app (edit mode is shown in both). */
   broadcast(channel: string, ...args: unknown[]): void;
-  log(m: string): void;
+  log: MainLog;
 }
 
 const isWin = process.platform === 'win32';
@@ -66,6 +68,9 @@ export class OverlayController {
   /** Last bounds we wrote to settings, to tell our own writes from user edits. */
   private persistedBounds: string;
   private readonly deps: OverlayDeps;
+  /** Re-assertions happen every few seconds on Windows: log a few, count the rest. */
+  private readonly reassertLimit = new RateLimiter(5, 60_000);
+  private reassertCount = 0;
 
   constructor(deps: OverlayDeps) {
     this.deps = deps;
@@ -103,6 +108,7 @@ export class OverlayController {
     this.applyOnTop();
     this.applyEditMode();
     this.win.setMenu(null);
+    deps.log.info('overlay window created', { bounds, savedBounds: s.bounds, visible: s.visible });
 
     this.win.once('ready-to-show', () => {
       if (this.deps.settings.get().overlay.visible) this.show();
@@ -124,13 +130,16 @@ export class OverlayController {
         deps.settings.update({ overlay: { visible: false } });
       }
     });
-    this.win.on('closed', () => this.stopReassertTimer());
+    this.win.on('closed', () => {
+      deps.log.info('overlay window closed');
+      this.stopReassertTimer();
+    });
 
     screen.on('display-added', () => this.onDisplaysChanged());
     screen.on('display-removed', () => this.onDisplaysChanged());
     screen.on('display-metrics-changed', () => this.onDisplaysChanged());
-    powerMonitor.on('resume', () => this.reassertTop());
-    powerMonitor.on('unlock-screen', () => this.reassertTop());
+    powerMonitor.on('resume', () => this.reassertTop('resume'));
+    powerMonitor.on('unlock-screen', () => this.reassertTop('unlock'));
 
     deps.settings.onChange((next) => this.onSettings(next));
     this.registerHotkey(deps.settings.get().overlay.editHotkey);
@@ -163,18 +172,28 @@ export class OverlayController {
   }
 
   /** See the module comment for why this is needed on Windows. */
-  reassertTop(): void {
+  reassertTop(reason = 'unspecified'): void {
     if (this.win.isDestroyed() || !this.win.isVisible()) return;
     this.win.setAlwaysOnTop(true, TOP_LEVEL);
     if (isWin && !this.editMode) this.win.moveTop();
+    this.reassertCount++;
+    const d = this.reassertLimit.take(reason);
+    if (d.allowed) {
+      this.deps.log.debug(`always-on-top re-asserted (${reason})`, {
+        total: this.reassertCount,
+        isAlwaysOnTop: this.win.isAlwaysOnTop(),
+        ...(d.suppressed ? { notLoggedBefore: d.suppressed } : {}),
+      });
+    }
   }
 
   private show(): void {
     if (this.win.isDestroyed()) return;
     this.win.showInactive();
-    this.reassertTop();
+    this.deps.log.info('overlay shown', { bounds: this.win.getBounds() });
+    this.reassertTop('show');
     if (isWin && !this.reassertTimer) {
-      this.reassertTimer = setInterval(() => this.reassertTop(), REASSERT_INTERVAL_MS);
+      this.reassertTimer = setInterval(() => this.reassertTop('timer'), REASSERT_INTERVAL_MS);
     }
   }
 
@@ -182,6 +201,7 @@ export class OverlayController {
     if (this.win.isDestroyed()) return;
     if (this.editMode) this.setEditMode(false);
     this.win.hide();
+    this.deps.log.info('overlay hidden');
     this.stopReassertTimer();
   }
 
@@ -196,10 +216,11 @@ export class OverlayController {
       return;
     }
     if (edit && !this.deps.settings.get().overlay.visible) {
-      this.deps.log('edit mode requested while the overlay is hidden; showing it');
+      this.deps.log.info('edit mode requested while the overlay is hidden; showing it');
       this.deps.settings.update({ overlay: { visible: true } });
     }
     this.editMode = edit;
+    this.deps.log.info(`overlay edit mode ${edit ? 'on' : 'off'}`);
     this.applyEditMode();
     if (!edit) this.flushPersist();
     this.deps.broadcast(IPC.overlayEditMode, this.editMode);
@@ -216,7 +237,7 @@ export class OverlayController {
       if (isWin || isMac) this.win.setFocusable(false);
       if (this.win.isFocused()) this.win.blur();
     }
-    this.reassertTop();
+    this.reassertTop('edit mode');
   }
 
   getBounds(): Bounds {
@@ -248,6 +269,7 @@ export class OverlayController {
     const key = JSON.stringify(bounds);
     if (key === this.persistedBounds) return;
     this.persistedBounds = key;
+    this.deps.log.info('overlay moved/resized by the user', { bounds });
     this.deps.settings.update({ overlay: { bounds } });
   }
 
@@ -263,10 +285,10 @@ export class OverlayController {
       const target = this.resolveBounds(saved ?? this.win.getBounds());
       const cur = this.win.getBounds();
       if (JSON.stringify(cur) !== JSON.stringify(target)) {
-        this.deps.log(`displays changed: moving overlay to ${JSON.stringify(target)}`);
+        this.deps.log.info('displays changed: moving overlay', { from: cur, to: target });
         this.win.setBounds(target);
       }
-      this.reassertTop();
+      this.reassertTop('display change');
     }, 300);
   }
 
@@ -282,6 +304,10 @@ export class OverlayController {
     if (key !== this.persistedBounds) {
       this.persistedBounds = key;
       const target = this.resolveBounds(o.bounds);
+      this.deps.log.info('overlay bounds changed in settings', {
+        saved: o.bounds,
+        applied: target,
+      });
       this.win.setBounds(target);
     }
   }
@@ -303,9 +329,10 @@ export class OverlayController {
     } catch (e) {
       reason = `it is not a valid accelerator (${String(e)})`;
     }
+    if (ok) this.deps.log.info(`edit hotkey "${accelerator}" registered`);
     if (!ok) {
       const msg = `Could not register the overlay edit hotkey "${accelerator}": ${reason}. Use the main window to toggle edit mode or choose another hotkey.`;
-      this.deps.log(msg);
+      this.deps.log.warn(msg);
       try {
         if (Notification.isSupported())
           new Notification({ title: 'Freilauf', body: msg, silent: true }).show();

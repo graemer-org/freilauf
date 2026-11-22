@@ -8,9 +8,24 @@
  *  - live: in-page (the PiP window renders from the same JS realm);
  *  - overlay: mapped to the Picture-in-Picture stats window where it makes sense;
  *  - bluetooth: the browser shows its own chooser, so these are no-ops;
- *  - diagnostics: in-memory ring buffer (+ console when ?blelog=1).
+ *  - diagnostics: the same log lines as the desktop log file, kept in an
+ *    in-memory ring buffer (warn and error also go to the console); "export"
+ *    downloads them as a text file.
  */
-import type { Bounds, FreilaufApi, LiveState } from '../../desktop/src/shared/contract';
+import type {
+  Bounds,
+  FreilaufApi,
+  LiveState,
+  LogContext,
+  LogLevel,
+} from '../../desktop/src/shared/contract';
+import {
+  formatLogLine,
+  randomSessionId,
+  redactEntry,
+  sessionHeaderEntries,
+  tailText,
+} from '../../desktop/src/renderer/core/logFormat';
 import type { RideRepository } from './rideRepository';
 import type { BrowserSettingsStore } from './settingsStore';
 
@@ -29,8 +44,14 @@ export interface BrowserApiDeps {
   simMode: boolean;
   bleLogEnabled: boolean;
   overlayWindow?: OverlayWindowHost | null;
-  /** Max diagnostics lines kept in memory. Default 2000. */
+  /** Max diagnostics lines kept in memory. Default 5000. */
   diagnosticsLimit?: number;
+  /** Saves the exported log; default: a browser download. */
+  saveLogFile?: (fileName: string, text: string) => void;
+  /** Facts for the session header (user agent, screen, …). */
+  sessionFacts?: Record<string, unknown>;
+  /** Write a session header when created. Default true. */
+  sessionHeader?: boolean;
 }
 
 export interface BrowserApi extends FreilaufApi {
@@ -52,6 +73,12 @@ export const OPEN_FOLDER_MESSAGE =
   'In the browser, rides are stored in this browser’s own storage (IndexedDB) for this address. ' +
   'Use “Export .fit” to save a ride as a file.';
 
+export const LOG_FOLDER_MESSAGE =
+  'In the browser, the diagnostic log is kept in memory for this tab only. ' +
+  'Use “Export log” to download it as a file (it is lost when the tab is closed or reloaded).';
+
+export const LOG_LOCATION = 'browser memory (this tab)';
+
 export const EDIT_MODE_MESSAGE =
   'The web version has no free-floating overlay. Use “Pop-out stats” for a small always-on-top ' +
   'window and resize it by dragging its edges.';
@@ -61,7 +88,53 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
     kind === 'error' ? console.error(message) : console.info(message);
   const liveListeners = new Set<(state: LiveState) => void>();
   const diagnostics: string[] = [];
-  const limit = deps.diagnosticsLimit ?? 2000;
+  const limit = deps.diagnosticsLimit ?? 5000;
+  const sessionId = randomSessionId();
+  const saveLogFile =
+    deps.saveLogFile ??
+    ((fileName: string, text: string) =>
+      downloadFile(fileName, new TextEncoder().encode(text), 'text/plain;charset=utf-8'));
+
+  const write = (level: LogLevel, source: string, message: string, context?: LogContext) => {
+    try {
+      let riderName: string | undefined;
+      try {
+        riderName = deps.settings.get().rider.name;
+      } catch {
+        riderName = undefined;
+      }
+      const entry = redactEntry(
+        { time: Date.now(), level, source, message, context },
+        { riderName },
+      );
+      const line = formatLogLine(entry);
+      diagnostics.push(line);
+      if (diagnostics.length > limit) diagnostics.splice(0, diagnostics.length - limit);
+      // console.warn for errors too: real exceptions already show up as console
+      // errors on their own; a logged (handled) failure should not look like one.
+      if (level === 'error' || level === 'warn') console.warn(`[freilauf] ${line}`);
+    } catch {
+      // never throw into the app
+    }
+  };
+  const allText = () => (diagnostics.length ? `${diagnostics.join('\n')}\n` : '');
+
+  if (deps.sessionHeader !== false) {
+    for (const e of sessionHeaderEntries(
+      {
+        sessionId,
+        app: 'Freilauf (web)',
+        version: 'web',
+        facts: {
+          app: { simMode: deps.simMode, rawBleFrames: deps.bleLogEnabled },
+          ...deps.sessionFacts,
+        },
+      },
+      Date.now(),
+    )) {
+      write(e.level, e.source, e.message, e.context);
+    }
+  }
 
   const api: BrowserApi = {
     simMode: deps.simMode,
@@ -132,12 +205,25 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
     diagnostics: {
       bleLog(line) {
         if (!deps.bleLogEnabled) return;
-        const stamped = `${new Date().toISOString()} ${line}`;
-        diagnostics.push(stamped);
-        if (diagnostics.length > limit) diagnostics.splice(0, diagnostics.length - limit);
+        write('debug', 'ble', String(line));
         console.debug(`[ble] ${line}`);
       },
-      logFilePath: async () => 'browser console (in memory; run freilaufDiagnostics())',
+      logFilePath: async () => `${LOG_LOCATION}; run freilaufDiagnostics() in the console`,
+      log: (level, source, message, context) => write(level, source, message, context),
+      getLogInfo: async () => ({
+        directory: LOG_LOCATION,
+        files: [{ name: 'freilauf.log', bytes: new TextEncoder().encode(allText()).length }],
+      }),
+      openLogFolder: async () => notify('info', LOG_FOLDER_MESSAGE),
+      exportLog: async () => {
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+        const fileName = `freilauf-log-${stamp}.txt`;
+        const header = `Freilauf diagnostic log (web), exported ${new Date().toISOString()} (session ${sessionId}). See docs/diagnostics.md.\n`;
+        saveLogFile(fileName, header + allText());
+        return fileName;
+      },
+      readRecent: async (maxBytes) =>
+        tailText(allText(), Math.max(0, Math.min(1024 * 1024, Math.floor(maxBytes)))),
     },
   };
   return api;

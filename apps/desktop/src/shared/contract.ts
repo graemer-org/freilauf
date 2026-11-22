@@ -139,6 +139,8 @@ export interface LiveState {
   localName: string;
   /** Present while a structured workout is loaded for the current ride. */
   workout?: WorkoutLive | null;
+  /** Steering from the controller paddles, −1 (full left) … 1 (full right); 0 without paddles. */
+  steering?: number;
 }
 
 /** The running workout as shown in the main window and overlay. */
@@ -256,8 +258,42 @@ export interface FreilaufApi {
   };
 
   diagnostics: {
-    /** Appends a line to the BLE log file (only if FREILAUF_BLE_LOG=1). */
+    /**
+     * Appends a raw line to the diagnostic log at debug level (source "ble").
+     * Kept for compatibility; prefer log().
+     */
     bleLog(line: string): void;
+    /** Path of the current log file (`userData/logs/freilauf.log`). */
     logFilePath(): Promise<string>;
+    /**
+     * Writes one event to the always-on diagnostic log. Fire-and-forget,
+     * batched; never throws. `source` is a short lowercase tag such as
+     * "ble", "ride", "p2p", "renderer". `context` must be JSON-serialisable;
+     * it is redacted and truncated before it is written (docs/diagnostics.md).
+     */
+    log(level: LogLevel, source: string, message: string, context?: LogContext): void;
+    /** Where the log files are and how big they are (current file first). */
+    getLogInfo(): Promise<LogInfo>;
+    /** Opens the log folder in the file manager. */
+    openLogFolder(): Promise<void>;
+    /**
+     * Asks where to save, then writes one text file with the rotated logs and
+     * the current one (oldest first, newest last). Returns the path, or null
+     * when the user cancelled.
+     */
+    exportLog(): Promise<string | null>;
+    /** The last `maxBytes` (capped at 1 MB) of the log, starting at a line boundary. */
+    readRecent(maxBytes: number): Promise<string>;
   };
+}
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export type LogContext = Record<string, unknown>;
+
+export interface LogInfo {
+  /** Folder that holds the log files. */
+  directory: string;
+  /** Current file first, then the rotated ones (newest to oldest). */
+  files: { name: string; bytes: number }[];
 }

@@ -3,22 +3,38 @@
  * loaded synchronously right after `ready`, windows are created immediately
  * with `show: false` and shown on `ready-to-show`. No splash screen.
  */
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { BrowserWindow, app, dialog, screen, session, shell } from 'electron';
+import type { Settings } from '../shared/contract';
 import { ARG, IPC } from '../shared/ipc';
 import { attachBluetoothChooser, installPairingHandler } from './bluetooth';
 import type { BluetoothChooser } from './bluetoothChooser';
-import { BleLog } from './bleLog';
+import {
+  installProcessHandlers,
+  newSessionId,
+  watchSystem,
+  watchWebContents,
+  writeSessionHeader,
+} from './diagnostics';
+import { DiagnosticLog, LogFile } from './logFile';
 import { MAIN_MIN_SIZE, centeredBounds, fitToDisplays } from './geometry';
 import { registerIpc } from './ipc';
 import { OverlayController } from './overlay';
 import { RideStore } from './rideStore';
 import type { AppOrigin } from './security';
 import { hardenWebContents, installPermissionPolicy } from './security';
+import { describeSettingsChange } from './settingsLog';
 import { SettingsStore } from './settingsStore';
 import { loadWindowState, saveWindowState } from './windowState';
 
-const log = (m: string) => console.log(`[freilauf] ${m}`);
+/** The diagnostic log; created in start() once userData is known. */
+let diag: DiagnosticLog | null = null;
+const log = (m: string) => {
+  if (diag) diag.log('info', 'main', m);
+  else console.log(`[freilauf] ${m}`);
+};
 
 // --- before ready -----------------------------------------------------------
 
@@ -29,7 +45,9 @@ if (process.env.FREILAUF_USER_DATA) {
 }
 
 const simMode = process.env.FREILAUF_SIM === '1';
+/** Also log every raw controller frame, uncollapsed (the capture itself is always on). */
 const bleLogEnabled = process.env.FREILAUF_BLE_LOG === '1';
+const startedAt = Date.now();
 
 if (process.platform === 'win32') app.setAppUserModelId('org.graemer.freilauf');
 
@@ -49,6 +67,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
+  const sessionId = newSessionId();
+  diag = new DiagnosticLog(new LogFile({ dir: path.join(app.getPath('userData'), 'logs') }));
+  diag.setSecrets({ homeDir: os.homedir() });
+  installProcessHandlers(diag);
+  const d = diag;
+  const mainLog = d.scope('main');
+
   let mainWindow: BrowserWindow | null = null;
   let overlay: OverlayController | null = null;
   let chooser: BluetoothChooser | null = null;
@@ -66,7 +91,7 @@ function start(): void {
     const p = origin.devUrl
       ? win.loadURL(`${origin.devUrl.replace(/\/$/, '')}/${page}.html`)
       : win.loadFile(path.join(origin.rendererDir, `${page}.html`));
-    p.catch((e: unknown) => log(`failed to load ${page}: ${String(e)}`));
+    p.catch((e: unknown) => mainLog.error(`failed to load ${page}`, { error: e }));
   };
   const args = (name: 'main' | 'overlay') => [
     `${ARG.window}${name}`,
@@ -89,16 +114,31 @@ function start(): void {
 
   app.whenReady().then(
     () => {
+      writeSessionHeader(d, { sessionId, simMode, bleRaw: bleLogEnabled });
+      mainLog.info('app ready', { msSinceStart: Date.now() - startedAt });
+      watchSystem(mainLog);
       const userData = app.getPath('userData');
+      const settingsLog = d.scope('settings');
       const settings = new SettingsStore(path.join(userData, 'settings.json'), {
-        log: (m) => log(`settings: ${m}`),
+        log: (m) => settingsLog.warn(m),
       });
-      const rides = new RideStore(path.join(userData, 'rides'), (m) => log(`rides: ${m}`));
-      const bleLog = new BleLog(path.join(userData, 'logs', 'ble.log'), bleLogEnabled);
-      const bt = (m: string) => {
-        log(`bluetooth: ${m}`);
-        bleLog.write(`[main] ${m}`);
-      };
+      d.setSecrets({ riderName: settings.get().rider.name });
+      settingsLog.info('settings loaded', {
+        rememberedDevices: settings.get().devices,
+        buttons: settings.get().shifting.buttons,
+        overlayVisible: settings.get().overlay.visible,
+      });
+      let lastSettings: Settings = settings.get();
+      settings.onChange((next) => {
+        const change = describeSettingsChange(lastSettings, next);
+        lastSettings = next;
+        d.setSecrets({ riderName: next.rider.name });
+        if (change.changed.length > 0) settingsLog.info('settings changed', { ...change });
+      });
+      const ridesLog = d.scope('rides');
+      const rides = new RideStore(path.join(userData, 'rides'), (m) => ridesLog.warn(m));
+      const btLog = d.scope('bluetooth');
+      const bt = (m: string) => btLog.info(m);
       const windowStatePath = path.join(userData, 'window-state.json');
 
       installPermissionPolicy(session.defaultSession, isOurs, origin, log);
@@ -136,8 +176,13 @@ function start(): void {
         },
       });
       mainWindow = win;
+      watchWebContents(win.webContents, 'main', d);
+      mainLog.info('main window created', { bounds: mainBounds, maximized: ws.maximized });
       if (ws.maximized) win.maximize();
-      win.once('ready-to-show', () => win.show());
+      win.once('ready-to-show', () => {
+        mainLog.info('main window shown', { msSinceStart: Date.now() - startedAt });
+        win.show();
+      });
 
       let wsTimer: ReturnType<typeof setTimeout> | null = null;
       const saveWs = () => {
@@ -158,7 +203,7 @@ function start(): void {
       win.on('resize', scheduleWs);
       win.on('maximize', scheduleWs);
       win.on('unmaximize', scheduleWs);
-      win.on('blur', () => overlay?.reassertTop());
+      win.on('blur', () => overlay?.reassertTop('main window blur'));
       win.on('close', () => {
         if (wsTimer) clearTimeout(wsTimer);
         saveWs();
@@ -183,8 +228,9 @@ function start(): void {
         additionalArguments: args('overlay'),
         load: (w) => load(w, 'overlay'),
         broadcast,
-        log: (m) => log(`overlay: ${m}`),
+        log: d.scope('overlay'),
       });
+      watchWebContents(overlay.win.webContents, 'overlay', d);
 
       settings.onChange((s) => broadcast(IPC.settingsChanged, s));
 
@@ -195,7 +241,7 @@ function start(): void {
         chooser: () => chooser,
         settings,
         rides,
-        bleLog,
+        diag: d,
         log,
         exportFit: (id) =>
           rides.exportFit(id, async (defaultFileName) => {
@@ -215,9 +261,41 @@ function start(): void {
           const err = await shell.openPath(rides.dir);
           if (err) throw new Error(err);
         },
+        openLogFolder: async () => {
+          await d.file.flush();
+          await fs.promises.mkdir(d.file.dir, { recursive: true });
+          const err = await shell.openPath(d.file.dir);
+          if (err) throw new Error(err);
+        },
+        exportLog: async () => {
+          const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+          const stamp = new Date()
+            .toISOString()
+            .slice(0, 16)
+            .replace(/[-:]/g, '')
+            .replace('T', '-');
+          const opts: Electron.SaveDialogOptions = {
+            title: 'Export diagnostic log',
+            defaultPath: path.join(app.getPath('documents'), `freilauf-log-${stamp}.txt`),
+            filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+          };
+          const r = parent
+            ? await dialog.showSaveDialog(parent, opts)
+            : await dialog.showSaveDialog(opts);
+          if (r.canceled || !r.filePath) {
+            mainLog.info('log export cancelled');
+            return null;
+          }
+          mainLog.info('log exported');
+          const text = await d.file.readAll();
+          const header = `Freilauf diagnostic log, exported ${new Date().toISOString()} (session ${sessionId}). See docs/diagnostics.md.\n`;
+          await fs.promises.writeFile(r.filePath, header + text, 'utf8');
+          return r.filePath;
+        },
       });
 
       app.on('before-quit', () => {
+        mainLog.info('quitting');
         overlay?.setQuitting();
         if (wsTimer) clearTimeout(wsTimer);
         saveWs();
@@ -226,12 +304,18 @@ function start(): void {
         overlay?.unregisterHotkey();
         overlay?.close();
         settings.flushSync();
-        bleLog.close();
+        mainLog.info('session end', {
+          uptimeS: Math.round((Date.now() - startedAt) / 1000),
+          droppedLogLines: d.file.dropped,
+        });
+        d.file.flushSync();
       });
       app.on('window-all-closed', () => app.quit());
     },
     (e: unknown) => {
       console.error(e);
+      mainLog.error('startup failed', { error: e });
+      d.file.flushSync();
       app.exit(1);
     },
   );

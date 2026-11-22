@@ -55,9 +55,18 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
   }
 
   protected async setup(conn: GattConnection): Promise<void> {
-    const service = (await conn.hasService(ZWIFT_RIDE_SERVICE))
-      ? ZWIFT_RIDE_SERVICE
-      : ZWIFT_LEGACY_SERVICE;
+    const hasRide = await conn.hasService(ZWIFT_RIDE_SERVICE);
+    const service = hasRide ? ZWIFT_RIDE_SERVICE : ZWIFT_LEGACY_SERVICE;
+    this.diag(
+      'info',
+      'service',
+      hasRide
+        ? 'using Ride service FC82'
+        : 'Ride service FC82 not found; trying the legacy service',
+      {
+        service,
+      },
+    );
 
     await conn.subscribe(service, ZWIFT_ASYNC_CHARACTERISTIC, (view) => {
       this.rawEmitter.emit({ characteristic: 'async', bytes: copy(view) });
@@ -69,13 +78,26 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
         this.batteryEmitter.emit(message.percent);
       }
     });
+    this.diag('debug', 'subscribed', 'async (button) notifications on');
     // The handshake answer arrives here. Not all firmware may expose it; not fatal.
     await conn
       .subscribe(service, ZWIFT_SYNC_TX_CHARACTERISTIC, (view) => {
         this.rawEmitter.emit({ characteristic: 'syncTx', bytes: copy(view) });
       })
-      .catch(() => undefined);
+      .then(
+        () => this.diag('debug', 'subscribed', 'sync TX indications on'),
+        (err: unknown) =>
+          this.diag(
+            'warn',
+            'subscribe-failed',
+            'sync TX subscription failed (handshake answer will not be seen)',
+            {
+              error: err,
+            },
+          ),
+      );
     await conn.write(service, ZWIFT_SYNC_RX_CHARACTERISTIC, ZWIFT_HANDSHAKE);
+    this.diag('info', 'handshake', 'wrote "RideOn" to sync RX', { bytes: ZWIFT_HANDSHAKE });
   }
 
   /** A button held while the link drops must not stay "pressed" forever. */

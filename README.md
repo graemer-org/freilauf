@@ -99,14 +99,14 @@ pnpm signalling     # local signalling server for group rides (ws://localhost:87
 
 ### Environment variables
 
-| Variable             | Used by    | Effect                                                                              |
-| -------------------- | ---------- | ----------------------------------------------------------------------------------- |
-| `FREILAUF_SIM=1`     | desktop    | Use simulated devices instead of Bluetooth (`pnpm dev:sim`)                         |
-| `FREILAUF_BLE_LOG=1` | desktop    | Log every raw BLE frame as hex to a log file (path shown in Settings → Diagnostics) |
-| `FREILAUF_USER_DATA` | desktop    | Use this directory for settings and rides instead of the default user-data folder   |
-| `PORT`               | signalling | Listen port (default `8787`)                                                        |
-| `HOST`               | signalling | Bind address (default all interfaces)                                               |
-| `LOG_LEVEL=debug`    | signalling | Verbose logging                                                                     |
+| Variable             | Used by    | Effect                                                                                                                              |
+| -------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `FREILAUF_SIM=1`     | desktop    | Use simulated devices instead of Bluetooth (`pnpm dev:sim`)                                                                         |
+| `FREILAUF_BLE_LOG=1` | desktop    | Also log every raw controller frame, uncollapsed, to the diagnostic log (always on; see [docs/diagnostics.md](docs/diagnostics.md)) |
+| `FREILAUF_USER_DATA` | desktop    | Use this directory for settings and rides instead of the default user-data folder                                                   |
+| `PORT`               | signalling | Listen port (default `8787`)                                                                                                        |
+| `HOST`               | signalling | Bind address (default all interfaces)                                                                                               |
+| `LOG_LEVEL=debug`    | signalling | Verbose logging                                                                                                                     |
 
 ## Repository layout
 

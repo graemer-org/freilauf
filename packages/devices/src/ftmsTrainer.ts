@@ -66,8 +66,25 @@ interface Command {
 interface InFlight {
   command: Command;
   opCode: number;
+  sentAt: number;
   cancelTimeout: () => void;
   settle: (err?: unknown) => void;
+}
+
+const OP_NAMES: Record<number, string> = Object.fromEntries(
+  Object.entries(FtmsOpCode).map(([name, code]) => [code, name]),
+);
+
+function opName(op: number): string {
+  return OP_NAMES[op] ?? `op ${hexByte(op)}`;
+}
+
+function hexByte(n: number): string {
+  return `0x${n.toString(16).padStart(2, '0')}`;
+}
+
+function bytesOf(view: DataView): Uint8Array {
+  return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
 }
 
 type Mode = { kind: 'sim'; params: SimulationParams } | { kind: 'erg'; watts: number };
@@ -127,7 +144,9 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
     this.crankCadence.reset();
 
     await conn.subscribe(FTMS_SERVICE, FTMS_CONTROL_POINT, (v) => this.onControlPoint(v));
+    this.diag('debug', 'subscribed', 'FTMS control point indications on');
     await conn.subscribe(FTMS_SERVICE, FTMS_INDOOR_BIKE_DATA, (v) => this.onIndoorBikeData(v));
+    this.diag('debug', 'subscribed', 'FTMS indoor bike data notifications on');
 
     this.hasCps = false;
     try {
@@ -136,14 +155,20 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
           this.onCyclingPower(v),
         );
         this.hasCps = true;
+        this.diag('debug', 'subscribed', 'cycling power measurement notifications on (cadence fallback)');
+      } else {
+        this.diag('debug', 'no-cps', 'no cycling power service (cadence only from FTMS)');
       }
-    } catch {
+    } catch (err) {
       // CPS is only a cadence fallback; ignore.
+      this.diag('debug', 'cps-failed', 'cycling power subscription failed (ignored)', { error: err });
     }
 
     // A refusal here does not fail the connection: data still flows and the
     // next command retries Request Control first.
-    await this.ensureControl().catch(() => {});
+    await this.ensureControl().catch((err: unknown) => {
+      this.diag('warn', 'control-refused', 'Request Control was not granted', { error: err });
+    });
 
     const mode = this.mode;
     if (mode) {
@@ -193,7 +218,18 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
   private onControlPoint(view: DataView): void {
     const r = parseControlPointResponse(view);
     const f = this.inFlight;
-    if (!r || !f || r.requestOpCode !== f.opCode) return;
+    if (!r || !f || r.requestOpCode !== f.opCode) {
+      this.diag('debug', 'cp-unexpected', 'unexpected control point indication', {
+        bytes: bytesOf(view),
+        expectedOp: f ? opName(f.opCode) : null,
+      });
+      return;
+    }
+    this.diag(r.result === 'success' ? 'debug' : 'warn', 'cp-response', `${opName(r.requestOpCode)} → ${r.result}`, {
+      op: hexByte(r.requestOpCode),
+      result: r.result,
+      ms: Date.now() - f.sentAt,
+    });
     if (r.result === 'success') f.settle();
     else f.settle(new ControlPointError(r.requestOpCode, r.result));
   }
@@ -246,6 +282,7 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
     const flight: InFlight = {
       command,
       opCode,
+      sentAt: Date.now(),
       cancelTimeout: () => {},
       settle: (err?: unknown) => {
         if (done) return;
@@ -261,11 +298,19 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
       },
     };
     this.inFlight = flight;
-    flight.cancelTimeout = this.schedule(
-      () => flight.settle(new ControlPointTimeoutError(opCode)),
-      this.responseTimeoutMs,
-    );
+    flight.cancelTimeout = this.schedule(() => {
+      this.diag('warn', 'cp-timeout', `${opName(opCode)}: no response within ${this.responseTimeoutMs} ms`, {
+        op: hexByte(opCode),
+      });
+      flight.settle(new ControlPointTimeoutError(opCode));
+    }, this.responseTimeoutMs);
+    this.diag('debug', 'cp-request', `${opName(opCode)} sent`, {
+      op: hexByte(opCode),
+      bytes: command.bytes,
+      coalesced: command.waiters.length,
+    });
     conn.write(FTMS_SERVICE, FTMS_CONTROL_POINT, command.bytes).catch((err: unknown) => {
+      this.diag('warn', 'cp-write-failed', `${opName(opCode)}: write failed`, { error: err });
       flight.settle(err);
     });
   }

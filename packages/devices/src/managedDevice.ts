@@ -39,6 +39,19 @@ export function backoffDelay(attempt: number, options: BackoffOptions = {}): num
   return Math.min(max, initial * factor ** attempt);
 }
 
+/**
+ * A step of a driver's life worth recording in a diagnostic log (link
+ * attempts, setup steps, control point exchanges, retries). Purely
+ * informational: nothing in the drivers depends on anyone listening.
+ */
+export interface DeviceDiagnostic {
+  level: 'debug' | 'info' | 'warn' | 'error';
+  /** Short machine-friendly tag, e.g. "link-up", "retry-scheduled", "cp-response". */
+  event: string;
+  message: string;
+  context?: Record<string, unknown>;
+}
+
 export class DeviceDisconnectedError extends Error {
   constructor(message = 'device disconnected') {
     super(message);
@@ -67,6 +80,7 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   protected readonly schedule: Schedule;
   private readonly backoff: BackoffOptions;
   private readonly stateEmitter = createEmitter<ConnectionState>();
+  private readonly diagnosticEmitter = createEmitter<DeviceDiagnostic>();
   private currentState: ConnectionState = 'disconnected';
   private conn: GattConnection | null = null;
   private linkUnsub: Unsubscribe | null = null;
@@ -101,6 +115,20 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
 
   onState(listener: (state: ConnectionState) => void): Unsubscribe {
     return this.stateEmitter.on(listener);
+  }
+
+  /** Lifecycle and protocol steps for a diagnostic log. */
+  onDiagnostic(listener: (event: DeviceDiagnostic) => void): Unsubscribe {
+    return this.diagnosticEmitter.on(listener);
+  }
+
+  protected diag(
+    level: DeviceDiagnostic['level'],
+    event: string,
+    message: string,
+    context?: Record<string, unknown>,
+  ): void {
+    this.diagnosticEmitter.emit(context ? { level, event, message, context } : { level, event, message });
   }
 
   connect(): Promise<void> {
@@ -138,7 +166,16 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
 
   /** Establishes a link and runs setup. Resolves only if `gen` is still current. */
   private async tryLink(gen: number): Promise<void> {
-    const conn = await this.peripheral.connect();
+    const started = Date.now();
+    this.diag('debug', 'link-attempt', 'opening GATT link');
+    let conn: GattConnection;
+    try {
+      conn = await this.peripheral.connect();
+    } catch (err) {
+      this.diag('warn', 'link-failed', 'GATT link failed', { ms: Date.now() - started, error: err });
+      throw err;
+    }
+    this.diag('info', 'link-up', 'GATT link open', { ms: Date.now() - started });
     if (gen !== this.generation) {
       await conn.disconnect().catch(() => {});
       throw new DeviceDisconnectedError('disconnected while connecting');
@@ -149,16 +186,25 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
       lost = true;
       this.handleLinkLost(conn);
     });
+    const setupStarted = Date.now();
     try {
       await this.setup(conn);
     } catch (err) {
+      this.diag('warn', 'setup-failed', 'setup after link failed', {
+        ms: Date.now() - setupStarted,
+        error: err,
+      });
       if (this.conn === conn) {
         this.releaseLink();
         await conn.disconnect().catch(() => {});
       }
       throw err;
     }
-    if (lost || this.conn !== conn) throw new DeviceDisconnectedError('link lost during setup');
+    if (lost || this.conn !== conn) {
+      this.diag('warn', 'setup-failed', 'link lost during setup');
+      throw new DeviceDisconnectedError('link lost during setup');
+    }
+    this.diag('info', 'setup-done', 'setup complete', { ms: Date.now() - setupStarted });
   }
 
   private releaseLink(): void {
@@ -172,6 +218,7 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   private handleLinkLost(conn: GattConnection): void {
     if (this.conn !== conn) return;
     const wasConnected = this.currentState === 'connected';
+    this.diag('warn', 'link-lost', 'link lost unexpectedly', { state: this.currentState });
     this.releaseLink();
     // While a link is still in setup (first connect or a reconnect attempt) the
     // pending tryLink() rejects and its caller handles the failure.
@@ -185,6 +232,10 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     const gen = this.generation;
     const delay = backoffDelay(this.attempt, this.backoff);
     this.attempt++;
+    this.diag('info', 'retry-scheduled', `reconnect attempt ${this.attempt} in ${delay} ms`, {
+      attempt: this.attempt,
+      delayMs: delay,
+    });
     this.cancelRetry = this.schedule(() => {
       this.cancelRetry = null;
       if (gen !== this.generation) return;
@@ -194,8 +245,12 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
           this.attempt = 0;
           this.setState('connected');
         },
-        () => {
+        (err: unknown) => {
           if (gen !== this.generation) return;
+          this.diag('warn', 'retry-failed', `reconnect attempt ${this.attempt} failed`, {
+            attempt: this.attempt,
+            error: err,
+          });
           this.scheduleRetry();
         },
       );

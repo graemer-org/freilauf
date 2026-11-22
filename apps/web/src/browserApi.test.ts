@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { LiveState } from '../../desktop/src/shared/contract';
-import { createBrowserApi, EDIT_MODE_MESSAGE, OPEN_FOLDER_MESSAGE, queryFlag } from './browserApi';
+import {
+  createBrowserApi,
+  EDIT_MODE_MESSAGE,
+  LOG_FOLDER_MESSAGE,
+  OPEN_FOLDER_MESSAGE,
+  queryFlag,
+} from './browserApi';
 import { MemoryRideRecordStore, RideRepository } from './rideRepository';
 import { BrowserSettingsStore, webDefaultSettings } from './settingsStore';
 
@@ -16,6 +22,7 @@ function api(overlayWindow = null as Parameters<typeof createBrowserApi>[0]['ove
     bleLogEnabled: true,
     overlayWindow,
     diagnosticsLimit: 3,
+    sessionHeader: false,
   });
 }
 
@@ -81,11 +88,41 @@ describe('createBrowserApi', () => {
   it('keeps a bounded in-memory diagnostics log', () => {
     const a = api();
     for (const n of [1, 2, 3, 4]) a.diagnostics.bleLog(`line ${n}`);
-    expect(a.diagnosticLines().map((l) => l.split(' ').slice(1).join(' '))).toEqual([
-      'line 2',
-      'line 3',
-      'line 4',
+    expect(a.diagnosticLines().map((l) => l.split(/\s+/).slice(1).join(' '))).toEqual([
+      'DEBUG ble line 2',
+      'DEBUG ble line 3',
+      'DEBUG ble line 4',
     ]);
+  });
+
+  it('logs, redacts the rider name, tails and exports the in-memory log', async () => {
+    const saved: { name: string; text: string }[] = [];
+    const a = createBrowserApi({
+      settings: new BrowserSettingsStore({
+        storage: null,
+        defaults: webDefaultSettings({ protocol: 'http:', host: 'localhost:8080' }),
+        log: () => {},
+      }),
+      rides: new RideRepository(new MemoryRideRecordStore(), () => {}),
+      simMode: true,
+      bleLogEnabled: false,
+      saveLogFile: (name, text) => saved.push({ name, text }),
+    });
+    await a.settings.update({ rider: { name: 'Ada Lovelace' } });
+    a.diagnostics.log('info', 'ble', 'paired for Ada Lovelace', { id: 'AA:BB' });
+    const lines = a.diagnosticLines();
+    expect(lines[0]).toMatch(/INFO +session +=====/);
+    expect(lines.at(-1)).toMatch(/INFO +ble +paired for \[rider\] \{"id":"AA:BB"\}$/);
+    expect(lines.join('\n')).not.toContain('Lovelace');
+    expect(await a.diagnostics.readRecent(60)).not.toContain('session');
+    expect((await a.diagnostics.getLogInfo()).files[0]!.bytes).toBeGreaterThan(0);
+    const name = await a.diagnostics.exportLog();
+    expect(name).toMatch(/^freilauf-log-.*\.txt$/);
+    expect(saved[0]!.text).toContain('paired for [rider]');
+    const notices: string[] = [];
+    a.setNotifier((_k, m) => notices.push(m));
+    await a.diagnostics.openLogFolder();
+    expect(notices).toEqual([LOG_FOLDER_MESSAGE]);
   });
 
   it('defaults the signalling URL to the page origin', async () => {

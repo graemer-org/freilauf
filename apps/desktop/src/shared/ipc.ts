@@ -36,6 +36,12 @@ export const IPC = {
 
   diagBleLog: 'diag:ble-log',
   diagLogFilePath: 'diag:log-file-path',
+  /** renderer → main: a batch of log entries */
+  diagLog: 'diag:log',
+  diagLogInfo: 'diag:log-info',
+  diagOpenLogFolder: 'diag:open-log-folder',
+  diagExportLog: 'diag:export-log',
+  diagReadRecent: 'diag:read-recent',
 } as const;
 
 /** Command-line switches main passes to each renderer via `additionalArguments`. */

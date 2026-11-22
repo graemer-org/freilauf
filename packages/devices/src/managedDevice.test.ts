@@ -96,6 +96,27 @@ describe('ManagedDevice', () => {
     expect(states).toEqual(['connecting', 'connected', 'reconnecting', 'connected']);
   });
 
+  it('reports lifecycle steps through onDiagnostic', async () => {
+    const { device, peripheral, clock } = setup();
+    const events: string[] = [];
+    device.onDiagnostic((d) => events.push(d.event));
+    await device.connect();
+    expect(events).toEqual(['link-attempt', 'link-up', 'setup-done']);
+    events.length = 0;
+    peripheral.failNextConnects(1);
+    peripheral.dropLink();
+    expect(events).toEqual(['link-lost', 'retry-scheduled']);
+    await clock.advance(1000);
+    expect(events).toEqual([
+      'link-lost',
+      'retry-scheduled',
+      'link-attempt',
+      'link-failed',
+      'retry-failed',
+      'retry-scheduled',
+    ]);
+  });
+
   it('grows the backoff on repeated failures, caps it, and resets after success', async () => {
     const { device, peripheral, clock } = setup();
     await device.connect();

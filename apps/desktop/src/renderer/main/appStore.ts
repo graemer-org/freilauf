@@ -20,7 +20,14 @@ import type {
   Settings,
 } from '../../shared/contract';
 import { WebBluetoothTransport } from '../ble/webBluetoothTransport';
+import { connectErrorNotice } from '../core/connectError';
+import { ControllerCapture } from '../core/controllerCapture';
+import { DeviceMonitor } from '../core/deviceMonitor';
+import { describeError, describeUrl, maskCode } from '../core/logFormat';
+import { Logger } from '../core/logger';
+import type { ScopedLog } from '../core/logger';
 import { RideController } from '../core/rideController';
+import type { ShiftSource } from '../core/rideController';
 import type { Workout } from '@freilauf/workouts';
 import type { GroupLink } from '../core/rideController';
 import { decodeWorkout } from '@freilauf/workouts';
@@ -168,6 +175,13 @@ export class App {
   #timer: ReturnType<typeof setInterval> | null = null;
   #noticeId = 0;
   #cleanup: (() => void)[] = [];
+  /** Diagnostic log (docs/diagnostics.md). */
+  readonly #logger: Logger;
+  readonly #bleLog: ScopedLog;
+  readonly #deviceMonitor: DeviceMonitor;
+  #capture: ControllerCapture | null = null;
+  #lastCaptureFlush = 0;
+  #groupPeers = new Set<string>();
 
   constructor(
     api: FreilaufApi,
@@ -176,8 +190,12 @@ export class App {
   ) {
     this.#api = api;
     this.#groupConnector = groupConnector;
+    this.#logger = new Logger(api.diagnostics);
+    this.#bleLog = this.#logger.scope('ble');
+    this.#deviceMonitor = new DeviceMonitor(this.#bleLog);
     this.#createTransport =
-      options.createTransport ?? ((a) => new WebBluetoothTransport(a.bluetooth));
+      options.createTransport ??
+      ((a) => new WebBluetoothTransport(a.bluetooth, undefined, this.#logger.scope('ble')));
     this.#library = new WorkoutLibrary(
       options.storage === undefined ? defaultStorage() : options.storage,
     );
@@ -188,9 +206,16 @@ export class App {
     const settings = await this.#api.settings.get();
     const simMode = this.#api.simMode;
     this.store.setState({ settings, simMode });
+    this.#logger.setSecrets({ riderName: settings.rider.name });
+    this.#logger.log('info', 'renderer', 'main window app starting', {
+      simMode,
+      userAgent: globalThis.navigator?.userAgent,
+      language: globalThis.navigator?.language,
+    });
 
     this.#controller = new RideController({
       settings,
+      log: this.#logger.scope('ride'),
       onLive: (live) => {
         this.store.setState({ live });
         this.#api.live.publish(live);
@@ -201,6 +226,7 @@ export class App {
 
     this.#cleanup.push(
       this.#api.settings.onChange((next) => {
+        this.#logger.setSecrets({ riderName: next.rider.name });
         this.store.setState({ settings: next });
         this.#controller?.updateSettings(next);
       }),
@@ -214,6 +240,7 @@ export class App {
     this.#timer = setInterval(() => {
       this.#tickCountdown();
       this.#controller?.tick();
+      this.#tickDiagnostics();
     }, TICK_MS);
     this.store.setState({ ready: true });
     void this.refreshRides();
@@ -227,6 +254,9 @@ export class App {
   }
 
   dispose(): void {
+    this.#logger.log('info', 'renderer', 'main window closing');
+    this.#capture?.flush();
+    this.#deviceMonitor.dispose();
     if (this.#timer) clearInterval(this.#timer);
     for (const off of this.#cleanup) off();
     this.#group?.leave();
@@ -244,6 +274,8 @@ export class App {
       this.store.setState({ picker: { kind, devices: [] } });
     }
     this.#setBusy(kind, 'pairing');
+    const started = Date.now();
+    this.#bleLog.info(`pair ${kind}: started`);
     try {
       const peripheral = await this.#transport.requestDevice(kind);
       this.store.setState({ picker: null });
@@ -251,11 +283,18 @@ export class App {
       await this.#api.settings.update({
         devices: { [kind]: { id: peripheral.id, name: peripheral.name } },
       });
+      this.#bleLog.info(`pair ${kind}: connected "${peripheral.name}"`, {
+        id: peripheral.id,
+        ms: Date.now() - started,
+      });
     } catch (err) {
-      // NotFoundError = the user closed the picker; not worth a message.
-      if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
-        this.notify('error', `Could not connect: ${errorMessage(err)}`);
-      }
+      // A closed picker (cancel) gives no notice; everything else says what to do.
+      const notice = connectErrorNotice(err, kind, 'pair');
+      this.#bleLog[notice ? 'error' : 'info'](`pair ${kind}: ${notice ? 'failed' : 'cancelled'}`, {
+        ms: Date.now() - started,
+        error: describeError(err),
+      });
+      if (notice) this.notify('error', notice);
     } finally {
       this.store.setState({ picker: null });
       this.#setBusy(kind, null);
@@ -293,8 +332,16 @@ export class App {
   async #reconnect(kind: DeviceKind, id: string): Promise<void> {
     if (!this.#transport || this.#devices[kind] || this.store.getState().busy[kind]) return;
     this.#setBusy(kind, 'searching');
+    const started = Date.now();
+    this.#bleLog.info(`reconnect ${kind}: looking for remembered device`, { id });
     try {
       const peripheral = await this.#transport.findKnownDevice(kind, id);
+      if (!peripheral) {
+        this.#bleLog.warn(`reconnect ${kind}: not found (off, asleep, out of range or connected elsewhere)`, {
+          id,
+          ms: Date.now() - started,
+        });
+      }
       if (peripheral) {
         await this.#attach(kind, peripheral);
         // A transport may hand back the device under a new id (the browser
@@ -306,7 +353,13 @@ export class App {
         }
       }
     } catch (err) {
-      this.notify('error', `Could not reconnect ${kind}: ${errorMessage(err)}`);
+      const notice = connectErrorNotice(err, kind, 'reconnect');
+      this.#bleLog[notice ? 'error' : 'info'](`reconnect ${kind}: failed`, {
+        id,
+        ms: Date.now() - started,
+        error: describeError(err),
+      });
+      if (notice) this.notify('error', notice);
     } finally {
       this.#setBusy(kind, null);
     }
@@ -317,6 +370,7 @@ export class App {
     const device = this.#createDriver(kind, peripheral);
     this.#devices[kind] = device;
     this.#setControllerDevice(device);
+    this.#deviceMonitor.watch(device);
     try {
       await device.connect();
     } catch (err) {
@@ -329,12 +383,15 @@ export class App {
     if (kind === 'trainer') return new FtmsTrainer(peripheral);
     if (kind === 'heartRate') return new BleHeartRateSensor(peripheral);
     const controller = new ZwiftRideController(peripheral);
-    if (this.#api.bleLogEnabled) {
-      controller.onRawFrame((frame) => {
-        const hex = [...frame.bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
-        this.#api.diagnostics.bleLog(`controller ${frame.characteristic} ${hex}`);
-      });
-    }
+    // Always-on protocol capture; FREILAUF_BLE_LOG=1 adds every raw frame.
+    this.#capture?.flush();
+    const capture = new ControllerCapture({
+      log: this.#logger.scope('controller'),
+      raw: this.#api.bleLogEnabled,
+    });
+    this.#capture = capture;
+    controller.onRawFrame((frame) => capture.frame(frame));
+    controller.onBattery((percent) => capture.battery(percent));
     return controller;
   }
 
@@ -343,7 +400,10 @@ export class App {
     if (!device) return;
     delete this.#devices[kind];
     this.#controller?.setDevice(kind, null);
+    if (kind === 'controller') this.#capture?.flush();
+    this.#bleLog.info(`${kind} "${device.name}": detaching`);
     await device.disconnect().catch(() => undefined);
+    this.#deviceMonitor.unwatch(kind);
   }
 
   #setControllerDevice(device: AnyDevice): void {
@@ -355,10 +415,15 @@ export class App {
   #startSimulation(): void {
     const rig = createSimulatedRig({ trainer: { riderEffortW: this.store.getState().simEffortW } });
     this.#rig = rig;
+    this.#bleLog.info('simulation mode: using simulated trainer, heart rate and controller');
     for (const device of [rig.trainer, rig.heartRate, rig.controller]) {
       this.#devices[device.kind] = device;
       this.#setControllerDevice(device);
-      device.connect().catch((err: unknown) => this.notify('error', errorMessage(err)));
+      this.#deviceMonitor.watch(device);
+      device.connect().catch((err: unknown) => {
+        this.#bleLog.error(`simulated ${device.kind} failed to connect`, { error: describeError(err) });
+        this.notify('error', errorMessage(err));
+      });
     }
   }
 
@@ -369,6 +434,7 @@ export class App {
 
   /** Sim mode only: drop a simulated device to see the recovery UI. */
   simulateDrop(kind: DeviceKind): void {
+    this.#bleLog.info(`simulation: dropping the ${kind} link`);
     this.#rig?.[kind].simulateDrop();
   }
 
@@ -394,8 +460,9 @@ export class App {
     await this.refreshRides();
   }
 
-  shift(delta: number): void {
-    this.#controller?.shift(delta);
+  /** `source` is for the diagnostic log: 'ui' (buttons), 'keyboard', … */
+  shift(delta: number, source: ShiftSource = 'ui'): void {
+    this.#controller?.shift(delta, source);
   }
 
   setGradient(gradePercent: number): void {
@@ -498,6 +565,8 @@ export class App {
   }
 
   leaveGroup(): void {
+    if (this.#group) this.#logger.log('info', 'p2p', 'left the group', { peers: this.#groupPeers.size });
+    this.#groupPeers = new Set();
     for (const off of this.#groupCleanup) off();
     this.#groupCleanup = [];
     this.#group?.leave();
@@ -593,12 +662,20 @@ export class App {
     }
     this.leaveGroup();
     this.store.setState({ group: { phase: 'connecting' } });
+    const started = Date.now();
+    this.#logger.log('info', 'p2p', 'entering a group', {
+      signalling: describeUrl(settings.group.signallingUrl),
+    });
     try {
       const group = await enter(
         this.#groupConnector,
         settings.rider.name,
         settings.group.signallingUrl,
       );
+      this.#logger.setSecrets({ codes: [group.roomCode] });
+      this.#logger.log('info', 'p2p', `joined room ${maskCode(group.roomCode)}`, {
+        ms: Date.now() - started,
+      });
       this.#group = group;
       this.#controller?.setGroup(group);
       this.#groupCleanup = [
@@ -616,6 +693,10 @@ export class App {
         group: { phase: 'joined', roomCode: group.roomCode, joinLink: group.joinLink },
       });
     } catch (err) {
+      this.#logger.log('error', 'p2p', 'could not enter the group', {
+        ms: Date.now() - started,
+        error: describeError(err),
+      });
       this.store.setState({ group: { phase: 'error', message: errorMessage(err) } });
     }
   }
@@ -638,12 +719,81 @@ export class App {
     const notices = this.store.getState().notices;
     // The same failure repeating (e.g. every autosave) must not flood the UI.
     if (notices.some((n) => n.message === message)) return;
+    this.#logger.log(kind === 'error' ? 'warn' : 'info', 'renderer', `notice shown: ${message}`);
     const notice = { id: ++this.#noticeId, kind, message };
     this.store.setState({ notices: [...notices, notice].slice(-5) });
   }
 
   dismissNotice(id: number): void {
     this.store.setState({ notices: this.store.getState().notices.filter((n) => n.id !== id) });
+  }
+
+  // ───────────── diagnostic log ─────────────
+
+  /** Opens the folder with the log files (browser: explains where the log is). */
+  async openLogFolder(): Promise<void> {
+    try {
+      await this.#api.diagnostics.openLogFolder();
+    } catch (err) {
+      this.notify('error', `Could not open the log folder: ${errorMessage(err)}`);
+    }
+  }
+
+  /** Saves the whole log (all rotated files) as one text file. Returns the path, or null. */
+  async exportLog(): Promise<string | null> {
+    try {
+      this.#capture?.flush();
+      const path = await this.#api.diagnostics.exportLog();
+      if (path) this.notify('info', `Log saved to ${path}`);
+      return path;
+    } catch (err) {
+      this.notify('error', `Could not export the log: ${errorMessage(err)}`);
+      return null;
+    }
+  }
+
+  /** Copies the most recent part of the log to the clipboard. */
+  async copyRecentLog(maxBytes = 256 * 1024): Promise<boolean> {
+    try {
+      this.#capture?.flush();
+      const text = await this.#api.diagnostics.readRecent(maxBytes);
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard) throw new Error('the clipboard is not available');
+      await clipboard.writeText(text);
+      this.notify('info', `Copied the last ${Math.max(1, Math.round(text.length / 1024))} KB of the log to the clipboard.`);
+      return true;
+    } catch (err) {
+      this.notify('error', `Could not copy the log: ${errorMessage(err)}`);
+      return false;
+    }
+  }
+
+  /** Periodic device summaries, capture counters and group peer changes. */
+  #tickDiagnostics(): void {
+    try {
+      this.#deviceMonitor.tick();
+      const now = Date.now();
+      if (now - this.#lastCaptureFlush >= 30_000) {
+        this.#lastCaptureFlush = now;
+        this.#capture?.flush();
+      }
+      if (this.#group) {
+        const ids = new Set(this.#group.getRiders().map((r) => r.peerId));
+        for (const id of ids) {
+          if (!this.#groupPeers.has(id)) {
+            this.#logger.log('info', 'p2p', `peer connected (${id.slice(0, 6)})`, { peers: ids.size });
+          }
+        }
+        for (const id of this.#groupPeers) {
+          if (!ids.has(id)) {
+            this.#logger.log('info', 'p2p', `peer disconnected (${id.slice(0, 6)})`, { peers: ids.size });
+          }
+        }
+        this.#groupPeers = ids;
+      }
+    } catch {
+      // diagnostics must never break the tick
+    }
   }
 
   #setBusy(kind: DeviceKind, value: 'pairing' | 'searching' | null): void {

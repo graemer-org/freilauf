@@ -12,6 +12,7 @@
  *  - The remembered id is BluetoothDevice.id: opaque but stable per origin.
  */
 import type { BlePeripheral, DeviceKind } from '@freilauf/devices';
+import type { ScopedLog } from '../../desktop/src/renderer/core/logger';
 import type { AppBluetoothTransport } from '../../desktop/src/renderer/main/appStore';
 import {
   FILTERS,
@@ -31,6 +32,8 @@ export interface BrowserBluetoothTransportOptions {
   hasUserActivation?: () => boolean;
   advertisementTimeoutMs?: number;
   log?: (line: string) => void;
+  /** Diagnostic log for GATT connect / services / subscriptions. */
+  gattLog?: ScopedLog;
 }
 
 export class BrowserBluetoothTransport implements AppBluetoothTransport {
@@ -39,6 +42,7 @@ export class BrowserBluetoothTransport implements AppBluetoothTransport {
   readonly #hasUserActivation: () => boolean;
   readonly #timeoutMs: number;
   readonly #log: (line: string) => void;
+  readonly #gattLog: ScopedLog | undefined;
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(bluetooth: BluetoothLike, options: BrowserBluetoothTransportOptions = {}) {
@@ -50,6 +54,7 @@ export class BrowserBluetoothTransport implements AppBluetoothTransport {
         false);
     this.#timeoutMs = options.advertisementTimeoutMs ?? ADVERTISEMENT_TIMEOUT_MS;
     this.#log = options.log ?? (() => {});
+    this.#gattLog = options.gattLog;
   }
 
   requestDevice(kind: DeviceKind): Promise<BlePeripheral> {
@@ -57,7 +62,7 @@ export class BrowserBluetoothTransport implements AppBluetoothTransport {
     // triggered it, or the browser rejects it for lack of a user gesture.
     return this.#bluetooth
       .requestDevice(FILTERS[kind])
-      .then((device) => new WebBluetoothPeripheral(device, device.id));
+      .then((device) => new WebBluetoothPeripheral(device, device.id, this.#gattLog));
   }
 
   findKnownDevice(kind: DeviceKind, id: string): Promise<BlePeripheral | null> {
@@ -67,7 +72,7 @@ export class BrowserBluetoothTransport implements AppBluetoothTransport {
       const known = await this.#getPermittedDevice(id);
       if (known) {
         const inRange = await this.#waitForAdvertisement(known);
-        if (inRange) return new WebBluetoothPeripheral(known, known.id);
+        if (inRange) return new WebBluetoothPeripheral(known, known.id, this.#gattLog);
         // Waiting used up the click's activation; the chooser would be refused.
         this.#log(`${kind} ${id}: permitted but not advertising`);
         return null;
@@ -76,7 +81,7 @@ export class BrowserBluetoothTransport implements AppBluetoothTransport {
       if (userGesture) {
         try {
           const device = await this.#bluetooth.requestDevice(FILTERS[kind]);
-          return new WebBluetoothPeripheral(device, device.id);
+          return new WebBluetoothPeripheral(device, device.id, this.#gattLog);
         } catch (err) {
           if (err instanceof DOMException && err.name === 'NotFoundError') return null;
           throw err;
@@ -141,7 +146,10 @@ export class UnavailableBluetoothTransport implements AppBluetoothTransport {
   }
 
   requestDevice(): Promise<BlePeripheral> {
-    return Promise.reject(new Error(this.#reason));
+    const err = new Error(this.#reason);
+    // The reason is already written for the rider; the app shows it as it is.
+    err.name = 'BluetoothUnavailableError';
+    return Promise.reject(err);
   }
 
   findKnownDevice(): Promise<BlePeripheral | null> {
