@@ -18,6 +18,9 @@ function Toast({ notice }: { notice: Notice }) {
       role={notice.kind === 'error' ? 'alert' : 'status'}
       data-testid={`notice-${notice.kind}`}
     >
+      <span className="toast-icon" aria-hidden="true">
+        {notice.kind === 'error' ? '!' : 'i'}
+      </span>
       <span className="toast-text">{notice.message}</span>
       <button
         type="button"

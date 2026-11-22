@@ -70,7 +70,9 @@ function RiderTable() {
     <table className="riders" data-testid="group-riders">
       <thead>
         <tr>
-          <th scope="col">#</th>
+          <th scope="col" className="num">
+            #
+          </th>
           <th scope="col">Rider</th>
           <th scope="col" className="num">
             Gap
@@ -93,7 +95,7 @@ function RiderTable() {
             className={r.local ? 'rider-local' : r.stale ? 'rider-stale' : undefined}
             data-testid={r.local ? 'group-rider-local' : 'group-rider'}
           >
-            <td className="num">{i + 1}</td>
+            <td className="num rank">{i + 1}</td>
             <td>
               {r.name}
               {r.local && <span className="tag">you</span>}
@@ -137,7 +139,12 @@ function JoinForm() {
           value={code}
           onChange={(e) => setCode(e.currentTarget.value)}
         />
-        <button type="submit" className="btn" data-testid="group-join" disabled={!trimmed}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          data-testid="group-join"
+          disabled={!trimmed}
+        >
           Join
         </button>
       </div>
@@ -151,37 +158,36 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
   const signallingUrl = useAppState((s) => s.settings?.group.signallingUrl ?? '');
 
   return (
-    <div className="group">
+    <div className="page group">
       {group.phase === 'idle' && (
-        <section className="panel">
-          <h2 className="panel-title">Ride together</h2>
+        <section className="card group-start">
+          <h2 className="page-title">Ride together</h2>
           <p className="hint">
             Create a group ride and share the code, or join someone else's. Riders connect directly
             to each other.
           </p>
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary btn-big"
             data-testid="group-create"
             onClick={() => void app.createGroup()}
           >
             Create group ride
           </button>
+          <p className="or">or</p>
           <JoinForm />
         </section>
       )}
 
       {group.phase === 'connecting' && (
-        <section className="panel" role="status" data-testid="group-connecting">
-          <p>
-            <span className="spinner" aria-hidden="true" /> Connecting to the group…
-          </p>
+        <section className="card group-status" role="status" data-testid="group-connecting">
+          <span className="spinner" aria-hidden="true" /> Connecting to the group…
         </section>
       )}
 
       {group.phase === 'error' && (
-        <section className="panel" role="alert" data-testid="group-error">
-          <h2 className="panel-title">Could not connect</h2>
+        <section className="card group-error" role="alert" data-testid="group-error">
+          <h2 className="section-title">Could not connect</h2>
           <p className="error-text">{group.message}</p>
           <div className="button-row">
             <button type="button" className="btn" onClick={() => app.leaveGroup()}>
@@ -201,10 +207,10 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
       )}
 
       {group.phase === 'joined' && (
-        <section className="panel">
+        <section className="card card-clip">
           <div className="room">
             <div>
-              <span className="tile-label">Room code</span>
+              <span className="room-label">Room code</span>
               <p className="room-code" data-testid="group-code">
                 {group.roomCode}
               </p>
@@ -226,7 +232,7 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
         </section>
       )}
 
-      <p className="hint" data-testid="group-server">
+      <p className="hint server-note" data-testid="group-server">
         Signalling server: <code>{signallingUrl}</code> ·{' '}
         <button type="button" className="link" onClick={onOpenSettings}>
           Change in Settings

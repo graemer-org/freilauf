@@ -31,11 +31,11 @@ function DeviceRow({ kind }: { kind: DeviceKind }) {
     <li className="device-row" data-testid={`device-${kind}`}>
       <div className="device-info">
         <h2 className="device-kind">{ROW_LABEL[kind]}</h2>
-        <p className="device-name">{name ?? 'No device paired'}</p>
+        <p className={name ? 'device-name' : 'device-name none'}>{name ?? 'No device paired'}</p>
         <p className="hint">{ROW_HINT[kind]}</p>
       </div>
       <span className={`chip chip-${tone}`}>
-        <span className="chip-dot" aria-hidden="true" />
+        <span className="status-mark" aria-hidden="true" />
         <span className="chip-text">{text}</span>
       </span>
       {simMode ? (
@@ -86,19 +86,19 @@ function DeviceRow({ kind }: { kind: DeviceKind }) {
 export function DevicesTab() {
   const simMode = useAppState((s) => s.simMode);
   return (
-    <div className="devices">
+    <div className="page devices">
       {simMode && (
         <p className="banner banner-info" data-testid="devices-sim-note">
           Simulation mode: simulated trainer, heart rate and controller are in use. Use the
           Simulation panel on the Ride tab to change effort or drop a device.
         </p>
       )}
-      <ul className="device-list">
+      <ul className="list card device-list">
         {DEVICE_KINDS.map((kind) => (
           <DeviceRow key={kind} kind={kind} />
         ))}
       </ul>
-      <p className="hint">
+      <p className="hint section-foot">
         Remembered devices reconnect automatically on start. Make sure a device is awake and not
         connected to another app.
       </p>
@@ -148,7 +148,7 @@ export function DevicePicker() {
         ref={dialogRef}
         data-testid="device-picker"
       >
-        <h2 id="picker-title" className="panel-title">
+        <h2 id="picker-title" className="modal-title">
           {PICKER_TITLE[picker.kind]}
         </h2>
         {picker.devices.length === 0 ? (
@@ -157,7 +157,7 @@ export function DevicePicker() {
             and not connected to another app.
           </p>
         ) : (
-          <ul className="picker-list">
+          <ul className="list picker-list">
             {picker.devices.map((d) => (
               <li key={d.id}>
                 <button

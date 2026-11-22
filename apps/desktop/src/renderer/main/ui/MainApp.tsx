@@ -66,6 +66,16 @@ function TabBar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void 
   );
 }
 
+/** A freewheel: outer ring and hub. Drawn here, no external asset. */
+function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="2.2" />
+      <circle cx="10" cy="10" r="2.6" fill="currentColor" />
+    </svg>
+  );
+}
+
 function SimBadge() {
   const simMode = useAppState((s) => s.simMode);
   if (!simMode) return null;
@@ -80,17 +90,20 @@ function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined })
   const [tab, setTab] = useState<TabId>(() => initialTab ?? defaultTab(app.store.getState()));
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-name">Freilauf</span>
-          <SimBadge />
-        </div>
-        <DeviceChips />
-      </header>
-      <nav className="app-nav" aria-label="Main">
-        <TabBar tab={tab} onSelect={setTab} />
-      </nav>
-      <ConnectionBanners />
+      <div className="chrome">
+        <header className="app-header">
+          <div className="brand">
+            <BrandMark />
+            <span className="brand-name">Freilauf</span>
+            <SimBadge />
+          </div>
+          <DeviceChips />
+        </header>
+        <nav className="app-nav" aria-label="Main">
+          <TabBar tab={tab} onSelect={setTab} />
+        </nav>
+        <ConnectionBanners />
+      </div>
       <main
         className="app-main"
         role="tabpanel"

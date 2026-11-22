@@ -126,7 +126,8 @@ describe('MainApp (SSR)', () => {
       expect(html, id).toContain(`data-testid="${id}"`);
     }
     expect(html).toContain('213');
-    expect(html).toContain('12 / 24');
+    // Gear shows the current gear large and the count separately.
+    expect(html).toMatch(/data-testid="stat-gear".*?>12<\/span><span class="gear-of">\/ 24</);
     expect(html).toContain('12:34');
     expect(html).toContain('reconnecting…');
     expect(html).not.toContain('data-testid="ride-start"');

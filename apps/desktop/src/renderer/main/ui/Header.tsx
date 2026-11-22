@@ -15,7 +15,7 @@ function DeviceChip({ kind }: { kind: DeviceKind }) {
   const { text, tone } = describeDevice(state, remembered, busy);
   return (
     <li className={`chip chip-${tone}`} data-testid={TESTID[kind]} data-state={state ?? 'none'}>
-      <span className="chip-dot" aria-hidden="true" />
+      <span className="status-mark" aria-hidden="true" />
       <span className="chip-label">{DEVICE_LABEL[kind]}</span>
       <span className="chip-text">{text}</span>
     </li>

@@ -90,26 +90,12 @@ function ButtonMapping({ buttons }: { buttons: Settings['shifting']['buttons'] }
     void app.updateSettings({ shifting: { buttons: { [button]: action } } });
   };
   return (
-    <div className="field">
-      <span className="field-label">Controller buttons</span>
-      <table className="map-table">
-        <tbody>
-          {SHIFT_BUTTONS.map(({ button, label }) => (
-            <ButtonMapRow
-              key={button}
-              button={button}
-              label={label}
-              action={buttons[button] ?? 'none'}
-              onChange={onChange}
-            />
-          ))}
-        </tbody>
-      </table>
-      <details>
-        <summary>More buttons</summary>
+    <>
+      <h3 className="subhead">Controller buttons</h3>
+      <div className="card">
         <table className="map-table">
           <tbody>
-            {OTHER_BUTTONS.map(({ button, label }) => (
+            {SHIFT_BUTTONS.map(({ button, label }) => (
               <ButtonMapRow
                 key={button}
                 button={button}
@@ -120,12 +106,28 @@ function ButtonMapping({ buttons }: { buttons: Settings['shifting']['buttons'] }
             ))}
           </tbody>
         </table>
-      </details>
-      <span className="field-hint">
+        <details className="disclosure">
+          <summary>More buttons</summary>
+          <table className="map-table">
+            <tbody>
+              {OTHER_BUTTONS.map(({ button, label }) => (
+                <ButtonMapRow
+                  key={button}
+                  button={button}
+                  label={label}
+                  action={buttons[button] ?? 'none'}
+                  onChange={onChange}
+                />
+              ))}
+            </tbody>
+          </table>
+        </details>
+      </div>
+      <p className="hint section-foot">
         Smart frame controller support is experimental; if a button shifts the wrong way, change it
         here. Keyboard shifting always works.
-      </span>
-    </div>
+      </p>
+    </>
   );
 }
 
@@ -185,7 +187,7 @@ function TileRow({
       </select>
       <button
         type="button"
-        className="btn btn-small btn-square"
+        className="btn btn-small btn-icon"
         aria-label={`Move tile ${n} up`}
         disabled={index === 0}
         onClick={() => onChange({ kind: 'move', by: -1 })}
@@ -194,7 +196,7 @@ function TileRow({
       </button>
       <button
         type="button"
-        className="btn btn-small btn-square"
+        className="btn btn-small btn-icon"
         aria-label={`Move tile ${n} down`}
         disabled={index === count - 1}
         onClick={() => onChange({ kind: 'move', by: 1 })}
@@ -203,7 +205,7 @@ function TileRow({
       </button>
       <button
         type="button"
-        className="btn btn-small"
+        className="btn btn-small btn-danger"
         aria-label={`Remove tile ${n}`}
         onClick={() => onChange({ kind: 'remove' })}
       >
@@ -224,49 +226,53 @@ function TileEditor({ tiles }: { tiles: OverlayTile[] }) {
     save([...tiles, { stat, size: 'm' }]);
   };
   return (
-    <div className="field">
-      <span className="field-label">Overlay tiles</span>
-      {tiles.length === 0 ? (
-        <p className="hint">No tiles — the overlay shows only the group, if enabled.</p>
-      ) : (
-        <ol className="tile-editor">
-          {tiles.map((tile, i) => (
-            <TileRow
-              // Tiles have no id; position is their identity in this list.
-              key={i}
-              tile={tile}
-              index={i}
-              count={tiles.length}
-              onChange={(op) => {
-                const next = [...tiles];
-                if (op.kind === 'set') next[i] = op.tile;
-                else if (op.kind === 'remove') next.splice(i, 1);
-                else {
-                  const j = i + op.by;
-                  const a = next[i];
-                  const b = next[j];
-                  if (!a || !b) return;
-                  next[i] = b;
-                  next[j] = a;
-                }
-                save(next);
-              }}
-            />
-          ))}
-        </ol>
-      )}
-      <div className="button-row">
-        <button
-          type="button"
-          className="btn btn-small"
-          data-testid="overlay-add-tile"
-          disabled={tiles.length >= MAX_TILES}
-          onClick={addTile}
-        >
-          Add tile
-        </button>
+    <>
+      <h3 className="subhead">Overlay tiles</h3>
+      <div className="card">
+        {tiles.length === 0 ? (
+          <p className="hint tile-editor-row">
+            No tiles — the overlay shows only the group, if enabled.
+          </p>
+        ) : (
+          <ol className="list tile-editor">
+            {tiles.map((tile, i) => (
+              <TileRow
+                // Tiles have no id; position is their identity in this list.
+                key={i}
+                tile={tile}
+                index={i}
+                count={tiles.length}
+                onChange={(op) => {
+                  const next = [...tiles];
+                  if (op.kind === 'set') next[i] = op.tile;
+                  else if (op.kind === 'remove') next.splice(i, 1);
+                  else {
+                    const j = i + op.by;
+                    const a = next[i];
+                    const b = next[j];
+                    if (!a || !b) return;
+                    next[i] = b;
+                    next[j] = a;
+                  }
+                  save(next);
+                }}
+              />
+            ))}
+          </ol>
+        )}
+        <div className="tile-editor-foot">
+          <button
+            type="button"
+            className="btn btn-small btn-quiet"
+            data-testid="overlay-add-tile"
+            disabled={tiles.length >= MAX_TILES}
+            onClick={addTile}
+          >
+            + Add tile
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -281,12 +287,12 @@ export function SettingsTab() {
   };
 
   return (
-    <div className="settings">
-      <section className="panel" aria-labelledby="set-rider">
-        <h2 id="set-rider" className="panel-title">
+    <div className="page settings">
+      <section className="settings-section" aria-labelledby="set-rider">
+        <h2 id="set-rider" className="section-title section-head">
           Rider
         </h2>
-        <div className="field-grid">
+        <div className="card rows">
           <TextField
             label="Name"
             testId="settings-name"
@@ -320,11 +326,11 @@ export function SettingsTab() {
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="set-shifting">
-        <h2 id="set-shifting" className="panel-title">
+      <section className="settings-section" aria-labelledby="set-shifting">
+        <h2 id="set-shifting" className="section-title section-head">
           Shifting
         </h2>
-        <div className="field-grid">
+        <div className="card rows">
           <NumberField
             label="Physical gear ratio"
             testId="settings-ratio"
@@ -352,11 +358,11 @@ export function SettingsTab() {
         <ButtonMapping buttons={shifting.buttons} />
       </section>
 
-      <section className="panel" aria-labelledby="set-overlay">
-        <h2 id="set-overlay" className="panel-title">
+      <section className="settings-section" aria-labelledby="set-overlay">
+        <h2 id="set-overlay" className="section-title section-head">
           Overlay
         </h2>
-        <div className="field-grid">
+        <div className="card rows">
           <Toggle
             label="Show overlay"
             testId="settings-overlay-visible"
@@ -402,11 +408,11 @@ export function SettingsTab() {
         <TileEditor tiles={overlay.tiles} />
       </section>
 
-      <section className="panel" aria-labelledby="set-group">
-        <h2 id="set-group" className="panel-title">
+      <section className="settings-section" aria-labelledby="set-group">
+        <h2 id="set-group" className="section-title section-head">
           Group
         </h2>
-        <div className="field-grid">
+        <div className="card rows">
           <TextField
             label="Signalling server URL"
             testId="settings-signalling"

@@ -38,12 +38,15 @@ const Tile = memo(function Tile({
   value: string;
 }) {
   const unit = statUnit(stat);
+  // Gear reads "12 / 24": show the current gear large and the count quietly.
+  const [main, of] = stat === 'gear' ? value.split(' / ') : [value];
   return (
     <div className={`ov-tile ov-tile--${size}`} data-testid={`overlay-tile-${stat}`}>
       <div className="ov-backdrop" aria-hidden="true" />
       <div className="ov-label ov-text">{statLabel(stat)}</div>
       <div className="ov-value-line">
-        <span className="ov-value ov-text">{value}</span>
+        <span className="ov-value ov-text">{main}</span>
+        {of ? <span className="ov-unit ov-text">/{of}</span> : null}
         {unit ? <span className="ov-unit ov-text">{unit}</span> : null}
       </div>
     </div>
@@ -102,7 +105,12 @@ export function OverlayView({
   const opacity = Number.isFinite(settings.backdropOpacity)
     ? Math.min(1, Math.max(0, settings.backdropOpacity))
     : 0.55;
-  const style = { '--ov-backdrop-alpha': String(opacity) } as CSSProperties;
+  // Grid cells the tiles need (a large tile spans two); the CSS lays them out to fit the window.
+  const cells = settings.tiles.reduce((n, t) => n + (t.size === 'l' ? 2 : 1), 0);
+  const style = {
+    '--ov-backdrop-alpha': String(opacity),
+    '--ov-cells': String(Math.max(1, cells)),
+  } as CSSProperties;
 
   const classes = ['ov-root'];
   if (editMode) classes.push('ov-root--edit');
@@ -119,12 +127,12 @@ export function OverlayView({
         </div>
       ) : null}
 
-      <div className="ov-body">
+      <div className={rows ? 'ov-body ov-body--group' : 'ov-body'}>
         {warnings.length > 0 || rideState === 'paused' || rideState === 'idle' ? (
           <div className="ov-status-row">
             {warnings.map((w) => (
               <div key={w.kind} className="ov-warning" data-testid="overlay-warning" role="alert">
-                <span className="ov-warning-icon ov-text" aria-hidden="true">
+                <span className="ov-warning-icon" aria-hidden="true">
                   !
                 </span>
                 <span className="ov-text">{w.text}</span>
@@ -145,11 +153,15 @@ export function OverlayView({
           </div>
         ) : null}
 
-        <div className="ov-tiles">
-          {settings.tiles.map((t, i) => (
-            <Tile key={`${t.stat}-${i}`} stat={t.stat} size={t.size} value={safeValue(t.stat, live)} />
-          ))}
-        </div>
+        {settings.tiles.length > 0 ? (
+          <div className="ov-tiles">
+            <div className="ov-grid">
+              {settings.tiles.map((t, i) => (
+                <Tile key={`${t.stat}-${i}`} stat={t.stat} size={t.size} value={safeValue(t.stat, live)} />
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {rows ? <GroupPanel rows={rows} /> : null}
       </div>
@@ -163,7 +175,11 @@ export function OverlayView({
           onPointerMove={onResizePointerMove}
           onPointerUp={onResizePointerUp}
           onPointerCancel={onResizePointerUp}
-        />
+        >
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M11 4 4 11M11 7.5 7.5 11" />
+          </svg>
+        </div>
       ) : null}
     </div>
   );

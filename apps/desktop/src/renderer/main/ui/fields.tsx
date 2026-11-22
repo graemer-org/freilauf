@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import type { KeyboardEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
 
 /**
  * Text-ish input that edits a local draft and commits on blur or Enter.
@@ -44,6 +44,24 @@ function useDraft<T>(
   return { draft, setDraft, invalid, commit, onKeyDown };
 }
 
+/** Inline custom property that paints a range input's track up to its value. */
+export function rangeFill(value: number, min: number, max: number): CSSProperties {
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  return { '--fill-pct': `${Math.min(100, Math.max(0, pct))}%` } as CSSProperties;
+}
+
+/** Hint, or the error in its place. */
+function HintOrError({ hint, error }: { hint?: ReactNode; error?: string | null | undefined }) {
+  if (error) {
+    return (
+      <span className="field-error" role="alert">
+        {error}
+      </span>
+    );
+  }
+  return hint ? <span className="field-hint">{hint}</span> : null;
+}
+
 interface FieldShellProps {
   id: string;
   label: string;
@@ -55,15 +73,11 @@ interface FieldShellProps {
 function FieldShell({ id, label, hint, error, children }: FieldShellProps) {
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
-      {children}
-      {error ? (
-        <span className="field-error" role="alert">
-          {error}
-        </span>
-      ) : hint ? (
-        <span className="field-hint">{hint}</span>
-      ) : null}
+      <div className="field-text">
+        <label htmlFor={id}>{label}</label>
+        <HintOrError hint={hint} error={error} />
+      </div>
+      <div className="field-control">{children}</div>
     </div>
   );
 }
@@ -196,15 +210,20 @@ export function Toggle(props: {
   const id = useId();
   return (
     <div className="field field-toggle">
-      <input
-        id={id}
-        type="checkbox"
-        data-testid={props.testId}
-        checked={props.checked}
-        onChange={(e) => props.onChange(e.currentTarget.checked)}
-      />
-      <label htmlFor={id}>{props.label}</label>
-      {props.hint && <span className="field-hint">{props.hint}</span>}
+      <div className="field-text">
+        <label htmlFor={id}>{props.label}</label>
+        <HintOrError hint={props.hint} />
+      </div>
+      <div className="field-control">
+        <input
+          id={id}
+          type="checkbox"
+          role="switch"
+          data-testid={props.testId}
+          checked={props.checked}
+          onChange={(e) => props.onChange(e.currentTarget.checked)}
+        />
+      </div>
     </div>
   );
 }
@@ -224,25 +243,29 @@ export function RangeField(props: {
   const [draft, setDraft] = useState(props.value);
   useEffect(() => setDraft(props.value), [props.value]);
   return (
-    <div className="field">
-      <label htmlFor={id}>
-        {props.label} <output>{props.format(draft)}</output>
-      </label>
-      <input
-        id={id}
-        type="range"
-        data-testid={props.testId}
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={draft}
-        onChange={(e) => {
-          const v = Number(e.currentTarget.value);
-          if (!Number.isFinite(v)) return;
-          setDraft(v);
-          props.onCommit(v);
-        }}
-      />
+    <div className="field field-range">
+      <div className="field-text">
+        <label htmlFor={id}>{props.label}</label>
+      </div>
+      <div className="field-control">
+        <input
+          id={id}
+          type="range"
+          data-testid={props.testId}
+          min={props.min}
+          max={props.max}
+          step={props.step}
+          value={draft}
+          style={rangeFill(draft, props.min, props.max)}
+          onChange={(e) => {
+            const v = Number(e.currentTarget.value);
+            if (!Number.isFinite(v)) return;
+            setDraft(v);
+            props.onCommit(v);
+          }}
+        />
+        <output htmlFor={id}>{props.format(draft)}</output>
+      </div>
     </div>
   );
 }

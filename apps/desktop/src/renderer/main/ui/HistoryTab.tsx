@@ -22,14 +22,16 @@ function HistoryRow({ ride }: { ride: RideListItem }) {
   const [exporting, setExporting] = useState(false);
   return (
     <tr data-testid="history-row">
-      <td>{formatDate(ride.startedAt)}</td>
       <td>
-        {ride.name}
-        {!ride.finished && (
-          <span className="tag tag-warn" title="Saved from an unfinished session">
-            recovered
-          </span>
-        )}
+        <div className="ride-name">
+          {ride.name}
+          {!ride.finished && (
+            <span className="tag tag-warn" title="Saved from an unfinished session">
+              recovered
+            </span>
+          )}
+        </div>
+        <div className="ride-date">{formatDate(ride.startedAt)}</div>
       </td>
       <td className="num">{formatDuration(ride.durationS)}</td>
       <td className="num">{formatDistance(ride.distanceM)}</td>
@@ -39,10 +41,10 @@ function HistoryRow({ ride }: { ride: RideListItem }) {
       <td className="actions">
         {confirmDelete ? (
           <span className="button-row" role="group" aria-label="Delete ride?">
-            <span>Delete?</span>
+            <span className="confirm-label">Delete this ride?</span>
             <button
               type="button"
-              className="btn btn-small btn-danger"
+              className="btn btn-small btn-danger-solid"
               data-testid="delete-confirm"
               onClick={() => {
                 setConfirmDelete(false);
@@ -71,7 +73,7 @@ function HistoryRow({ ride }: { ride: RideListItem }) {
             </button>
             <button
               type="button"
-              className="btn btn-small"
+              className="btn btn-small btn-danger"
               data-testid="delete-ride"
               onClick={() => setConfirmDelete(true)}
             >
@@ -89,46 +91,64 @@ export function HistoryTab() {
   const rides = useAppState((s) => s.rides);
   const sorted = [...rides].sort((a, b) => b.startedAt - a.startedAt);
   return (
-    <div className="history">
-      <div className="button-row">
-        <button type="button" className="btn" onClick={() => void app.refreshRides()}>
-          Refresh
-        </button>
-        <button type="button" className="btn" onClick={() => app.openRidesFolder()}>
-          Open folder
-        </button>
+    <div className="page history">
+      <div className="section-head">
+        <h2 className="page-title">Rides</h2>
+        <div className="button-row">
+          <button type="button" className="btn btn-small" onClick={() => void app.refreshRides()}>
+            Refresh
+          </button>
+          <button type="button" className="btn btn-small" onClick={() => app.openRidesFolder()}>
+            Open folder
+          </button>
+        </div>
       </div>
       {sorted.length === 0 ? (
-        <p className="empty" data-testid="history-empty">
-          No rides yet. Finished rides are saved here automatically and can be exported as .fit
-          files.
-        </p>
+        <div className="card empty" data-testid="history-empty">
+          <svg className="empty-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <circle cx="14" cy="32" r="9" fill="none" stroke="currentColor" strokeWidth="2.5" />
+            <circle cx="34" cy="32" r="9" fill="none" stroke="currentColor" strokeWidth="2.5" />
+            <path
+              d="M14 32l7-13h10l3 13M21 19l-2-5h-4M31 19l2-5h4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <p className="empty-title">No rides yet</p>
+          <p className="empty-text">
+            Finished rides are saved here automatically and can be exported as .fit files.
+          </p>
+        </div>
       ) : (
-        <table className="history-table">
-          <thead>
-            <tr>
-              <th scope="col">Date</th>
-              <th scope="col">Name</th>
-              <th scope="col" className="num">
-                Duration
-              </th>
-              <th scope="col" className="num">
-                Distance
-              </th>
-              <th scope="col" className="num">
-                Avg power
-              </th>
-              <th scope="col">
-                <span className="visually-hidden">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((ride) => (
-              <HistoryRow key={ride.id} ride={ride} />
-            ))}
-          </tbody>
-        </table>
+        <div className="card card-clip">
+          <table className="history-table">
+            <thead>
+              <tr>
+                <th scope="col">Ride</th>
+                <th scope="col" className="num">
+                  Duration
+                </th>
+                <th scope="col" className="num">
+                  Distance
+                </th>
+                <th scope="col" className="num">
+                  Avg power
+                </th>
+                <th scope="col">
+                  <span className="visually-hidden">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((ride) => (
+                <HistoryRow key={ride.id} ride={ride} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

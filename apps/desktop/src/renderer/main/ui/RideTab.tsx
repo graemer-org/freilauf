@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { App } from '../appStore';
 import type { StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from './format';
+import { rangeFill } from './fields';
 import { isEditableTarget, useApp, useAppState } from './hooks';
 
 export const GRADIENT_MIN = -10;
@@ -64,11 +65,19 @@ function useRideShortcuts(app: App): void {
   }, [app]);
 }
 
-function StatTile({ stat, size = 'm' }: { stat: StatId; size?: 's' | 'm' | 'l' }) {
+type StatVariant = 'tile' | 'hero' | 'sub';
+
+const STAT_CLASS: Record<StatVariant, string> = {
+  tile: 'tile card',
+  hero: 'tile',
+  sub: 'sub',
+};
+
+function StatTile({ stat, variant = 'tile' }: { stat: StatId; variant?: StatVariant }) {
   const value = useAppState((s) => (s.live ? statValue(stat, s.live.ride) : '–'));
   const unit = statUnit(stat);
   return (
-    <div className={`tile tile-${size}`} data-testid={`stat-${stat}`}>
+    <div className={STAT_CLASS[variant]} data-testid={`stat-${stat}`}>
       <span className="tile-label">{statLabel(stat)}</span>
       <span className="tile-value">
         <span className="tile-number">{value}</span>
@@ -78,25 +87,45 @@ function StatTile({ stat, size = 'm' }: { stat: StatId; size?: 's' | 'm' | 'l' }
   );
 }
 
+/** Power dominates; 3 s power and W/kg sit underneath as its context. */
+function PowerHero() {
+  return (
+    <section className="hero card" aria-label="Power">
+      <StatTile stat="power" variant="hero" />
+      <div className="hero-subs">
+        <StatTile stat="power3s" variant="sub" />
+        <StatTile stat="wattsPerKg" variant="sub" />
+      </div>
+    </section>
+  );
+}
+
 function GearTile() {
   const gear = useAppState((s) => s.live?.ride.gear ?? 0);
   const count = useAppState((s) => s.live?.ride.gearCount ?? 0);
-  const fraction = count > 1 ? (gear - 1) / (count - 1) : 0;
   return (
-    <div className="tile tile-m tile-gear" data-testid="stat-gear">
+    <div className="tile card tile-gear" data-testid="stat-gear">
       <span className="tile-label">Gear</span>
       <span className="tile-value">
-        <span className="tile-number">{count > 0 ? `${gear} / ${count}` : '–'}</span>
+        <span className="tile-number">{count > 0 ? gear : '–'}</span>
+        {count > 0 && <span className="gear-of">{`/ ${count}`}</span>}
       </span>
       <span
-        className="gear-bar"
+        className="gear-meter"
         role="meter"
         aria-label="Gear"
         aria-valuemin={1}
         aria-valuemax={Math.max(1, count)}
         aria-valuenow={gear}
       >
-        <span className="gear-bar-fill" style={{ width: `${Math.round(fraction * 100)}%` }} />
+        {/* One tick per gear, rising like a cassette towards the hardest gear. */}
+        {Array.from({ length: count }, (_, i) => (
+          <span
+            key={i}
+            className={`gear-tick${i + 1 === gear ? ' current' : i + 1 < gear ? ' on' : ''}`}
+            style={{ height: `${Math.round(35 + (65 * i) / Math.max(1, count - 1))}%` }}
+          />
+        ))}
       </span>
     </div>
   );
@@ -106,7 +135,7 @@ function TrainerHint() {
   const connected = useAppState((s) => s.live?.devices.trainer?.state === 'connected');
   if (connected) return null;
   return (
-    <p className="hint hint-warn" data-testid="trainer-missing">
+    <p className="callout-warn" data-testid="trainer-missing">
       Trainer not connected — power reads 0.
     </p>
   );
@@ -126,7 +155,7 @@ function RideButtons() {
         <span className="confirm-text">Finish and save this ride?</span>
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn-primary btn-big"
           data-testid="ride-finish-confirm"
           onClick={() => {
             setConfirming(false);
@@ -135,7 +164,7 @@ function RideButtons() {
         >
           Finish &amp; save
         </button>
-        <button type="button" className="btn" onClick={() => setConfirming(false)}>
+        <button type="button" className="btn btn-big" onClick={() => setConfirming(false)}>
           Keep riding
         </button>
       </div>
@@ -184,7 +213,7 @@ function RideButtons() {
           Finish
         </button>
       )}
-      <span className="ride-state" data-testid="ride-state">
+      <span className="ride-state" data-state={state} data-testid="ride-state">
         {state === 'idle' ? 'Ready' : state === 'riding' ? 'Recording' : 'Paused'}
       </span>
     </div>
@@ -196,10 +225,10 @@ function GearControls() {
   return (
     <div className="control" role="group" aria-label="Gear">
       <span className="control-label">Gear</span>
-      <div className="control-row">
+      <div className="stepper">
         <button
           type="button"
-          className="btn btn-square"
+          className="btn btn-icon"
           data-testid="gear-down"
           aria-label="Shift down (easier)"
           onClick={() => app.shift(-1)}
@@ -208,7 +237,7 @@ function GearControls() {
         </button>
         <button
           type="button"
-          className="btn btn-square"
+          className="btn btn-icon"
           data-testid="gear-up"
           aria-label="Shift up (harder)"
           onClick={() => app.shift(1)}
@@ -240,7 +269,7 @@ function GradientControls() {
       <div className="control-row">
         <button
           type="button"
-          className="btn btn-square"
+          className="btn btn-icon"
           data-testid="gradient-down"
           aria-label="Gradient down 0.5 %"
           onClick={() => set(draft - GRADIENT_STEP)}
@@ -254,11 +283,12 @@ function GradientControls() {
           max={GRADIENT_MAX}
           step={GRADIENT_STEP}
           value={draft}
+          style={rangeFill(draft, GRADIENT_MIN, GRADIENT_MAX)}
           onChange={(e) => set(Number(e.currentTarget.value))}
         />
         <button
           type="button"
-          className="btn btn-square"
+          className="btn btn-icon"
           data-testid="gradient-up"
           aria-label="Gradient up 0.5 %"
           onClick={() => set(draft + GRADIENT_STEP)}
@@ -282,13 +312,17 @@ function SimulationPanel() {
   const effort = useAppState((s) => s.simEffortW);
   if (!simMode) return null;
   return (
-    <section className="panel panel-sim" aria-labelledby="sim-title" data-testid="sim-panel">
-      <h2 id="sim-title" className="panel-title">
-        Simulation
-      </h2>
-      <p className="hint">Simulated devices are in use. Nothing is sent to real hardware.</p>
-      <label className="field-inline" htmlFor="sim-effort">
-        <span>
+    <section className="panel-sim card" aria-labelledby="sim-title" data-testid="sim-panel">
+      <div className="panel-sim-head">
+        <h2 id="sim-title" className="section-title">
+          Simulation
+        </h2>
+        <span className="hint">
+          Simulated devices are in use. Nothing is sent to real hardware.
+        </span>
+      </div>
+      <label className="sim-effort" htmlFor="sim-effort">
+        <span className="control-label">
           Rider effort <output>{effort} W</output>
         </span>
         <input
@@ -299,6 +333,7 @@ function SimulationPanel() {
           max={600}
           step={10}
           value={effort}
+          style={rangeFill(effort, 0, 600)}
           onChange={(e) => app.setSimEffort(Number(e.currentTarget.value))}
         />
       </label>
@@ -323,29 +358,33 @@ export function RideTab() {
   const app = useApp();
   useRideShortcuts(app);
   return (
-    <div className="ride">
-      <div className="tiles">
-        <StatTile stat="power" size="l" />
-        <StatTile stat="power3s" />
-        <StatTile stat="wattsPerKg" />
-        <StatTile stat="cadence" />
-        <StatTile stat="speed" />
-        <StatTile stat="heartRate" />
-        <GearTile />
-        <StatTile stat="time" />
-        <StatTile stat="distance" />
+    <>
+      <div className="ride-stage">
+        <TrainerHint />
+        <div className="ride-stats">
+          <PowerHero />
+          <div className="ride-grid">
+            <StatTile stat="cadence" />
+            <StatTile stat="heartRate" />
+            <StatTile stat="speed" />
+            <GearTile />
+            <StatTile stat="time" />
+            <StatTile stat="distance" />
+          </div>
+        </div>
+        <section className="controls card" aria-label="Ride controls">
+          <RideButtons />
+          <div className="adjust">
+            <GearControls />
+            <GradientControls />
+          </div>
+        </section>
+        <p className="hint shortcuts">
+          <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>+</kbd> <kbd>−</kbd> shift · <kbd>[</kbd> <kbd>]</kbd>{' '}
+          gradient ∓0.5 % · <kbd>Space</kbd> start / pause
+        </p>
       </div>
-      <TrainerHint />
-      <section className="panel controls" aria-label="Ride controls">
-        <RideButtons />
-        <GearControls />
-        <GradientControls />
-      </section>
-      <p className="hint shortcuts">
-        Keys: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>+</kbd>/<kbd>−</kbd> shift · <kbd>[</kbd>/
-        <kbd>]</kbd> gradient ∓0.5 % · <kbd>Space</kbd> start/pause
-      </p>
       <SimulationPanel />
-    </div>
+    </>
   );
 }
