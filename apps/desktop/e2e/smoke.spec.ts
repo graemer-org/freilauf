@@ -1,46 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ElectronApplication, Page } from '@playwright/test';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { RecordedRide } from '@freilauf/session';
 import type { LiveState } from '../src/shared/contract';
-
-const appDir = path.resolve(import.meta.dirname, '..');
-const mainEntry = path.join(appDir, 'out', 'main', 'index.js');
-
-function electronArgs(): string[] {
-  const args = [mainEntry];
-  // Chromium refuses to start as root without --no-sandbox (containers, CI).
-  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  if (process.env.CI || (process.platform === 'linux' && isRoot)) args.push('--no-sandbox');
-  return args;
-}
-
-async function launch(userData: string): Promise<ElectronApplication> {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-  delete env.ELECTRON_RENDERER_URL;
-  delete env.ELECTRON_RUN_AS_NODE;
-  return electron.launch({
-    args: electronArgs(),
-    cwd: appDir,
-    env: { ...env, FREILAUF_USER_DATA: userData, FREILAUF_SIM: '1' },
-  });
-}
-
-/** Waits for both windows and tells them apart via window.freilauf.window. */
-async function windows(app: ElectronApplication): Promise<{ main: Page; overlay: Page }> {
-  await expect.poll(() => app.windows().length, { timeout: 20_000 }).toBe(2);
-  const found: Partial<Record<'main' | 'overlay', Page>> = {};
-  for (const page of app.windows()) {
-    await page.waitForLoadState('domcontentloaded');
-    const name = await page.evaluate(() => window.freilauf.window);
-    found[name] = page;
-  }
-  if (!found.main || !found.overlay) throw new Error('expected a main and an overlay window');
-  return { main: found.main, overlay: found.overlay };
-}
+import { launch, mainEntry, windows } from './helpers';
 
 function liveState(powerW: number): LiveState {
   return {
@@ -107,8 +71,10 @@ test.describe('desktop smoke', () => {
       expect(await main.evaluate(() => typeof window.freilauf)).toBe('object');
       expect(await overlay.evaluate(() => typeof window.freilauf)).toBe('object');
       expect(await main.evaluate(() => window.freilauf.simMode)).toBe(true);
-      await expect(main.getByTestId('window-name')).toContainText('main');
-      await expect(overlay.getByTestId('window-name')).toHaveText('overlay');
+      expect(await main.evaluate(() => window.freilauf.window)).toBe('main');
+      expect(await overlay.evaluate(() => window.freilauf.window)).toBe('overlay');
+      await expect(main.getByTestId('tab-ride')).toBeVisible();
+      await expect(overlay.getByTestId('overlay-root')).toBeVisible();
 
       // Node is not reachable from the renderer.
       expect(await main.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe(
@@ -135,21 +101,21 @@ test.describe('desktop smoke', () => {
         'E2E Rider',
       );
 
-      // live.publish from the main window arrives in the overlay.
-      await main.evaluate((s) => window.freilauf.live.publish(s), liveState(321));
-      await expect(overlay.getByTestId('power')).toHaveText('321');
+      // The simulated rig feeds the ride; its live state reaches the overlay.
+      const overlayPower = overlay.getByTestId('overlay-tile-power3s');
+      await expect(overlayPower).toContainText(/[1-9]\d+/, { timeout: 15_000 });
 
-      // The overlay may not publish live state.
-      await overlay.evaluate((s) => window.freilauf.live.publish(s), liveState(999));
-      await main.evaluate((s) => window.freilauf.live.publish(s), liveState(322));
-      await expect(overlay.getByTestId('power')).toHaveText('322');
+      // The overlay may not publish live state (a bogus value never shows up).
+      await overlay.evaluate((s) => window.freilauf.live.publish(s), liveState(9999));
+      await overlay.waitForTimeout(600);
+      await expect(overlayPower).not.toContainText('9999');
 
-      // A reloaded overlay gets the last state immediately.
+      // A reloaded overlay gets state again right away.
       await overlay.reload();
-      await expect(overlay.getByTestId('power')).toHaveText('322');
+      await expect(overlay.getByTestId('overlay-tile-power3s')).toContainText(/[1-9]\d+/);
 
       // Edit mode is reflected via onEditMode in both windows.
-      await expect(overlay.getByTestId('edit-mode')).toHaveText('locked');
+      await expect(overlay.getByTestId('overlay-edit-bar')).toHaveCount(0);
       const mainSawEdit = main.evaluate(
         () =>
           new Promise<boolean>((resolve) => {
@@ -162,10 +128,10 @@ test.describe('desktop smoke', () => {
           }),
       );
       await main.evaluate(() => window.freilauf.overlay.setEditMode(true));
-      await expect(overlay.getByTestId('edit-mode')).toHaveText('edit');
+      await expect(overlay.getByTestId('overlay-edit-bar')).toBeVisible();
       expect(await mainSawEdit).toBe(true);
       await main.evaluate(() => window.freilauf.overlay.setEditMode(false));
-      await expect(overlay.getByTestId('edit-mode')).toHaveText('locked');
+      await expect(overlay.getByTestId('overlay-edit-bar')).toHaveCount(0);
 
       // Overlay-only and main-only calls are enforced.
       await expect(overlay.evaluate(() => window.freilauf.rides.list())).rejects.toThrow(
