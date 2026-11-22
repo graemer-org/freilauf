@@ -40,29 +40,29 @@ describe('ControllerCapture', () => {
     c.frame(keypad(0)); // idle
     c.frame(keypad(0));
     c.frame(keypad(0));
-    c.frame(keypad(RIDE_BUTTON_MASK.shiftUpRight));
+    c.frame(keypad(RIDE_BUTTON_MASK.shiftDownRight));
     c.frame(keypad(0));
     expect(lines.map((l) => l.message)).toEqual([
       'keypad 23 08 ff ff ff ff 0f → pressed none',
       'previous frame repeated 2×',
-      'keypad 23 08 ff bf ff ff 0f → pressed shiftUpRight',
+      'keypad 23 08 ff bf ff ff 0f → pressed shiftDownRight',
       'keypad 23 08 ff ff ff ff 0f → pressed none',
     ]);
     expect(lines[2]!.context).toMatchObject({
-      pressed: ['shiftUpRight'],
-      down: ['shiftUpRight'],
+      pressed: ['shiftDownRight'],
+      down: ['shiftDownRight'],
       bitmap: '0xffffdfff',
     });
-    expect(lines[3]!.context).toMatchObject({ pressed: [], up: ['shiftUpRight'] });
+    expect(lines[3]!.context).toMatchObject({ pressed: [], up: ['shiftDownRight'] });
   });
 
   it('points out cleared bits that are not in the button table', () => {
     const { lines, log } = recorder();
     const c = new ControllerCapture({ log, now: () => 0 });
     c.frame(keypad(0));
-    c.frame(keypad(0x00080)); // bit 7 is not mapped to any button
-    expect(lines[1]!.message).toBe('keypad 23 08 ff fe ff ff 0f → pressed unmapped bit(s)');
-    expect(lines[1]!.context).toMatchObject({ unknownBits: ['0x00080'] });
+    c.frame(keypad(0x10000)); // bit 16 is not mapped to any button
+    expect(lines[1]!.message).toBe('keypad 23 08 ff ff fb ff 0f → pressed unmapped bit(s)');
+    expect(lines[1]!.context).toMatchObject({ unknownBits: ['0x10000'] });
   });
 
   it('logs the first frame of an unknown type in full, then counts', () => {

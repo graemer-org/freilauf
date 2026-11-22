@@ -1,18 +1,19 @@
 # Zwift Ride controllers — BLE protocol notes
 
-> **Status: partly verified on hardware (2026-11-22).** Written from
-> recollection of public protocol write-ups; no code was taken from other
-> projects. A first test on a real Ride (Windows 11) confirmed: the
-> controllers pair through the chooser, the handshake is accepted, keypad
-> notifications flow, and **one shift button per side is decoded** — the
-> lower of the two buttons on the left grip shifts down, the lower one on
-> the right grip shifts up.
+> **Status: buttons largely verified on hardware (2026-11-22, Windows 11).**
+> Written from recollection of public protocol write-ups, then corrected
+> against a real Ride by pressing every button and reading what the app
+> decoded. No code was taken from other projects.
 >
-> **Known wrong or unknown:** the _upper_ button on each grip did nothing.
-> With the default mapping all four `shift*` bits are mapped, so the upper
-> buttons do not arrive as the bits this table assigns to them. Which bits
-> (or which message) they use is unknown until a capture is read. Everything
-> else below is still a hypothesis. Keyboard shifting works regardless.
+> - **Confirmed:** pairing through the chooser, the handshake, keypad
+>   notifications, the d-pad, A, B, Y, both shift buttons on each grip and
+>   the left power button.
+> - **Inferred, not yet seen in a capture:** Z (`0x00080`) and the right
+>   power button (`0x08000`). Both were _not recognised_ with the first
+>   table; the values here follow from the pattern of the confirmed bits.
+> - **Not working:** the analog brake/steering paddles produce nothing. The
+>   paddle message layout below is still a guess; an exported log with the
+>   paddles pulled is needed to decode it.
 
 The protocol is proprietary and undocumented by the vendor.
 
@@ -55,20 +56,30 @@ First byte = message type, rest = protobuf.
 - Field 3, repeated message: analog paddle — field 1 = location
   (0 left, 1 right), field 2 = sint32 (zigzag) value, about −100…100.
 
-| Button      | Mask      |     | Button            | Mask      |
-| ----------- | --------- | --- | ----------------- | --------- |
-| D-pad left  | `0x00001` |     | Shift up, left    | `0x00200` |
-| D-pad up    | `0x00002` |     | Shift down, left  | `0x00400` |
-| D-pad right | `0x00004` |     | Power-up, left    | `0x00800` |
-| D-pad down  | `0x00008` |     | On/off, left      | `0x01000` |
-| A           | `0x00010` |     | Shift up, right   | `0x02000` |
-| B           | `0x00020` |     | Shift down, right | `0x04000` |
-| Y           | `0x00040` |     | Power-up, right   | `0x10000` |
-| Z           | `0x00100` |     | On/off, right     | `0x20000` |
+| Button                         | Mask      | Status    |
+| ------------------------------ | --------- | --------- |
+| D-pad left                     | `0x00001` | confirmed |
+| D-pad up                       | `0x00002` | confirmed |
+| D-pad right                    | `0x00004` | confirmed |
+| D-pad down                     | `0x00008` | confirmed |
+| A                              | `0x00010` | confirmed |
+| B                              | `0x00020` | confirmed |
+| Y                              | `0x00040` | confirmed |
+| Z                              | `0x00080` | inferred  |
+| Left grip, upper shift button  | `0x00100` | confirmed |
+| Left grip, lower shift button  | `0x00200` | confirmed |
+| (unobserved)                   | `0x00400` | unknown   |
+| Left grip, power button        | `0x00800` | confirmed |
+| Right grip, upper shift button | `0x01000` | confirmed |
+| Right grip, lower shift button | `0x02000` | confirmed |
+| (unobserved)                   | `0x04000` | unknown   |
+| Right grip, power button       | `0x08000` | inferred  |
 
-Confidence in individual bit positions: low to medium. Which physical
-lever is "shift up" vs "shift down" must be confirmed; the app therefore
-makes the button → action mapping configurable.
+How the table was corrected: with the first guess, the left lower button
+decoded as `0x00200`, the left upper as `0x00100`, the left power button as
+`0x00800`, the right lower as `0x02000` and the right upper as `0x01000`;
+Z and the right power button matched no bit of that guess. The app keeps the
+button → action mapping configurable.
 
 ## Open questions / verification checklist
 

@@ -27,6 +27,8 @@ export const ZwiftMessageType = {
 
 /** Bit positions in the keypad status bitmap. A CLEARED bit means "pressed". */
 export const RIDE_BUTTON_MASK: Readonly<Record<ControllerButton, number>> = {
+  // Confirmed on hardware (2026-11-22): d-pad, A, B, Y, both shift buttons
+  // on each grip, and the left power button.
   left: 0x00001,
   up: 0x00002,
   right: 0x00004,
@@ -34,15 +36,17 @@ export const RIDE_BUTTON_MASK: Readonly<Record<ControllerButton, number>> = {
   a: 0x00010,
   b: 0x00020,
   y: 0x00040,
-  z: 0x00100,
-  shiftUpLeft: 0x00200,
-  shiftDownLeft: 0x00400,
-  powerUpLeft: 0x00800,
-  onOffLeft: 0x01000,
-  shiftUpRight: 0x02000,
-  shiftDownRight: 0x04000,
-  powerUpRight: 0x10000,
-  onOffRight: 0x20000,
+  // Inferred, not yet seen in a capture: Z continues the A/B/Y run.
+  z: 0x00080,
+  shiftUpLeft: 0x00100, // upper button, left grip
+  shiftDownLeft: 0x00200, // lower button, left grip
+  // Unobserved; the bit between the shift buttons and the power button.
+  powerUpLeft: 0x00400,
+  onOffLeft: 0x00800, // power button, left grip
+  shiftUpRight: 0x01000, // upper button, right grip
+  shiftDownRight: 0x02000, // lower button, right grip
+  powerUpRight: 0x04000, // unobserved, by symmetry with the left grip
+  onOffRight: 0x08000, // power button, right grip: inferred by symmetry
 };
 
 const ALL_BUTTONS = Object.keys(RIDE_BUTTON_MASK) as ControllerButton[];

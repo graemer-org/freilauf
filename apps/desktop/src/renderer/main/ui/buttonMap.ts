@@ -28,16 +28,16 @@ export const CONTROLLER_BUTTONS: readonly ButtonInfo[] = [
   { button: 'right', grip: 'left', name: 'D-pad right' },
   { button: 'down', grip: 'left', name: 'D-pad down' },
   { button: 'left', grip: 'left', name: 'D-pad left' },
-  { button: 'powerUpLeft', grip: 'left', name: 'Power-up button' },
-  { button: 'onOffLeft', grip: 'left', name: 'On/off button' },
+  { button: 'powerUpLeft', grip: 'left', name: 'Side button (unconfirmed)' },
+  { button: 'onOffLeft', grip: 'left', name: 'Power button' },
   { button: 'shiftDownRight', grip: 'right', name: 'Lower shift button' },
   { button: 'shiftUpRight', grip: 'right', name: 'Upper shift button' },
   { button: 'a', grip: 'right', name: 'A' },
   { button: 'b', grip: 'right', name: 'B' },
   { button: 'y', grip: 'right', name: 'Y' },
   { button: 'z', grip: 'right', name: 'Z' },
-  { button: 'powerUpRight', grip: 'right', name: 'Power-up button' },
-  { button: 'onOffRight', grip: 'right', name: 'On/off button' },
+  { button: 'powerUpRight', grip: 'right', name: 'Side button (unconfirmed)' },
+  { button: 'onOffRight', grip: 'right', name: 'Power button' },
 ];
 
 export function buttonsOnGrip(grip: Grip): ButtonInfo[] {

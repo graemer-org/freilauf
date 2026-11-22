@@ -10,8 +10,8 @@ import {
 import { ZwiftRideController } from './zwiftRideController';
 
 const IDLE = '2308ffffffff0f';
-// shiftUpRight (0x2000) cleared: ~0x2000 = 0xffffdfff → varint ff bf ff ff 0f
-const SHIFT_UP_RIGHT = '2308ffbfffff0f';
+// shiftDownRight (0x2000) cleared: ~0x2000 = 0xffffdfff → varint ff bf ff ff 0f
+const SHIFT_DOWN_RIGHT = '2308ffbfffff0f';
 
 async function setup(service = ZWIFT_RIDE_SERVICE) {
   const scheduler = new FakeScheduler();
@@ -30,18 +30,18 @@ describe('ZwiftRideController', () => {
       '52 69 64 65 4f 6e',
     ]);
     peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, IDLE);
-    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_UP_RIGHT);
-    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_UP_RIGHT);
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_DOWN_RIGHT);
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_DOWN_RIGHT);
     peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, IDLE);
     expect(events).toEqual([
-      { button: 'shiftUpRight', pressed: true },
-      { button: 'shiftUpRight', pressed: false },
+      { button: 'shiftDownRight', pressed: true },
+      { button: 'shiftDownRight', pressed: false },
     ]);
   });
 
   it('falls back to the legacy service', async () => {
     const { peripheral, events } = await setup(ZWIFT_LEGACY_SERVICE);
-    peripheral.notify(ZWIFT_LEGACY_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_UP_RIGHT);
+    peripheral.notify(ZWIFT_LEGACY_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_DOWN_RIGHT);
     expect(events).toHaveLength(1);
   });
 
@@ -60,11 +60,11 @@ describe('ZwiftRideController', () => {
 
   it('releases held buttons when the link drops and re-handshakes after reconnect', async () => {
     const { peripheral, controller, events, scheduler } = await setup();
-    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_UP_RIGHT);
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, SHIFT_DOWN_RIGHT);
     peripheral.dropLink();
     await flushPromises();
     expect(controller.state).toBe('reconnecting');
-    expect(events.at(-1)).toEqual({ button: 'shiftUpRight', pressed: false });
+    expect(events.at(-1)).toEqual({ button: 'shiftDownRight', pressed: false });
     await scheduler.advance(1000);
     await flushPromises();
     expect(controller.state).toBe('connected');
