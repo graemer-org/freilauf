@@ -91,18 +91,13 @@ export interface ErrorMessage {
 }
 
 export type ServerMessage =
-  | JoinedMessage
-  | PeerJoinedMessage
-  | PeerLeftMessage
-  | RelayedSignalMessage
-  | ErrorMessage;
+  JoinedMessage | PeerJoinedMessage | PeerLeftMessage | RelayedSignalMessage | ErrorMessage;
 
 /** Close code the server uses when a newer connection with the same peerId takes over. */
 export const CLOSE_REPLACED = 4000;
 
 export type ParseResult =
-  | { ok: true; message: ClientMessage }
-  | { ok: false; code: ErrorCode; message: string };
+  { ok: true; message: ClientMessage } | { ok: false; code: ErrorCode; message: string };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -117,7 +112,11 @@ export function parseClientMessage(raw: string): ParseResult {
     return { ok: false, code: 'invalid-message', message: 'Message is not valid JSON.' };
   }
   if (!isRecord(value) || typeof value['type'] !== 'string') {
-    return { ok: false, code: 'invalid-message', message: 'Message must be an object with a type.' };
+    return {
+      ok: false,
+      code: 'invalid-message',
+      message: 'Message must be an object with a type.',
+    };
   }
   switch (value['type']) {
     case 'join': {
