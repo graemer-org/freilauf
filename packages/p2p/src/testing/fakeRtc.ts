@@ -8,10 +8,47 @@ import type {
   PeerConnectionState,
   SessionDescriptionLike,
 } from '../webrtc';
+import type { Timers } from '../runtime';
 
 const later = (fn: () => void): void => {
   void Promise.resolve().then(fn);
 };
+
+/**
+ * Simulated data-channel link quality, applied per message (not to signalling). Defaults: a
+ * perfect, in-order link.
+ */
+export interface FakeLinkConditions {
+  /** Probability (0..1) that a message is dropped. */
+  lossRate?: number;
+  /** Probability (0..1) that a delivered message is delivered a second time. */
+  duplicateRate?: number;
+  /**
+   * Each delivery is delayed by a uniform random 0..maxDelayMs (via `timers`), which reorders
+   * messages. Requires `timers` in the network options; ignored without.
+   */
+  maxDelayMs?: number;
+}
+
+export interface FakeRtcNetworkOptions {
+  /** Seed for the deterministic PRNG behind `conditions` (default 1). */
+  seed?: number;
+  /** Timers used for delayed delivery (pass a FakeClock's timers). */
+  timers?: Timers;
+  conditions?: FakeLinkConditions;
+}
+
+/** Small deterministic PRNG (mulberry32). */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /**
  * In-memory stand-in for WebRTC: every `FakePeerConnection` created from the same network can
@@ -26,6 +63,18 @@ export class FakeRtcNetwork {
   #next = 1;
   /** When set, connections created from now on never complete ICE (to test timeouts). */
   blockConnectivity = false;
+  /** Link quality for data-channel messages; may be changed at any time. */
+  conditions: FakeLinkConditions;
+  /** Data-channel messages dropped by `conditions.lossRate` so far. */
+  dropped = 0;
+  #random: () => number;
+  #timers: Timers | undefined;
+
+  constructor(options: FakeRtcNetworkOptions = {}) {
+    this.#random = mulberry32(options.seed ?? 1);
+    this.#timers = options.timers;
+    this.conditions = { ...options.conditions };
+  }
 
   /** Pass this as `createPeerConnection`. */
   readonly createPeerConnection = (config: PeerConnectionConfig): FakePeerConnection => {
@@ -46,6 +95,25 @@ export class FakeRtcNetwork {
     remote?.simulateFailure();
   }
 
+  /** @internal Delivers one data-channel message according to `conditions`. */
+  deliver(fn: () => void): void {
+    const { lossRate = 0, duplicateRate = 0, maxDelayMs = 0 } = this.conditions;
+    if (lossRate > 0 && this.#random() < lossRate) {
+      this.dropped++;
+      return;
+    }
+    const copies = duplicateRate > 0 && this.#random() < duplicateRate ? 2 : 1;
+    for (let i = 0; i < copies; i++) {
+      const timers = this.#timers;
+      if (timers && maxDelayMs > 0) {
+        const delay = Math.floor(this.#random() * (maxDelayMs + 1));
+        timers.setTimeout(fn, delay);
+      } else {
+        later(fn);
+      }
+    }
+  }
+
   /** Connections that are not closed. */
   get open(): FakePeerConnection[] {
     return this.connections.filter((c) => c.connectionState !== 'closed');
@@ -62,18 +130,23 @@ export class FakeDataChannel implements DataChannelLike {
   peer: FakeDataChannel | null = null;
   readonly sent: string[] = [];
 
-  constructor(label: string, id: number) {
+  #network: FakeRtcNetwork | null;
+
+  constructor(label: string, id: number, network: FakeRtcNetwork | null = null) {
     this.label = label;
     this.id = id;
+    this.#network = network;
   }
 
   send(data: string): void {
     if (this.readyState !== 'open') throw new Error('InvalidStateError: channel not open');
     this.sent.push(data);
     const peer = this.peer;
-    later(() => {
+    const deliver = () => {
       if (peer && peer.readyState === 'open') peer.onmessage?.({ data });
-    });
+    };
+    if (this.#network) this.#network.deliver(deliver);
+    else later(deliver);
   }
 
   close(): void {
@@ -182,7 +255,7 @@ export class FakePeerConnection implements PeerConnectionLike {
     if (!init.negotiated || init.id === undefined) {
       throw new Error('FakePeerConnection only supports negotiated data channels');
     }
-    const channel = new FakeDataChannel(label, init.id);
+    const channel = new FakeDataChannel(label, init.id, this.#network);
     this.channels.push(channel);
     return channel;
   }

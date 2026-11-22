@@ -1,3 +1,12 @@
+import {
+  SharedDocuments,
+  type DocumentEvent,
+  type LocalDocument,
+  type SharedDocument,
+  type ShareResult,
+  type StartAnnouncement,
+  type StartResult,
+} from './documents';
 import { PeerMesh, type MeshPeer } from './mesh';
 import {
   decodeStateMessage,
@@ -39,6 +48,11 @@ export interface GroupRideDeps {
   timers?: Timers;
   /** Default 250 ms (4 Hz). */
   broadcastIntervalMs?: number;
+  /**
+   * Upper bound (UTF-8 bytes) for one outgoing shared-document message; larger documents are
+   * chunked. Default 1100 (one SCTP packet), minimum 200. Mainly for tests.
+   */
+  documentMessageMaxBytes?: number;
 }
 
 /**
@@ -51,6 +65,7 @@ export class GroupRide {
   #signalling: SignallingChannel;
   #mesh: PeerMesh;
   #riders = new RemoteRiders();
+  #docs: SharedDocuments;
   #events = new Events<{ change: undefined }>();
   #now: () => number;
   #timers: Timers;
@@ -104,18 +119,35 @@ export class GroupRide {
       iceServers: deps.iceServers,
       timers: this.#timers,
     });
+    const mesh = this.#mesh;
+    this.#docs = new SharedDocuments({
+      send: (peerId, data) => mesh.send(peerId, data),
+      broadcast: (data) => mesh.broadcast(data),
+      peerName: (peerId) => this.#peerName(peerId),
+      now: this.#now,
+      timers: this.#timers,
+      maxMessageBytes: deps.documentMessageMaxBytes,
+    });
     const changed = () => this.#events.emit('change', undefined);
     this.#unsubscribe = [
       this.#mesh.on('message', ({ peerId, data }) => {
         const state = decodeStateMessage(data);
-        if (state && this.#riders.ingest(peerId, state, this.#now())) changed();
+        if (state) {
+          if (this.#riders.ingest(peerId, state, this.#now())) changed();
+          return;
+        }
+        this.#docs.handleMessage(peerId, data); // ignores anything that is not a doc message
       }),
       this.#mesh.on('peer-left', ({ peerId }) => {
         this.#riders.remove(peerId);
+        this.#docs.removePeer(peerId);
         changed();
       }),
       this.#mesh.on('status', ({ peerId, status }) => {
-        if (status === 'connected') this.#sendTo(peerId);
+        if (status === 'connected') {
+          this.#sendTo(peerId);
+          this.#docs.peerConnected(peerId);
+        }
         changed();
       }),
       signalling.on('state', changed),
@@ -171,17 +203,74 @@ export class GroupRide {
     return this.#events.on('change', listener);
   }
 
+  // ---- shared documents (see docs/p2p.md, "Shared documents") ---------------------------------
+
+  /**
+   * Offers `text` (opaque, e.g. an encoded workout) to the group as the local rider's current
+   * document of `kind` (`[a-z0-9-]`, ≤ 32 chars). Sharing the same kind again replaces it. At most
+   * 16 KiB UTF-8 per document, 4 kinds and 32 KiB in total. `id` is the content hash.
+   */
+  shareDocument(kind: string, text: string): ShareResult {
+    return this.#docs.share(kind, text);
+  }
+
+  /** Withdraws the local document of `kind`. Returns false if there was none. */
+  unshareDocument(kind: string): boolean {
+    return this.#docs.unshare(kind);
+  }
+
+  /** Documents the local rider currently shares. */
+  getLocalDocuments(): LocalDocument[] {
+    return this.#docs.getLocal();
+  }
+
+  /** Complete, hash-verified documents currently shared by the other riders. */
+  getSharedDocuments(): SharedDocument[] {
+    return this.#docs.getShared();
+  }
+
+  /** A remote document fully arrived (`available`) or is gone (`removed`). */
+  onDocument(listener: (event: DocumentEvent) => void): Unsubscribe {
+    return this.#docs.on('document', listener);
+  }
+
+  /**
+   * Tells the others that document `id` of `kind` starts in `inMs` (0 .. 10 min) from now. The
+   * remaining delay is re-sent a few times, so receivers need no synchronised clocks. Not
+   * delivered to the local `onStart` listeners; use the returned `startsAt` (local clock).
+   */
+  announceStart(kind: string, id: string, inMs: number): StartResult {
+    return this.#docs.announceStart(kind, id, inMs);
+  }
+
+  /** Another rider announced a start; fired once per announcement. */
+  onStart(listener: (start: StartAnnouncement) => void): Unsubscribe {
+    return this.#docs.on('start', listener);
+  }
+
+  /** Received start announcements (best estimate, refined by re-sends), until 10 s after. */
+  getStartAnnouncements(): StartAnnouncement[] {
+    return this.#docs.getStarts();
+  }
+
   /** Leaves the room and closes all connections. Idempotent. */
   leave(): void {
     if (this.#left) return;
     this.#left = true;
     this.#timers.clearInterval(this.#interval);
+    this.#docs.close();
     for (const off of this.#unsubscribe) off();
     this.#mesh.close();
     this.#signalling.leave();
     this.#riders.clear();
     this.#events.emit('change', undefined);
     this.#events.clear();
+  }
+
+  #peerName(peerId: string): string {
+    const fromMesh = this.#mesh.getPeers().find((p) => p.peerId === peerId)?.name;
+    const fromState = this.#riders.getRiders(this.#now(), 0).find((r) => r.peerId === peerId)?.name;
+    return sanitizeName(fromMesh || fromState || '') || 'Rider';
   }
 
   #localDistance(now: number): number {

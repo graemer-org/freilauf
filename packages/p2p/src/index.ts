@@ -8,3 +8,4 @@ export * from './signalling/protocol';
 export * from './signalling/channel';
 export * from './signalling/websocket';
 export { defaultTimers, type Timers, type Unsubscribe } from './runtime';
+export * from './documents';
