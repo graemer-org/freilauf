@@ -1,8 +1,12 @@
 name: CI
 
+# Kept cheap on purpose: Linux only, and not on every push to a work branch.
+# Installers are built by release.yml (tags, or a manual run).
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,33 +46,3 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: xvfb-run -a pnpm test:e2e
-
-  # Builds the real installers on every push so packaging breakage shows up
-  # early and a test build can be downloaded from the run page.
-  build:
-    name: Package (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm dist
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: freilauf-${{ matrix.os }}
-          path: |
-            apps/desktop/release/*/*.exe
-            apps/desktop/release/*/*.dmg
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
