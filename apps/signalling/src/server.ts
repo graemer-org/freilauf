@@ -1,4 +1,10 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
+import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import {
   CLOSE_REPLACED,
@@ -13,10 +19,20 @@ import {
 export * from './protocol.ts';
 
 export interface SignallingServerOptions {
-  /** TCP port; 0 picks a free one (see `port` on the result). Default 8787. */
+  /** TCP port; 0 picks a free one (see `port` on the result). Default 8787. Ignored with `server`. */
   port?: number;
-  /** Interface to bind. Default: all interfaces. */
+  /** Interface to bind. Default: all interfaces. Ignored with `server`. */
   host?: string;
+  /**
+   * Attach to an existing HTTP server instead of creating and listening on
+   * one (e.g. a static file server that also serves the web app). The
+   * signalling server then only handles WebSocket upgrades on `path` and
+   * answers upgrades on any other path with 404; plain HTTP requests stay
+   * with the host server. `close()` leaves the host server running.
+   */
+  server?: HttpServer;
+  /** With `server`: the URL path WebSocket clients connect to. Default `/`. */
+  path?: string;
   maxPeersPerRoom?: number;
   /** Larger messages get a `message-too-large` error; > 2x this closes the socket. */
   maxMessageBytes?: number;
@@ -29,7 +45,7 @@ export interface SignallingServerOptions {
 }
 
 export interface SignallingServer {
-  /** The port actually bound (useful with `port: 0`). */
+  /** The port actually bound (useful with `port: 0`); with `server`, that server's port (0 if not listening). */
   readonly port: number;
   /** Number of rooms currently open (for tests / monitoring). */
   roomCount(): number;
@@ -62,16 +78,40 @@ export function createSignallingServer(
   const rooms = new Map<string, Map<string, Client>>();
   const clients = new Set<Client>();
 
-  const http = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.url === '/healthz') {
-      res.writeHead(200, { 'content-type': 'text/plain' }).end('ok\n');
-      return;
-    }
-    res
-      .writeHead(426, { 'content-type': 'text/plain' })
-      .end('Freilauf signalling server: connect via WebSocket.\n');
-  });
-  const wss = new WebSocketServer({ server: http, maxPayload: maxBytes * 2 });
+  const external = options.server ?? null;
+  const http =
+    external ??
+    createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (req.url === '/healthz') {
+        res.writeHead(200, { 'content-type': 'text/plain' }).end('ok\n');
+        return;
+      }
+      res
+        .writeHead(426, { 'content-type': 'text/plain' })
+        .end('Freilauf signalling server: connect via WebSocket.\n');
+    });
+  const wss = external
+    ? new WebSocketServer({ noServer: true, maxPayload: maxBytes * 2 })
+    : new WebSocketServer({ server: http, maxPayload: maxBytes * 2 });
+
+  let onUpgrade: ((req: IncomingMessage, socket: Duplex, head: Buffer) => void) | null = null;
+  if (external) {
+    const path = options.path ?? '/';
+    onUpgrade = (req, socket, head) => {
+      let pathname: string;
+      try {
+        pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      } catch {
+        pathname = '';
+      }
+      if (pathname !== path) {
+        socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    };
+    external.on('upgrade', onUpgrade);
+  }
 
   function send(client: Client, msg: ServerMessage): void {
     if (client.socket.readyState === WebSocket.OPEN) client.socket.send(JSON.stringify(msg));
@@ -230,6 +270,30 @@ export function createSignallingServer(
   }, heartbeatMs);
   heartbeat.unref();
 
+  const closeSockets = (): void => {
+    clearInterval(heartbeat);
+    for (const client of clients) client.socket.terminate();
+  };
+
+  if (external) {
+    const boundPort = (): number => {
+      const address = external.address();
+      return typeof address === 'object' && address ? address.port : 0;
+    };
+    return Promise.resolve({
+      get port() {
+        return boundPort();
+      },
+      roomCount: () => rooms.size,
+      close: () =>
+        new Promise<void>((done) => {
+          if (onUpgrade) external.off('upgrade', onUpgrade);
+          closeSockets();
+          wss.close(() => done());
+        }),
+    });
+  }
+
   return new Promise((resolve, reject) => {
     http.once('error', reject);
     http.listen(options.port ?? 8787, options.host, () => {
@@ -241,8 +305,7 @@ export function createSignallingServer(
         roomCount: () => rooms.size,
         close: () =>
           new Promise<void>((done) => {
-            clearInterval(heartbeat);
-            for (const client of clients) client.socket.terminate();
+            closeSockets();
             wss.close(() => http.close(() => done()));
           }),
       });

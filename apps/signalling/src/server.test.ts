@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import {
@@ -28,8 +29,8 @@ interface TestClient {
   closed: Promise<number>;
 }
 
-async function connect(port: number): Promise<TestClient> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+async function connect(port: number, path = ''): Promise<TestClient> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`);
   sockets.push(socket);
   const inbox: ServerMessage[] = [];
   const waiters: Array<(m: ServerMessage) => void> = [];
@@ -176,5 +177,34 @@ describe('signalling server', () => {
     const { port } = await start();
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     expect(res.status).toBe(200);
+  });
+
+  it('attaches to an existing HTTP server on a path', async () => {
+    const host = createServer((_req, res) => res.writeHead(200).end('static'));
+    await new Promise<void>((resolve) => host.listen(0, '127.0.0.1', resolve));
+    try {
+      server = await createSignallingServer({ server: host, path: '/signal' });
+      const address = host.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      expect(server.port).toBe(port);
+
+      // Plain HTTP still belongs to the host server.
+      expect(await (await fetch(`http://127.0.0.1:${port}/signal`)).text()).toBe('static');
+
+      const a = await connect(port, '/signal');
+      a.send({ type: 'join', room: 'ROOM42', peerId: 'peer-a', name: 'A' });
+      expect(await a.next()).toMatchObject({ type: 'joined', room: 'ROOM42', peers: [] });
+
+      // Upgrades on other paths are refused.
+      await expect(connect(port, '/other')).rejects.toThrow(/404/);
+
+      // close() ends the signalling sockets but leaves the host server up.
+      await server.close();
+      server = null;
+      expect(await a.closed).toBeTypeOf('number');
+      expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => host.close(() => resolve()));
+    }
   });
 });
