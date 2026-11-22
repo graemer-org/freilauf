@@ -41,7 +41,20 @@ const CONTROLLER_BUTTONS: Record<ControllerButton, true> = {
   onOffLeft: true,
   onOffRight: true,
 };
-const SHIFT_ACTIONS: Record<ShiftAction, true> = { shiftUp: true, shiftDown: true, none: true };
+const SHIFT_ACTIONS: Record<ShiftAction, true> = {
+  none: true,
+  shiftUp: true,
+  shiftDown: true,
+  gradientUp: true,
+  gradientDown: true,
+  startPause: true,
+  workoutSkip: true,
+  workoutBack: true,
+  intensityUp: true,
+  intensityDown: true,
+  steerLeft: true,
+  steerRight: true,
+};
 const STAT_IDS: Record<StatId, true> = {
   power: true,
   power3s: true,

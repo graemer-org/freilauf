@@ -112,6 +112,8 @@ export class RideController {
   #gradePercent = 0;
   #lastAutosaveAt = 0;
   #plan: Plan | null = null;
+  #steerButtons = new Set<'steerLeft' | 'steerRight'>();
+  #paddles = { left: 0, right: 0 };
   readonly #log: ScopedLog;
   /** Trainer commands are frequent while shifting: summarise beyond a few per 10 s. */
   readonly #commandLimit: RateLimiter;
@@ -162,7 +164,20 @@ export class RideController {
     } else if (device.kind === 'heartRate') {
       subs.push(device.onHeartRate((bpm) => this.#session.setHeartRate(bpm)));
     } else {
-      subs.push(device.onButton((event) => this.#onButton(event)));
+      subs.push(
+        device.onButton((event) => this.#onButton(event)),
+        device.onPaddle(({ side, value }) => {
+          // A paddle reports how far it is pulled; the sign is not needed.
+          this.#paddles[side] = Math.min(1, Math.abs(value));
+        }),
+        // Nothing stays "held" when the controller goes away.
+        device.onState((state) => {
+          if (state !== 'connected') {
+            this.#steerButtons.clear();
+            this.#paddles = { left: 0, right: 0 };
+          }
+        }),
+      );
     }
   }
 
@@ -341,6 +356,7 @@ export class RideController {
         : null,
       localName: this.#settings.rider.name,
       workout,
+      steering: this.#steering(),
     };
     this.#options.onLive(live);
     return live;
@@ -351,16 +367,53 @@ export class RideController {
   }
 
   #onButton(event: ControllerButtonEvent): void {
-    if (!event.pressed) return;
-    const action = this.#settings.shifting.buttons[event.button];
-    if (action === 'shiftUp') this.shift(1, `button:${event.button}`);
-    else if (action === 'shiftDown') this.shift(-1, `button:${event.button}`);
-    else {
-      this.#log.info(`button ${event.button} pressed: no action assigned`, {
-        button: event.button,
-        action: action ?? 'unmapped',
-      });
+    const action = this.#settings.shifting.buttons[event.button] ?? 'none';
+    // Steering is the only action that lasts as long as the button is held.
+    if (action === 'steerLeft' || action === 'steerRight') {
+      if (event.pressed) this.#steerButtons.add(action);
+      else this.#steerButtons.delete(action);
+      return;
     }
+    if (!event.pressed) return;
+    const source = `button:${event.button}` as const;
+    switch (action) {
+      case 'shiftUp':
+        return this.shift(1, source);
+      case 'shiftDown':
+        return this.shift(-1, source);
+      case 'gradientUp':
+        return this.setGradient(this.#gradePercent + 0.5);
+      case 'gradientDown':
+        return this.setGradient(this.#gradePercent - 0.5);
+      case 'startPause':
+        if (this.#session.state === 'riding') this.pause();
+        else this.start();
+        return;
+      case 'workoutSkip':
+        return this.skipWorkoutSegment();
+      case 'workoutBack':
+        return this.restartWorkoutSegment();
+      case 'intensityUp':
+      case 'intensityDown': {
+        const current = this.#plan?.runner?.currentIntensity ?? 1;
+        this.setWorkoutIntensity(current + (action === 'intensityUp' ? 0.05 : -0.05));
+        return;
+      }
+      case 'none':
+        this.#log.info(`button ${event.button} pressed: no action assigned`, {
+          button: event.button,
+          action: 'unmapped',
+        });
+    }
+  }
+
+  /** −1 (left) … 1 (right): analog paddles if they are used, otherwise held steer buttons. */
+  #steering(): number {
+    const paddles = this.#paddles.right - this.#paddles.left;
+    const buttons =
+      (this.#steerButtons.has('steerRight') ? 1 : 0) - (this.#steerButtons.has('steerLeft') ? 1 : 0);
+    const value = Math.abs(paddles) > 0.05 ? paddles : buttons;
+    return Math.max(-1, Math.min(1, value));
   }
 
   /** Logs a trainer command; beyond 10 per 10 s only a count is kept and reported with the next one. */

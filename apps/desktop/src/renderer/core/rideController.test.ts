@@ -227,4 +227,78 @@ describe('RideController with the simulated rig', () => {
     expect(finished!.ftpTest!.reason).toBeTruthy();
     await rig.dispose();
   });
+  it('buttons can drive gradient, start/pause and steering; paddles steer too', async () => {
+    const { rig, controller, run } = await setup();
+    // Defaults: d-pad up/down = gradient, left/right = steer (held).
+    rig.controller.tap('up');
+    rig.controller.tap('up');
+    rig.controller.tap('down');
+    expect((await run(1)).ride.gradePercent).toBe(0.5);
+
+    rig.controller.press('left');
+    expect((await run(1)).steering).toBe(-1);
+    rig.controller.release('left');
+    expect((await run(1)).steering).toBe(0);
+
+    // Analog paddles win over buttons and give partial steering.
+    rig.controller.setPaddle('right', 0.6);
+    expect((await run(1)).steering).toBeCloseTo(0.6, 6);
+    rig.controller.press('left');
+    expect((await run(1)).steering).toBeCloseTo(0.6, 6);
+    rig.controller.setPaddle('right', 0);
+    expect((await run(1)).steering).toBe(-1);
+
+    // A held button does not stay held when the controller drops.
+    rig.controller.simulateDrop();
+    expect((await run(1)).steering).toBe(0);
+    await rig.dispose();
+  });
+
+  it('start/pause and workout actions can be assigned to buttons', async () => {
+    const rig = createSimulatedRig({ seed: 3 });
+    let live: LiveState | null = null;
+    const controller = new RideController({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        shifting: {
+          ...DEFAULT_SETTINGS.shifting,
+          buttons: { a: 'startPause', b: 'workoutSkip', y: 'intensityUp', z: 'intensityDown' },
+        },
+      },
+      onLive: (state) => (live = state),
+      saveRide: async () => undefined,
+    });
+    controller.setDevice('trainer', rig.trainer);
+    controller.setDevice('controller', rig.controller);
+    const connecting = Promise.all([rig.trainer.connect(), rig.controller.connect()]);
+    await vi.advanceTimersByTimeAsync(1000);
+    await connecting;
+    const run = async (seconds: number) => {
+      for (let i = 0; i < seconds * 4; i++) {
+        await vi.advanceTimersByTimeAsync(250);
+        controller.tick();
+      }
+      return live!;
+    };
+
+    controller.selectWorkout(getBuiltinWorkout('builtin-sweet-spot-3x12')!);
+    rig.controller.tap('a');
+    expect((await run(2)).ride.state).toBe('riding');
+    const label = live!.workout!.label;
+    rig.controller.tap('b');
+    expect((await run(1)).workout!.label).not.toBe(label);
+    rig.controller.tap('y');
+    expect((await run(1)).workout!.intensity).toBeCloseTo(1.05, 6);
+    rig.controller.tap('z');
+    rig.controller.tap('z');
+    expect((await run(1)).workout!.intensity).toBeCloseTo(0.95, 6);
+    rig.controller.tap('a');
+    expect((await run(1)).ride.state).toBe('paused');
+    rig.controller.tap('a');
+    expect((await run(1)).ride.state).toBe('riding');
+    // Unassigned buttons do nothing.
+    rig.controller.tap('powerUpLeft');
+    expect((await run(1)).ride.state).toBe('riding');
+    await rig.dispose();
+  });
 });

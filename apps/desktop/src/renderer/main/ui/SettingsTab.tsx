@@ -1,5 +1,6 @@
 import type { ControllerButton } from '@freilauf/devices';
 import { useId } from 'react';
+import { CONTROLLER_ACTION_LABELS } from '../../../shared/contract';
 import type { OverlayTile, Settings, ShiftAction, StatId } from '../../../shared/contract';
 import { ALL_STATS } from '../../../shared/contract';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
@@ -29,11 +30,7 @@ const OTHER_BUTTONS: readonly { button: ControllerButton; label: string }[] = [
   { button: 'powerUpRight', label: 'Right power-up' },
 ];
 
-const ACTION_LABEL: Record<ShiftAction, string> = {
-  shiftUp: 'Shift up',
-  shiftDown: 'Shift down',
-  none: 'None',
-};
+const ACTION_LABEL = CONTROLLER_ACTION_LABELS;
 
 const SIZE_LABEL: Record<OverlayTile['size'], string> = { s: 'Small', m: 'Medium', l: 'Large' };
 

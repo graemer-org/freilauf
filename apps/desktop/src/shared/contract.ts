@@ -64,7 +64,38 @@ export interface RememberedDevice {
   name: string;
 }
 
-export type ShiftAction = 'shiftUp' | 'shiftDown' | 'none';
+/** What a controller button can do. Steering actions apply while the button is held. */
+export type ControllerAction =
+  | 'shiftUp'
+  | 'shiftDown'
+  | 'gradientUp'
+  | 'gradientDown'
+  | 'startPause'
+  | 'workoutSkip'
+  | 'workoutBack'
+  | 'intensityUp'
+  | 'intensityDown'
+  | 'steerLeft'
+  | 'steerRight'
+  | 'none';
+
+/** @deprecated use ControllerAction */
+export type ShiftAction = ControllerAction;
+
+export const CONTROLLER_ACTION_LABELS: Record<ControllerAction, string> = {
+  none: 'Nothing',
+  shiftUp: 'Shift up (harder)',
+  shiftDown: 'Shift down (easier)',
+  gradientUp: 'Gradient +0.5 %',
+  gradientDown: 'Gradient −0.5 %',
+  startPause: 'Start / pause ride',
+  workoutSkip: 'Workout: skip step',
+  workoutBack: 'Workout: restart step',
+  intensityUp: 'Workout: intensity +5 %',
+  intensityDown: 'Workout: intensity −5 %',
+  steerLeft: 'Steer left (hold)',
+  steerRight: 'Steer right (hold)',
+};
 
 export interface Settings {
   rider: {
@@ -99,6 +130,10 @@ export const DEFAULT_SETTINGS: Settings = {
       shiftDownRight: 'shiftUp',
       shiftUpLeft: 'shiftDown',
       shiftDownLeft: 'shiftDown',
+      up: 'gradientUp',
+      down: 'gradientDown',
+      left: 'steerLeft',
+      right: 'steerRight',
     },
   },
   overlay: {
