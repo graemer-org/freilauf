@@ -37,12 +37,13 @@ const quiet = { log: () => {} };
 const web = webDefaultSettings({ protocol: 'https:', host: 'nas.example:8443' });
 
 describe('BrowserSettingsStore', () => {
-  it('starts from web defaults with the same-origin signalling URL', () => {
+  it('starts from web defaults: public relays, the same-origin server prefilled as the fallback', () => {
     const store = new BrowserSettingsStore({
       storage: new MemoryStorage(),
       defaults: web,
       ...quiet,
     });
+    expect(store.get().group.useOwnServer).toBe(false);
     expect(store.get().group.signallingUrl).toBe('wss://nas.example:8443/signal');
     expect(store.get().rider).toEqual(DEFAULT_SETTINGS.rider);
   });
@@ -83,6 +84,16 @@ describe('BrowserSettingsStore', () => {
     const s = new BrowserSettingsStore({ storage, defaults: web, ...quiet }).get();
     expect(s.rider).toEqual({ ...DEFAULT_SETTINGS.rider, name: 'Bo' });
     expect(s.group.signallingUrl).toBe(web.group.signallingUrl);
+  });
+
+  it('replaces the old desktop default with the same-origin server on load', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ group: { signallingUrl: 'ws://localhost:8787' } }),
+    );
+    const s = new BrowserSettingsStore({ storage, defaults: web, ...quiet }).get();
+    expect(s.group.signallingUrl).toBe('wss://nas.example:8443/signal');
   });
 
   it('forgets a device', () => {

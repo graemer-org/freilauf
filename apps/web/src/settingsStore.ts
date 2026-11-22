@@ -10,6 +10,7 @@ import {
   applySettingsPatch,
   deepMerge,
   forgetDevice,
+  migrateSettings,
   sanitizeSettings,
 } from '../../desktop/src/main/settings';
 import type { DeepPartial, Settings } from '../../desktop/src/shared/contract';
@@ -31,7 +32,11 @@ export interface MessageChannelLike {
   addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
 }
 
-/** Desktop defaults, with the signalling server on the page's own origin. */
+/**
+ * Desktop defaults (group rides over the public relays), with the page's own
+ * `/signal` prefilled as the own-server address, for the advanced "Use my own
+ * signalling server" fallback (the bundled server still serves it).
+ */
 export function webDefaultSettings(location: { protocol: string; host: string }): Settings {
   return deepMerge(DEFAULT_SETTINGS, {
     group: { signallingUrl: defaultSignallingUrl(location) },
@@ -97,7 +102,11 @@ export class BrowserSettingsStore {
     if (text === null) return structuredClone(defaults);
     try {
       const problems: string[] = [];
-      const settings = sanitizeSettings(JSON.parse(text) as unknown, defaults, problems);
+      const settings = sanitizeSettings(
+        migrateSettings(JSON.parse(text) as unknown),
+        defaults,
+        problems,
+      );
       if (problems.length) this.#log(`stored settings partly invalid: ${problems.join('; ')}`);
       return settings;
     } catch {

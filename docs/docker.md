@@ -4,9 +4,12 @@ Besides the desktop app, Freilauf can run as a **web app** served from a
 container — for example on a Synology NAS — and be used from a browser on the
 computer next to the bike.
 
-One container, one port: it serves the web app **and** the group-ride
-signalling WebSocket (at `/signal`). There are no accounts and no server-side
-data: settings and rides live in each browser.
+One container, one port: it serves the web app. There are no accounts and no
+server-side data: settings and rides live in each browser. Group rides need
+nothing from the container — riders find each other through public relay
+servers, like in the desktop app ([group rides](group-rides.md)). The
+container still offers a signalling WebSocket at `/signal` for the advanced
+"own signalling server" fallback.
 
 > **The one thing to know first:** Bluetooth runs in the _browser_, on the
 > computer next to the bike, never on the NAS. Browsers only allow Bluetooth
@@ -86,8 +89,9 @@ is opened over plain HTTP.
      Port **443** (or e.g. 8443)
    - Destination: Protocol **HTTP**, Hostname `localhost`, Port **8080**
    - Tab **Custom Header → Create → WebSocket.** This adds the
-     `Upgrade`/`Connection` headers; **without it group rides fail** (the
-     signalling WebSocket at `/signal` cannot connect).
+     `Upgrade`/`Connection` headers. Only needed if you use this container as
+     your own signalling server (advanced, `/signal`); the default group rides
+     over public relays do not go through the NAS.
    - Save.
 3. **Control Panel → Security → Certificate → Settings**: assign the
    certificate to the `freilauf.yourname.synology.me` reverse-proxy entry.
@@ -97,8 +101,10 @@ is opened over plain HTTP.
 
 The NAS does not need to be reachable from the internet for solo riding — only
 the name must resolve to the NAS on your network and the certificate must be
-valid. For group rides with friends elsewhere, they need to reach the same
-HTTPS address.
+valid. Group rides do not need the NAS to be reachable either: they go over
+public relay servers. Only if you want to use the NAS as your own signalling
+server must friends reach the same HTTPS address from the internet: see
+[Advanced: your own signalling server](group-rides.md#advanced-your-own-signalling-server).
 
 No public name at all? Alternatives, in order of preference:
 
@@ -109,8 +115,9 @@ No public name at all? Alternatives, in order of preference:
   `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add
   `http://<nas-ip>:8080`, relaunch.
 
-Idle WebSockets: the signalling server pings every 30 s, which keeps the
-reverse proxy's default 60 s read timeout from closing the connection.
+Idle WebSockets (own signalling server only): the server pings every 30 s,
+which keeps the reverse proxy's default 60 s read timeout from closing the
+connection.
 
 ## What differs from the desktop app
 
@@ -122,7 +129,7 @@ reverse proxy's default 60 s read timeout from closing the connection.
 | Settings           | JSON file in the user data folder                                                            | `localStorage` of this browser, for this address; synced between open tabs                                                                                                                                                                                                                                                                 |
 | Rides              | JSON files; "Open folder"                                                                    | IndexedDB of this browser, for this address. **"Export .fit" downloads the file.** Clearing site data deletes rides — export the ones you keep.                                                                                                                                                                                            |
 | Browser support    | — (bundled Chromium)                                                                         | Chrome or Edge (desktop, Android). Not Firefox, not Safari, not any browser on iPhone/iPad. Brave: enable `brave://flags/#brave-web-bluetooth-api`.                                                                                                                                                                                        |
-| Group rides        | Signalling server set in Settings                                                            | Defaults to the same address, `wss://<host>/signal` (or `ws://` over plain HTTP); can be changed in Settings                                                                                                                                                                                                                               |
+| Group rides        | No setup: public relay servers; own signalling server as an advanced option                  | The same. For the advanced own-server option the address is prefilled with this container's `wss://<host>/signal` (or `ws://` over plain HTTP)                                                                                                                                                                                             |
 | Simulation         | `pnpm dev:sim`                                                                               | Add `?sim=1` to the address                                                                                                                                                                                                                                                                                                                |
 | Diagnostic log     | always on, `userData/logs/freilauf.log`; `FREILAUF_BLE_LOG=1` adds every raw frame           | always on, in memory for the tab; _Export log_ downloads it; warnings/errors also in the console; `freilaufDiagnostics()` prints the buffer; `?blelog=1` adds raw frames                                                                                                                                                                   |
 
@@ -130,17 +137,27 @@ Browser storage is per **origin** (scheme + host + port): `http://nas:8080`,
 `https://freilauf.example` and `http://localhost:8080` each have their own
 settings and rides, and paired devices must be paired again for each.
 
-## Group rides through the same port
+## Group rides
 
-The container also is a signalling server: create a group in the **Group**
-tab, share the room code, and others join with it — from the web version on
-the same address, or from the desktop app with **Settings → Group →
-Signalling server URL** set to `wss://<your-host>/signal`.
+Group rides in the web version work exactly like in the desktop app: **Create group ride**,
+send the invite link, done — riders find each other through public relay servers run by
+others (an encrypted handshake), then connect directly. The container is not involved, and the
+NAS does not have to be reachable from outside. This path is not yet verified on real
+networks; see [group-rides.md](group-rides.md).
 
-The server only relays the WebRTC handshake; ride data flows directly between
-the riders' browsers (see [p2p.md](p2p.md)). Riders behind restrictive
-(symmetric) NATs may not be able to connect to each other — there is no TURN
-relay.
+**Own signalling server (advanced).** The container still serves a group-ride signalling
+WebSocket at `/signal` on the same address, as a fallback. In the Group tab, open **Advanced:
+use my own signalling server** and switch it on — the address is already filled in with this
+container's `wss://<your-host>/signal`. Rides you create then go through the container, and the
+invite link carries its address, so friends need nothing set up. For friends outside your
+home, that address must be reachable from the internet over HTTPS (port forwarding to the
+reverse proxy above, with WebSocket forwarding on). Details, checks and what that server sees:
+[group-rides.md](group-rides.md#advanced-your-own-signalling-server),
+[apps/signalling/README.md](../apps/signalling/README.md).
+
+Either way ride data flows directly between the riders' browsers. Riders behind restrictive
+(symmetric) NATs may not be able to connect to each other — there is no TURN relay. Technical
+details: [p2p.md](p2p.md).
 
 ## Troubleshooting
 
@@ -161,24 +178,32 @@ Bluetooth), then reload.
 to another app (Zwift, the manufacturer's app, the desktop Freilauf). Close
 it, wake the trainer, and try again.
 
-**Group ride: "connecting" forever or an error** — the WebSocket to `/signal`
-is blocked. With a reverse proxy, make sure the **WebSocket** custom headers
+**Group ride: "No relay server reachable"** — the browser could not reach any
+of the public relay servers (`wss://` connections to hosts such as
+`relay.primal.net`). A network filter, proxy or browser extension may block
+them; try another network. The container plays no part in this.
+
+**Own signalling server: "Your signalling server is not reachable" or "That
+address is not a group-ride server"** — the WebSocket to `/signal` is blocked. **Test connection** in the
+Group tab checks it from the app. With a reverse proxy, make sure the **WebSocket** custom headers
 are enabled on the entry. Check in the browser's DevTools → Network → WS that
 `wss://<host>/signal` connects (101 Switching Protocols). Opening
 `https://<host>/signal` in a tab must answer "connect via WebSocket" (HTTP 426)
 — if you get the app or a 404 instead, the proxy is not forwarding that path.
 
-**Riders join but do not see each other** — the signalling worked but the
-direct WebRTC connection did not (strict firewalls / NAT). Try another
-network for one of the riders.
+**Riders join but do not see each other** ("cannot connect" next to a rider)
+— the signalling worked but the direct WebRTC connection did not (strict
+firewalls / NAT). Try another network for one of the riders. More in the
+[group-ride troubleshooting](group-rides.md#troubleshooting).
 
 **"Pop-out stats" button missing** — Document Picture-in-Picture needs Chrome
 or Edge 116 or newer on desktop.
 
 ## For developers
 
-- `pnpm --filter @freilauf/web dev` — Vite dev server; run `pnpm signalling`
-  alongside it (Vite proxies `/signal` to `localhost:8787`).
+- `pnpm --filter @freilauf/web dev` — Vite dev server. For the own-server
+  fallback run `pnpm signalling` alongside it (Vite proxies `/signal` to
+  `localhost:8787`).
 - `pnpm --filter @freilauf/web build && pnpm --filter @freilauf/web start` —
   the production server locally (`PORT`, `HOST`, `STATIC_DIR`, `LOG_LEVEL`).
 - `pnpm --filter @freilauf/web test:e2e` — after a build, drives the

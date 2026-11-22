@@ -2,3 +2,5 @@
 export * from './fakeRtc';
 export * from './fakeClock';
 export * from './memorySignalling';
+export * from './fakeTrystero';
+export * from './harness';

@@ -1,4 +1,5 @@
-# Freilauf web app + group-ride signalling on one port.
+# Freilauf web app on one port (plus the optional group-ride signalling
+# fallback at /signal; group rides use public relays by default).
 #
 #   docker compose up -d            (uses ../docker-compose.yml)
 #   docker build -f docker/Dockerfile -t freilauf-web .

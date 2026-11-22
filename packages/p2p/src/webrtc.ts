@@ -3,6 +3,10 @@
  * without the DOM lib and can be driven by the in-memory fake in `./testing` under Node.
  * A browser `RTCPeerConnection` satisfies these at runtime; `defaultPeerConnectionFactory` casts.
  */
+import type { IceServerConfig } from './ice';
+
+// Shared with the relay transport (./ice.ts).
+export { DEFAULT_ICE_SERVERS, type IceServerConfig } from './ice';
 
 export interface SessionDescriptionLike {
   type: 'offer' | 'answer' | 'pranswer' | 'rollback';
@@ -14,12 +18,6 @@ export interface IceCandidateLike {
   sdpMid?: string | null;
   sdpMLineIndex?: number | null;
   usernameFragment?: string | null;
-}
-
-export interface IceServerConfig {
-  urls: string | string[];
-  username?: string;
-  credential?: string;
 }
 
 export interface DataChannelInitLike {
@@ -64,12 +62,6 @@ export interface PeerConnectionConfig {
 }
 
 export type PeerConnectionFactory = (config: PeerConnectionConfig) => PeerConnectionLike;
-
-/** Public STUN only. Symmetric NATs need TURN; see docs/p2p.md. */
-export const DEFAULT_ICE_SERVERS: IceServerConfig[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-];
 
 /** Uses the host's global `RTCPeerConnection` (browser / Electron renderer). */
 export const defaultPeerConnectionFactory: PeerConnectionFactory = (config) => {

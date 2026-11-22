@@ -70,6 +70,7 @@
             <li><a href="#friends">Friends</a></li>
             <li><a href="#status">Status</a></li>
             <li><a href="#join">Join in</a></li>
+            <li><a href="#docs">Docs</a></li>
             <li><a href="https://github.com/graemer-org/freilauf">GitHub</a></li>
           </ul>
         </nav>
@@ -90,8 +91,10 @@
             <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf"
               >Get it on GitHub</a
             >
-            <a class="btn" href="https://github.com/graemer-org/freilauf/tree/main/docs"
-              >Read the docs</a
+            <a
+              class="btn"
+              href="https://github.com/graemer-org/freilauf/blob/main/docs/getting-started.md"
+              >Getting started</a
             >
           </div>
           <figure class="hero-shot">
@@ -202,8 +205,8 @@
             <li>
               <h3>In the browser, too</h3>
               <p>
-                A web version runs from Docker Compose, for example on a home server, with the
-                group-ride relay built in.
+                A web version runs from Docker Compose, for example on a home server; group rides
+                work there with no further setup.
               </p>
             </li>
           </ul>
@@ -214,26 +217,41 @@
         <div class="wrap two">
           <div>
             <h2 id="friends-title">Ride with friends</h2>
-            <ol class="steps">
-              <li>One of you creates a group and gets a <strong>six-letter room code</strong>.</li>
+            <ul class="needs" role="list">
               <li>
-                Friends enter the code and connect <strong>directly to each other</strong> over
-                WebRTC. Power, speed and position go from rider to rider.
+                <strong>No setup.</strong> Create a ride in the Group tab and send the invite link;
+                friends paste it into theirs and are in.
               </li>
-              <li>Share a workout and start it together.</li>
-            </ol>
+              <li>
+                <strong>No account, no Freilauf server.</strong> To find each other, the apps pass a
+                short handshake through public relay servers operated by others — encrypted with a
+                secret only the invite carries. Power, speed and position then go directly from
+                rider to rider.
+              </li>
+              <li>
+                <strong>Your own server, if you prefer.</strong> Running your own signalling server
+                is still possible as an advanced option.
+              </li>
+            </ul>
             <p>
-              A <strong>tiny signalling server</strong> only introduces the riders and passes on the
-              connection handshake. It stores nothing and never sees ride data. There is no public
-              one yet: you run it yourself with one command or a small container.
+              Up to eight riders in a room. Share a workout with the group and start it together on
+              a countdown; everyone's targets follow their own FTP.
             </p>
             <p class="note">
-              Connections use public STUN servers and no TURN relay, so some networks (mobile
-              carriers, some company or university networks) will not connect.
+              <strong>Status:</strong> this way of connecting is new and not yet verified on real
+              networks — group rides between different homes have not been tried yet. Connections
+              use public STUN servers and no TURN relay, so some networks (mobile carriers, some
+              company or university networks) will not connect.
             </p>
-            <p>
-              <a href="https://github.com/graemer-org/freilauf/blob/main/docs/p2p.md"
+            <p class="links">
+              <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
                 >How group rides work</a
+              >
+              <span class="small"
+                >·
+                <a href="https://github.com/graemer-org/freilauf/blob/main/docs/p2p.md"
+                  >technical details</a
+                ></span
               >
             </p>
           </div>
@@ -241,13 +259,14 @@
             <svg viewBox="0 0 420 340" role="img" aria-labelledby="dia-title dia-desc">
               <title id="dia-title">Peer-to-peer group ride</title>
               <desc id="dia-desc">
-                Three riders, A, B and C, each connected directly to the other two. A small
-                signalling server above them is linked by dashed lines, used only for the handshake.
+                Three riders, A, B and C, each connected directly to the other two. Public relay
+                servers above them, run by others, are linked by dashed lines and used only for the
+                encrypted handshake.
               </desc>
               <g class="d-sig">
                 <rect x="130" y="10" width="160" height="58" rx="12" />
-                <text x="210" y="34" text-anchor="middle">signalling</text>
-                <text x="210" y="56" text-anchor="middle" class="d-small">handshake only</text>
+                <text x="210" y="34" text-anchor="middle">public relays</text>
+                <text x="210" y="56" text-anchor="middle" class="d-small">run by others</text>
               </g>
               <g class="d-dash">
                 <path d="M160 68 L88 196" />
@@ -273,7 +292,7 @@
                 ride data flows rider to rider
               </text>
               <text x="210" y="318" text-anchor="middle" class="d-cap d-small">
-                up to 8 riders, every one connected to every other
+                the relays only pass on the encrypted handshake
               </text>
             </svg>
           </figure>
@@ -345,7 +364,8 @@
           <p>
             <strong>Not tried on real hardware yet:</strong> ERG workouts on a trainer, the FTP
             tests, steering with the controllers, group rides across real networks (only on one
-            machine so far), the Docker image build, and macOS in general.
+            machine so far; the new zero-setup connection over public relays not at all), the Docker
+            image build, and macOS in general.
           </p>
           <p>
             <strong>Community features</strong> — points, weekly and monthly totals, friends,
@@ -355,6 +375,11 @@
           <p>
             <strong>Installers</strong> will be unsigned at first, so Windows and macOS will warn
             before opening them.
+          </p>
+          <p>
+            <a href="https://github.com/graemer-org/freilauf/blob/main/README.md#status"
+              >The full status, kept up to date</a
+            >
           </p>
         </div>
       </section>
@@ -430,7 +455,12 @@
             >
             <a
               class="btn"
-              href="https://github.com/graemer-org/freilauf/blob/main/docs/diagnostics.md"
+              href="https://github.com/graemer-org/freilauf/blob/main/README.md#reporting-a-hardware-test"
+              >How to report a test</a
+            >
+            <a
+              class="btn"
+              href="https://github.com/graemer-org/freilauf/blob/main/docs/diagnostics.md#where-it-is"
               >Where the log is</a
             >
           </div>
@@ -440,6 +470,84 @@
             the trainer · signed installers · an optional always-on relay peer for leaderboards.
             None of it is built yet.
           </p>
+        </div>
+      </section>
+
+      <section id="docs" class="section" aria-labelledby="docs-title">
+        <div class="wrap">
+          <h2 id="docs-title">Documentation</h2>
+          <div class="doc-cols">
+            <div>
+              <h3>For riders</h3>
+              <ul class="plain" role="list">
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/getting-started.md"
+                    >Getting started</a
+                  >
+                  — build or install, first start, pairing, the overlay, simulation mode
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
+                    >Ride with friends</a
+                  >
+                  — create a ride, send the link; what the relays see
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/docker.md"
+                    >The browser version with Docker</a
+                  >
+                  — on a home server or NAS, with HTTPS
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/diagnostics.md"
+                    >The diagnostic log</a
+                  >
+                  — where it is and what is in it
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/README.md#reporting-a-hardware-test"
+                    >Reporting a hardware test</a
+                  >
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h3>Technical, for developers</h3>
+              <ul class="plain" role="list">
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/p2p.md"
+                    >Group rides: protocol and architecture</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/workouts.md"
+                    >Workouts: model, ERG and .zwo</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/community.md"
+                    >Community: points and peer-to-peer sync</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/protocols/zwift-ride.md"
+                    >Controller protocol notes</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/CONTRIBUTING.md"
+                    >Contributing guide</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/tree/main/docs">All docs</a>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
     </main>

@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../shared/contract';
-import { applySettingsPatch, deepMerge, forgetDevice, sanitizeSettings } from './settings';
+import {
+  applySettingsPatch,
+  deepMerge,
+  forgetDevice,
+  migrateSettings,
+  sanitizeSettings,
+} from './settings';
 import { SettingsStore } from './settingsStore';
 
 describe('deepMerge', () => {
@@ -98,6 +104,83 @@ describe('sanitizeSettings', () => {
   });
 });
 
+describe('group.signallingUrl', () => {
+  it('defaults to none set up and accepts clearing it', () => {
+    expect(DEFAULT_SETTINGS.group.signallingUrl).toBe('');
+    const set = applySettingsPatch(DEFAULT_SETTINGS, {
+      group: { signallingUrl: 'wss://nas.example.org/signal' },
+    });
+    expect(set.group.signallingUrl).toBe('wss://nas.example.org/signal');
+    expect(applySettingsPatch(set, { group: { signallingUrl: '  ' } }).group.signallingUrl).toBe(
+      '',
+    );
+    const problems: string[] = [];
+    expect(
+      applySettingsPatch(set, { group: { signallingUrl: 'https://x' } }, problems).group
+        .signallingUrl,
+    ).toBe('wss://nas.example.org/signal');
+    expect(problems).toHaveLength(1);
+  });
+
+  it('migrates the old localhost default to none, and only on load', () => {
+    const old = { rider: { name: 'Old' }, group: { signallingUrl: 'ws://localhost:8787' } };
+    const migrated = migrateSettings(old);
+    expect(sanitizeSettings(migrated).group.signallingUrl).toBe('');
+    expect(sanitizeSettings(migrated).rider.name).toBe('Old');
+    expect(old.group.signallingUrl).toBe('ws://localhost:8787'); // not mutated
+    // The explicit "server on this computer" choice and real servers stay.
+    for (const url of ['ws://127.0.0.1:8787', 'wss://nas.example.org/signal']) {
+      expect(sanitizeSettings(migrateSettings({ group: { signallingUrl: url } })).group).toEqual({
+        useOwnServer: false,
+        signallingUrl: url,
+        relayUrls: [],
+      });
+    }
+    // In the browser the fallback is the page's own /signal.
+    const web = deepMerge(DEFAULT_SETTINGS, { group: { signallingUrl: 'wss://nas/signal' } });
+    expect(sanitizeSettings(migrateSettings(old), web).group.signallingUrl).toBe(
+      'wss://nas/signal',
+    );
+    for (const raw of [null, 5, {}, { group: 3 }]) expect(migrateSettings(raw)).toBe(raw);
+  });
+});
+
+describe('group: relays by default, own server and relay list as advanced options', () => {
+  it('defaults to the public relays; a stored address alone does not switch to it', () => {
+    expect(DEFAULT_SETTINGS.group).toEqual({
+      useOwnServer: false,
+      signallingUrl: '',
+      relayUrls: [],
+    });
+    // Settings saved before the relay transport existed: still relays.
+    const old = sanitizeSettings({ group: { signallingUrl: 'wss://nas.example.org/signal' } });
+    expect(old.group.useOwnServer).toBe(false);
+    expect(old.group.signallingUrl).toBe('wss://nas.example.org/signal');
+  });
+
+  it('validates the switch and the relay list', () => {
+    const problems: string[] = [];
+    const s = applySettingsPatch(
+      DEFAULT_SETTINGS,
+      {
+        group: {
+          useOwnServer: true,
+          relayUrls: ['wss://r1.example', ' wss://r1.example ', 'https://nope', 'wss://r2.example'],
+        },
+      },
+      problems,
+    );
+    expect(s.group.useOwnServer).toBe(true);
+    expect(s.group.relayUrls).toEqual(['wss://r1.example', 'wss://r2.example']);
+    expect(problems).toEqual(['group.relayUrls[2]: not a ws:// or wss:// URL, dropped']);
+    const bad: string[] = [];
+    const t = applySettingsPatch(s, { group: { useOwnServer: 'yes', relayUrls: 'x' } }, bad);
+    expect(t.group).toEqual(s.group);
+    expect(bad).toHaveLength(2);
+    expect(applySettingsPatch(s, { group: { relayUrls: [] } }).group.relayUrls).toEqual([]);
+  });
+});
+
 describe('applySettingsPatch', () => {
   it('deep-merges, arrays replace', () => {
     const next = applySettingsPatch(DEFAULT_SETTINGS, {
@@ -185,6 +268,12 @@ describe('SettingsStore', () => {
     const store = new SettingsStore(file, { log: () => undefined });
     expect(store.get().rider).toEqual({ ...DEFAULT_SETTINGS.rider, name: 'Hand' });
     expect(store.get().overlay.visible).toBe(false);
+  });
+
+  it('loads a file with the old localhost default as "none set up"', () => {
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, JSON.stringify({ group: { signallingUrl: 'ws://localhost:8787' } }));
+    expect(new SettingsStore(file, { log: () => undefined }).get().group.signallingUrl).toBe('');
   });
 
   it('debounces writes', async () => {

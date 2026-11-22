@@ -1,7 +1,10 @@
 // End-to-end check of the production web build, driven in real (headless)
 // Chromium: static server + /signal WebSocket on one port, a full simulated
 // ride with .fit download, CSP/console cleanliness, the Bluetooth notice in an
-// insecure context, and a two-rider group ride over the bundled signalling.
+// insecure context, the default (public relay) group flow up to where the
+// network is needed — with every relay unreachable, forced by a host-resolver
+// rule — and a two-rider group ride over the bundled signalling (the advanced
+// "own signalling server" fallback).
 //
 // Uses the `playwright` package (not @playwright/test, which is only installed
 // for apps/desktop). Run after building:
@@ -237,6 +240,63 @@ async function insecureNotice(base, port) {
   }
 }
 
+async function relayFlow(base) {
+  // Every host but 127.0.0.1 is unresolvable: the public relays cannot be reached.
+  const browser = await chromium.launch({
+    args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'],
+  });
+  try {
+    const page = await browser.newPage();
+    const raw = await watch(page, 'relays');
+    const thirdParty = [];
+    page.on('request', (r) => {
+      if (!r.url().startsWith(base) && /^https?:/.test(r.url())) thirdParty.push(r.url());
+    });
+    const sockets = [];
+    page.on('websocket', (ws) => sockets.push(ws.url()));
+    await page.goto(`${base}/?sim=1`);
+    await waitForText(page, 'stat-power', /[1-9]\d+/);
+    await page.getByTestId('tab-group').click();
+    check(
+      'group tab: Create right away, with the note on public relays',
+      (await page.getByTestId('group-create').count()) === 1 &&
+        /public relay servers/.test(await text(page, 'group-how')),
+    );
+    const started = Date.now();
+    await page.getByTestId('group-create').click();
+    const link = (await waitForText(page, 'group-link', /^freilauf:\/\/join\//)).trim();
+    check(
+      'the invite carries a secret',
+      /^freilauf:\/\/join\/[A-HJKMNP-Z2-9]{6}#[A-HJKMNP-Z2-9]{12}$/.test(link),
+      link.replace(/#.*/, '#…'),
+    );
+    const failure = await page
+      .getByTestId('group-error')
+      .waitFor({ timeout: 30_000 })
+      .then(() => page.getByTestId('group-error').getAttribute('data-failure'))
+      .catch(() => null);
+    check(
+      'no relay reachable: plain message instead of a hang',
+      failure === 'no-relay' && /No relay server reachable/.test(await text(page, 'group-error')),
+      `${failure} after ${Date.now() - started} ms`,
+    );
+    check(
+      'relay handshake attempts only go to wss:// relays, no other third-party requests',
+      sockets.length > 0 && sockets.every((u) => u.startsWith('wss://')) && thirdParty.length === 0,
+      `${sockets.length} relay sockets; other: ${thirdParty.join(', ') || 'none'}`,
+    );
+    // Chromium logs each refused relay WebSocket as a console error; that is expected here.
+    const problems = raw.filter((p) => !/WebSocket connection to 'wss:\/\/[^']+' failed/.test(p));
+    check(
+      'no other console errors / CSP violations (relay page)',
+      problems.length === 0,
+      problems.join(' | '),
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 async function groupRide(browser, base) {
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
@@ -250,19 +310,37 @@ async function groupRide(browser, base) {
     await waitForText(p, 'stat-power', /[1-9]\d+/);
   }
   await a.getByTestId('tab-group').click();
+  // Advanced fallback: the page's own /signal is prefilled; switching it on uses it.
+  await a.getByTestId('group-advanced').locator(':scope > summary').click();
+  await a.getByTestId('group-own-server-toggle').check();
+  await a.getByTestId('group-own-server-note').waitFor({ timeout: 5_000 });
+  // Served from localhost: the same-origin server is configured, with a "this computer" note.
+  check(
+    'own server (advanced): Create with the same-origin server',
+    (await a.getByTestId('group-create').count()) > 0 &&
+      (await a.getByTestId('group-local-note').count()) === 1,
+  );
   await a.getByTestId('group-create').first().click();
-  const code = (await waitForText(a, 'group-code', /[A-Z0-9]{4,}/)).trim();
+  const code = (await waitForText(a, 'group-code', /[A-Z0-9]{3}-?[A-Z0-9]{3}/)).trim();
+  const link = (await text(a, 'group-link')).trim();
   check(
     'group created over same-origin /signal',
     wsUrls.some((u) => u.endsWith('/signal')),
     `code ${code}, ws ${wsUrls.join(', ')}`,
   );
+  check(
+    'the invite link carries the server',
+    /^freilauf:\/\/join\/[A-Z0-9]{6}\?s=ws/.test(link) &&
+      decodeURIComponent(link.split('?s=')[1] ?? '').endsWith('/signal'),
+    link,
+  );
 
+  // The second rider pastes the whole invite, as a friend would.
   await b.getByTestId('tab-group').click();
-  await b.getByTestId('group-join-input').fill(code.replace(/\s+/g, ''));
+  await b.getByTestId('group-join-input').fill(`Ride with me: ${link}`);
   await b.getByTestId('group-join').click();
-  await waitForText(b, 'group-code', /[A-Z0-9]{4,}/);
-  check('second rider joins with the code', true);
+  await waitForText(b, 'group-code', /[A-Z0-9]{3}-?[A-Z0-9]{3}/);
+  check('second rider joins with the invite link', true);
 
   let seen = false;
   try {
@@ -280,6 +358,14 @@ async function groupRide(browser, base) {
     seen
       ? `A sees: ${(await text(a, 'group-rider')).replace(/\s+/g, ' ')}`
       : 'no remote rider row within 20 s',
+  );
+  const peerStates = await a
+    .getByTestId('group-peer')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('data-state')));
+  check(
+    'the host sees the guest as connected',
+    peerStates.join() === 'connected',
+    peerStates.join(),
   );
   check('no console errors (group pages)', problems.length === 0, problems.join(' | '));
   await ctxA.close();
@@ -367,6 +453,7 @@ const server = await startServer();
 const browser = await chromium.launch();
 try {
   await rideAndExport(browser, server.base);
+  await relayFlow(server.base);
   await groupRide(browser, server.base);
   await pairingWithoutPicker(browser, server.base);
   await insecureNotice(server.base, server.port);

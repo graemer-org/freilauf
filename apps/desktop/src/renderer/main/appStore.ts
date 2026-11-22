@@ -23,6 +23,26 @@ import type {
 } from '../../shared/contract';
 import { WebBluetoothTransport } from '../ble/webBluetoothTransport';
 import { connectErrorNotice } from '../core/connectError';
+import {
+  classifyGroupError,
+  describeGroupFailure,
+  groupNotes,
+  peerViews,
+  relayStateFrom,
+  resolveHostTarget,
+  resolveJoinTarget,
+} from '../core/groupConnection';
+import type {
+  GroupFailure,
+  GroupNote,
+  HostTarget,
+  JoinTarget,
+  PeerSample,
+  PeerView,
+  RelayLinkState,
+} from '../core/groupConnection';
+import { probeSignallingServer } from '../core/signallingProbe';
+import type { ProbeResult } from '../core/signallingProbe';
 import { ControllerCapture } from '../core/controllerCapture';
 import { DeviceMonitor } from '../core/deviceMonitor';
 import { describeError, describeUrl, maskCode } from '../core/logFormat';
@@ -49,9 +69,36 @@ import { utf8Length } from '@freilauf/community';
 
 export type GroupStatus =
   | { phase: 'idle' }
-  | { phase: 'connecting' }
-  | { phase: 'joined'; roomCode: string; joinLink: string }
-  | { phase: 'error'; message: string };
+  | { phase: 'connecting'; action: 'create' | 'join' }
+  | {
+      phase: 'joined';
+      roomCode: string;
+      /** The invite: `freilauf://join/<CODE>#<SECRET>` (own server: `…<CODE>?s=<server>`). */
+      joinLink: string;
+      /** The invite to read out: `ABC-DEF-GHJK-MNPQ-RSTU` (own server: `ABC-DEF`). */
+      inviteCode: string;
+      /** Public relays (default) or an own signalling server. */
+      transport: 'relays' | 'self-hosted';
+      /** Relay rides: whether the relays are reached yet. Own server: always 'ready'. */
+      relay: RelayLinkState;
+      /** Created the room (host) or joined it (guest). */
+      role: 'host' | 'guest';
+      /** Own server only: the server the room lives on (for a guest with a link: the host's). */
+      signallingUrl: string;
+      /** The other riders in the room and whether a direct connection exists. */
+      peers: PeerView[];
+      /** Non-fatal trouble of the last minute (wrong secret, no direct path, …). */
+      notes: GroupNote[];
+    }
+  | {
+      phase: 'error';
+      /** Headline and explanation in one line (notices, logs). */
+      message: string;
+      failure: GroupFailure;
+      /** What was tried, so the Group tab can offer it again. */
+      action: 'create' | 'join';
+      input: string;
+    };
 
 export interface Notice {
   id: number;
@@ -121,11 +168,32 @@ export interface SharedWorkout {
 
 /** Group rides are plugged in from outside so this module stays independent of the p2p wiring. */
 export interface GroupConnector {
-  create(name: string, signallingUrl: string): Promise<JoinedGroup>;
-  join(codeOrLink: string, name: string, signallingUrl: string): Promise<JoinedGroup>;
+  create(name: string, target: HostTarget): Promise<JoinedGroup>;
+  join(target: JoinTarget, name: string): Promise<JoinedGroup>;
 }
+
+/** A line for the diagnostic log from the group's transport. */
+export interface GroupLogLine {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  data?: Record<string, string | number | boolean | null | string[]>;
+}
+
 export interface JoinedGroup extends GroupLink, CommunityGroupLink {
   readonly joinLink: string;
+  readonly inviteCode?: string;
+  /** Relay rides: the invite secret (masked in the log). */
+  readonly secret?: string;
+  readonly transport?: 'relays' | 'self-hosted';
+  /** 'connecting' | 'joined' | 'reconnecting' | 'closed' (see GroupRide.signallingState). */
+  getConnectionState?(): string;
+  /** Codes of non-fatal problems of the last minute (GroupRide.getProblems). */
+  getProblems?(): string[];
+  /** The group ended by itself (e.g. no relay reachable). */
+  onFailure?(listener: (failure: { code: string; message: string }) => void): () => void;
+  onLog?(listener: (line: GroupLogLine) => void): () => void;
+  /** Connection status of every other rider in the room (for the Group tab). */
+  getPeerStatuses?(): PeerSample[];
   leave(): void;
   /** Offers an encoded workout to the group. Returns null, or why it was refused. */
   shareWorkout(text: string): string | null;
@@ -161,6 +229,8 @@ export interface AppOptions {
   storage?: KeyValueStorage | null;
   /** Clock for the community features (tests). Default Date.now. */
   now?: () => number;
+  /** "Test connection" for a signalling server (tests). Default: a real WebSocket probe. */
+  probeSignalling?: (url: string) => Promise<ProbeResult>;
 }
 
 function defaultStorage(): KeyValueStorage | null {
@@ -208,6 +278,9 @@ export class App {
   readonly #groupConnector: GroupConnector | null;
   readonly #library: WorkoutLibrary;
   readonly #createTransport: (api: FreilaufApi) => AppBluetoothTransport;
+  readonly #probeSignalling: (url: string) => Promise<ProbeResult>;
+  /** When each not-yet-connected group peer was first seen (see `peerViews`). */
+  #peerFirstSeen = new Map<string, number>();
   #transport: AppBluetoothTransport | null = null;
   #controller: RideController | null = null;
   #devices: Partial<Record<DeviceKind, AnyDevice>> = {};
@@ -243,6 +316,9 @@ export class App {
     this.#createTransport =
       options.createTransport ??
       ((a) => new WebBluetoothTransport(a.bluetooth, undefined, this.#logger.scope('ble')));
+    this.#probeSignalling =
+      options.probeSignalling ??
+      ((url) => probeSignallingServer(url, { online: () => globalThis.navigator?.onLine }));
     const storage = options.storage === undefined ? defaultStorage() : options.storage;
     this.#library = new WorkoutLibrary(storage);
     this.#community = new CommunityService({
@@ -297,6 +373,7 @@ export class App {
       this.#tickCountdown();
       this.#controller?.tick();
       this.#tickDiagnostics();
+      this.#refreshPeers(); // "connecting" turns into "trouble" after a while
       this.#community.tick(); // no-op until the minute changes
     }, TICK_MS);
     this.store.setState({ ready: true });
@@ -643,18 +720,36 @@ export class App {
 
   // ───────────── group ─────────────
 
+  /** Creates a ride: over the public relays, or on the own server (Settings → Group, advanced). */
   async createGroup(): Promise<void> {
-    await this.#enterGroup((c, name, url) => c.create(name, url));
+    await this.#enterGroup('create', '');
   }
 
+  /** Joins with an invite link or code (relays), an old-style link or a bare code (own server). */
   async joinGroup(codeOrLink: string): Promise<void> {
-    await this.#enterGroup((c, name, url) => c.join(codeOrLink, name, url));
+    await this.#enterGroup('join', codeOrLink);
+  }
+
+  /**
+   * "Test connection": whether a Freilauf signalling server answers at `url`.
+   * Joins no room. The result is also written to the diagnostic log.
+   */
+  async testSignallingServer(url: string): Promise<ProbeResult> {
+    const result = await this.#probeSignalling(url.trim());
+    this.#logger.log(result.kind === 'ok' ? 'info' : 'warn', 'p2p', 'signalling server test', {
+      signalling: describeUrl(url.trim()),
+      result: result.kind,
+      ...(result.kind === 'ok' ? { ms: result.ms } : {}),
+      ...(result.kind === 'wrong-path' ? { suggestion: describeUrl(result.suggestion) } : {}),
+    });
+    return result;
   }
 
   leaveGroup(): void {
     if (this.#group)
       this.#logger.log('info', 'p2p', 'left the group', { peers: this.#groupPeers.size });
     this.#groupPeers = new Set();
+    this.#peerFirstSeen = new Map();
     for (const off of this.#groupCleanup) off();
     this.#groupCleanup = [];
     this.#community.detach();
@@ -750,28 +845,57 @@ export class App {
     this.store.setState({ sharedWorkouts });
   }
 
-  async #enterGroup(
-    enter: (c: GroupConnector, name: string, signallingUrl: string) => Promise<JoinedGroup>,
-  ): Promise<void> {
+  async #enterGroup(action: 'create' | 'join', input: string): Promise<void> {
     const settings = this.store.getState().settings;
     if (!this.#groupConnector || !settings || this.store.getState().group.phase === 'connecting') {
       return;
     }
     this.leaveGroup();
-    this.store.setState({ group: { phase: 'connecting' } });
+    this.store.setState({ group: { phase: 'connecting', action } });
     const started = Date.now();
-    this.#logger.log('info', 'p2p', 'entering a group', {
-      signalling: describeUrl(settings.group.signallingUrl),
-    });
+    let signallingUrl = '';
+    let transport: 'relays' | 'self-hosted' = 'relays';
     try {
-      const group = await enter(
-        this.#groupConnector,
-        settings.rider.name,
-        settings.group.signallingUrl,
-      );
-      this.#logger.setSecrets({ codes: [group.roomCode] });
+      let group: JoinedGroup;
+      if (action === 'create') {
+        const target = resolveHostTarget(settings.group);
+        transport = target.transport;
+        if (target.transport === 'self-hosted') signallingUrl = target.signallingUrl;
+        this.#logger.log('info', 'p2p', 'creating a group', {
+          transport,
+          ...(target.transport === 'self-hosted'
+            ? { signalling: describeUrl(signallingUrl) }
+            : { relays: target.relayUrls.length > 0 ? 'custom' : 'built-in' }),
+        });
+        group = await this.#groupConnector.create(settings.rider.name, target);
+      } else {
+        const target = resolveJoinTarget(input, settings.group);
+        transport = target.transport;
+        this.#logger.setSecrets({
+          codes:
+            target.transport === 'relays' ? [target.roomCode, target.secret] : [target.roomCode],
+        });
+        if (target.transport === 'self-hosted') {
+          signallingUrl = target.signallingUrl;
+          this.#logger.log('info', 'p2p', 'joining a group', {
+            transport,
+            signalling: describeUrl(signallingUrl),
+            serverFrom: target.fromLink ? 'invite link' : 'settings',
+          });
+        } else {
+          this.#logger.log('info', 'p2p', 'joining a group', {
+            transport,
+            relays: target.relayUrls.length > 0 ? 'custom' : 'built-in',
+          });
+        }
+        group = await this.#groupConnector.join(target, settings.rider.name);
+      }
+      this.#logger.setSecrets({
+        codes: group.secret ? [group.roomCode, group.secret] : [group.roomCode],
+      });
       this.#logger.log('info', 'p2p', `joined room ${maskCode(group.roomCode)}`, {
         ms: Date.now() - started,
+        transport: group.transport ?? transport,
       });
       this.#group = group;
       this.#controller?.setGroup(group);
@@ -785,18 +909,154 @@ export class App {
           this.notify('info', `${peerName} started a group countdown.`);
           this.#tickCountdown();
         }),
+        group.onPeersChange(() => this.#refreshPeers()),
+        group.onLog?.((line) => this.#logger.log(line.level, 'p2p', line.message, line.data)) ??
+          (() => {}),
+        group.onFailure?.((failure) => {
+          // Deferred: the group is still unwinding the call that reported it.
+          queueMicrotask(() => {
+            if (this.#group === group) this.#groupFailed(group, action, input, failure, started);
+          });
+        }) ?? (() => {}),
       ];
       this.#refreshSharedWorkouts();
       this.store.setState({
-        group: { phase: 'joined', roomCode: group.roomCode, joinLink: group.joinLink },
+        group: {
+          phase: 'joined',
+          roomCode: group.roomCode,
+          joinLink: group.joinLink,
+          inviteCode: group.inviteCode ?? group.roomCode,
+          transport: group.transport ?? transport,
+          relay:
+            (group.transport ?? transport) === 'relays'
+              ? relayStateFrom(group.getConnectionState?.() ?? 'connecting')
+              : 'ready',
+          role: action === 'create' ? 'host' : 'guest',
+          signallingUrl,
+          peers: [],
+          notes: [],
+        },
       });
+      this.#refreshPeers();
     } catch (err) {
-      this.#logger.log('error', 'p2p', 'could not enter the group', {
-        ms: Date.now() - started,
-        error: describeError(err),
-      });
-      this.store.setState({ group: { phase: 'error', message: errorMessage(err) } });
+      await this.#showGroupError(err, { action, input, started, signallingUrl, transport });
     }
+  }
+
+  /** The group ended by itself after it was entered (relays: e.g. none reachable). */
+  #groupFailed(
+    group: JoinedGroup,
+    action: 'create' | 'join',
+    input: string,
+    failure: { code: string; message: string },
+    started: number,
+  ): void {
+    for (const off of this.#groupCleanup) off();
+    this.#groupCleanup = [];
+    this.#community.detach();
+    group.leave();
+    this.#group = null;
+    this.#controller?.setGroup(null);
+    this.#groupPeers = new Set();
+    this.#peerFirstSeen = new Map();
+    this.store.setState({ sharedWorkouts: [], sharingWorkoutId: null, groupCountdownS: null });
+    void this.#showGroupError(failure, {
+      action,
+      input,
+      started,
+      signallingUrl: '',
+      transport: group.transport ?? 'relays',
+      force: true,
+    });
+  }
+
+  async #showGroupError(
+    err: unknown,
+    ctx: {
+      action: 'create' | 'join';
+      input: string;
+      started: number;
+      signallingUrl: string;
+      transport: 'relays' | 'self-hosted';
+      /** Show it even though the phase is no longer `connecting` (failed after joining). */
+      force?: boolean;
+    },
+  ): Promise<void> {
+    const { action, input, started, signallingUrl, transport } = ctx;
+    const online: boolean | undefined = globalThis.navigator?.onLine;
+    const code = (err as { code?: unknown } | null)?.code;
+    // Own server: every failure to reach it ends in the same timeout; a probe tells them apart.
+    let probe: ProbeResult | null = null;
+    if (
+      transport === 'self-hosted' &&
+      signallingUrl &&
+      (code === 'join-timeout' || code === 'connect-failed') &&
+      online !== false
+    ) {
+      probe = await this.#probeSignalling(signallingUrl).catch(() => null);
+    }
+    const kind = classifyGroupError(err, { online, probe });
+    const failure = describeGroupFailure(kind, { online, probe, signallingUrl, action });
+    this.#logger.log('error', 'p2p', 'could not enter the group', {
+      action,
+      transport,
+      ms: Date.now() - started,
+      signalling: signallingUrl ? describeUrl(signallingUrl) : '(none)',
+      failure: kind,
+      probe: probe?.kind ?? null,
+      online: online ?? null,
+      error: describeError(err),
+    });
+    const phase = this.store.getState().group.phase;
+    if (phase !== 'connecting' && !(ctx.force && phase === 'joined')) return;
+    this.store.setState({
+      group: {
+        phase: 'error',
+        message: `${failure.title}. ${failure.message}`,
+        failure,
+        action,
+        input,
+      },
+    });
+  }
+
+  /** Re-reads the other riders' connection status; only publishes when something changed. */
+  #refreshPeers(): void {
+    const group = this.#group;
+    const current = this.store.getState().group;
+    if (!group || current.phase !== 'joined') return;
+    const peers = group.getPeerStatuses
+      ? peerViews(group.getPeerStatuses(), this.#peerFirstSeen, Date.now())
+      : current.peers;
+    const relay =
+      current.transport === 'relays'
+        ? relayStateFrom(group.getConnectionState?.() ?? 'connecting')
+        : 'ready';
+    const notes = groupNotes(group.getProblems?.() ?? []);
+    if (relay !== current.relay) {
+      this.#logger.log(relay === 'reconnecting' ? 'warn' : 'info', 'p2p', `relays ${relay}`);
+    }
+    for (const n of notes) {
+      if (!current.notes.some((c) => c.code === n.code)) {
+        this.#logger.log('warn', 'p2p', `group note shown: ${n.code}`);
+      }
+    }
+    if (
+      relay === current.relay &&
+      JSON.stringify(peers) === JSON.stringify(current.peers) &&
+      JSON.stringify(notes) === JSON.stringify(current.notes)
+    ) {
+      return;
+    }
+    for (const p of peers) {
+      const before = current.peers.find((q) => q.peerId === p.peerId)?.state;
+      if (before !== p.state && p.state !== 'connecting') {
+        this.#logger.log(p.state === 'trouble' ? 'warn' : 'info', 'p2p', `peer ${p.state}`, {
+          peer: p.peerId.slice(0, 4),
+        });
+      }
+    }
+    this.store.setState({ group: { ...current, peers, relay, notes } });
   }
 
   // ───────────── community (docs/community.md) ─────────────

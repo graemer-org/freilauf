@@ -18,9 +18,25 @@ const nonEmpty =
     return t.length > 0 && t.length <= max ? t : undefined;
   };
 
+/** A ws(s):// address, or nothing (= no own server set up). */
 const validUrl = (text: string): string | undefined => {
   const t = text.trim();
+  if (t === '') return '';
   return t.length <= 500 && /^wss?:\/\/[^\s]+$/i.test(t) ? t : undefined;
+};
+
+/** Relay addresses separated by spaces, commas or new lines. */
+function relayList(text: string): string[] {
+  return text.split(/[\s,]+/).filter((u) => u !== '');
+}
+
+/** Normalised list text, or undefined when an entry is not a ws(s):// address. */
+const validRelayList = (text: string): string | undefined => {
+  const urls = relayList(text);
+  if (urls.length > 16) return undefined;
+  return urls.every((u) => u.length <= 300 && /^wss?:\/\/[^\s/?#]+/i.test(u))
+    ? urls.join(' ')
+    : undefined;
 };
 
 function TileRow({
@@ -329,16 +345,39 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
           Group
         </h2>
         <div className="card rows">
+          <p className="hint settings-note">
+            Group rides need no setup: riders find each other through public relay servers run by
+            others, which only pass on an encrypted handshake. The options below are for special
+            cases.
+          </p>
+          <Toggle
+            label="Use my own signalling server"
+            testId="settings-own-server"
+            checked={group.useOwnServer}
+            hint="Rides you create go through your own server instead of the public relays. Old-style invite links with a server address work either way."
+            onChange={(useOwnServer) => update({ group: { useOwnServer } })}
+          />
           <TextField
-            label="Signalling server URL"
+            label="Own signalling server URL"
             testId="settings-signalling"
             value={group.signallingUrl}
             maxLength={500}
             validate={validUrl}
-            errorText="Enter a ws:// or wss:// URL."
-            hint="All riders in a group must use the same server and be able to reach it."
-            placeholder="wss://example.org"
+            errorText="Enter a ws:// or wss:// address, or leave it empty."
+            hint="Only used with the option above. Friends who join with your invite link use it automatically."
+            placeholder="wss://your-server.example/signal"
             onCommit={(signallingUrl) => update({ group: { signallingUrl } })}
+          />
+          <TextField
+            label="Relay servers (advanced)"
+            testId="settings-relays"
+            value={group.relayUrls.join(' ')}
+            maxLength={4000}
+            validate={validRelayList}
+            errorText="Enter wss:// addresses separated by spaces, or leave it empty for the built-in ones."
+            hint="Empty = the built-in public relays. Everyone in a ride needs at least one relay in common, so only change this together with your friends."
+            placeholder="wss://relay.example.org wss://relay2.example.org"
+            onCommit={(text) => update({ group: { relayUrls: relayList(text) } })}
           />
         </div>
       </section>

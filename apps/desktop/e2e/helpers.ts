@@ -13,13 +13,22 @@ export function electronArgs(): string[] {
   return args;
 }
 
-export async function launch(userData: string): Promise<ElectronApplication> {
+/**
+ * Chromium switch that makes every host name except 127.0.0.1 unresolvable: the public relay
+ * servers are then unreachable, deterministically, whatever network the tests run on.
+ */
+export const NO_RELAYS_SWITCH = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1';
+
+export async function launch(
+  userData: string,
+  extraArgs: string[] = [],
+): Promise<ElectronApplication> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   delete env.ELECTRON_RENDERER_URL;
   delete env.ELECTRON_RUN_AS_NODE;
   return electron.launch({
-    args: electronArgs(),
+    args: [...electronArgs(), ...extraArgs],
     cwd: appDir,
     env: { ...env, FREILAUF_USER_DATA: userData, FREILAUF_SIM: '1' },
   });
@@ -37,4 +46,3 @@ export async function windows(app: ElectronApplication): Promise<{ main: Page; o
   if (!found.main || !found.overlay) throw new Error('expected a main and an overlay window');
   return { main: found.main, overlay: found.overlay };
 }
-

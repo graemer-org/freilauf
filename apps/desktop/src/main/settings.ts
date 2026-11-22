@@ -18,7 +18,7 @@ import type {
   ShiftAction,
   StatId,
 } from '../shared/contract';
-import { DEFAULT_SETTINGS } from '../shared/contract';
+import { DEFAULT_SETTINGS, LEGACY_DEFAULT_SIGNALLING_URL } from '../shared/contract';
 
 // Records (not arrays) so the compiler flags a missing/extra member when the
 // union types change.
@@ -265,9 +265,46 @@ function sanitizeTiles(raw: unknown, fallback: OverlayTile[], problems: Problems
 
 function sanitizeSignallingUrl(raw: unknown, fallback: string, problems: Problems): string {
   if (raw === undefined) return fallback;
+  if (typeof raw === 'string' && raw.trim() === '') return ''; // none set up
   if (typeof raw === 'string' && raw.length <= 500 && /^wss?:\/\/[^\s]+$/i.test(raw)) return raw;
-  problems.push('group.signallingUrl: expected a ws:// or wss:// URL');
+  problems.push('group.signallingUrl: expected a ws:// or wss:// URL or nothing');
   return fallback;
+}
+
+/** Advanced relay list: ws(s):// URLs only, de-duplicated, at most 16. */
+function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems): string[] {
+  if (raw === undefined) return [...fallback];
+  if (!Array.isArray(raw)) {
+    problems.push('group.relayUrls: expected a list of wss:// URLs');
+    return [...fallback];
+  }
+  const out: string[] = [];
+  for (const [i, u] of raw.entries()) {
+    if (typeof u === 'string' && u.length <= 300 && /^wss?:\/\/[^\s/?#]+[^\s]*$/i.test(u.trim())) {
+      if (!out.includes(u.trim())) out.push(u.trim());
+    } else {
+      problems.push(`group.relayUrls[${i}]: not a ws:// or wss:// URL, dropped`);
+    }
+  }
+  return out.slice(0, 16);
+}
+
+/**
+ * Upgrades a stored settings value before `sanitizeSettings` (on load only,
+ * never on updates). Returns a new value; `raw` is not changed.
+ *
+ * - `group.signallingUrl` still at the old default `ws://localhost:8787` is
+ *   dropped, so the current default applies: none set up on the desktop, the
+ *   page's own `/signal` in the browser. That address only ever worked on one
+ *   computer; group rides now explain how to set up a real server instead of
+ *   failing against it. ("Use a server on this computer" stores
+ *   `ws://127.0.0.1:8787`, which this leaves alone.)
+ */
+export function migrateSettings(raw: unknown): unknown {
+  if (!isPlainObject(raw) || !isPlainObject(raw.group)) return raw;
+  if (raw.group.signallingUrl !== LEGACY_DEFAULT_SIGNALLING_URL) return raw;
+  const { signallingUrl: _old, ...group } = raw.group;
+  return { ...raw, group };
 }
 
 /** Builds valid `Settings` from untrusted input; see the module comment. */
@@ -365,11 +402,18 @@ export function sanitizeSettings(
       editHotkey,
     },
     group: {
+      useOwnServer: bool(
+        group.useOwnServer,
+        fallback.group.useOwnServer,
+        'group.useOwnServer',
+        problems,
+      ),
       signallingUrl: sanitizeSignallingUrl(
         group.signallingUrl,
         fallback.group.signallingUrl,
         problems,
       ),
+      relayUrls: sanitizeRelayUrls(group.relayUrls, fallback.group.relayUrls, problems),
     },
   };
 }

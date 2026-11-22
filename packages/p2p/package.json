@@ -11,10 +11,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p ."
   },
-  "dependencies": {},
+  "dependencies": {
+    "trystero": "^0.27.0"
+  },
   "devDependencies": {
     "@freilauf/signalling": "workspace:*",
-    "ws": "^8.23.0",
-    "@types/ws": "^8.5.0"
+    "@types/ws": "^8.5.0",
+    "ws": "^8.23.0"
   }
 }
