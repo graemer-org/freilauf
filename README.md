@@ -84,8 +84,9 @@ only on one machine), building the Docker image, and macOS in general.
 **Community features** — points, weekly and monthly totals, friends with per-contact
 visibility, challenges and leaderboards that sync peer-to-peer without a server: the core
 library is implemented and tested ([`packages/community`](packages/community),
-[design](docs/community.md)); the in-app integration and the UI are in progress. There is no
-Community tab in the app yet.
+[design](docs/community.md)) and wired into the app (rides count towards your totals, group
+sessions sync standings and challenges in the background); the Community tab (UI) is in
+progress, so there is nothing to see in the app yet.
 
 ## Get it
 

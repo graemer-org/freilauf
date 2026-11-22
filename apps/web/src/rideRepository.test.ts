@@ -73,6 +73,14 @@ describe('RideRepository', () => {
     expect(bytes.byteLength).toBeGreaterThan(30 * 10);
   });
 
+  it('loads one full ride, null when unknown', async () => {
+    const { repo } = setup();
+    const r = ride('a', 1_000_000, 12);
+    await repo.save(r, true);
+    expect(await repo.load('a')).toEqual(r);
+    expect(await repo.load('nope')).toBeNull();
+  });
+
   it('fails export for unknown rides', async () => {
     const { repo } = setup();
     await expect(repo.exportFit('nope')).rejects.toThrow(/not found/);

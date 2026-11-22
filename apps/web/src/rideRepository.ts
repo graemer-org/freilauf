@@ -90,6 +90,12 @@ export class RideRepository {
     );
   }
 
+  /** The recorded ride, or null when there is none (or it does not validate). */
+  async load(id: string): Promise<RecordedRide | null> {
+    const record = await this.#store.get(id);
+    return record && isRecordedRide(record.ride) ? record.ride : null;
+  }
+
   /** Encodes the ride and starts a download. Returns the downloaded file name. */
   async exportFit(id: string): Promise<string | null> {
     const record = await this.#store.get(id);

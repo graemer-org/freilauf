@@ -196,6 +196,7 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
 
     rides: {
       list: () => deps.rides.list(),
+      load: (id) => deps.rides.load(id),
       save: (ride, finished) => deps.rides.save(ride, finished),
       exportFit: (id) => deps.rides.exportFit(id),
       delete: (id) => deps.rides.delete(id),

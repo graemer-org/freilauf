@@ -284,6 +284,11 @@ export interface FreilaufApi {
 
   rides: {
     list(): Promise<RideListItem[]>;
+    /**
+     * The full recorded ride (all samples), or null if there is none with that id or its file
+     * is unreadable. Used to compute community facts for rides saved before that feature.
+     */
+    load(id: string): Promise<RecordedRide | null>;
     /** Writes the ride JSON (atomic). Called periodically while riding and once at the end. */
     save(ride: RecordedRide, finished: boolean): Promise<void>;
     /** Encodes and writes the .fit next to the JSON, then offers "Save as…". Returns the path or null. */

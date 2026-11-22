@@ -232,6 +232,7 @@ announceStart(kind: string, id: string, inMs: number): StartResult; // { ok: tru
 onStart(listener: (s: StartAnnouncement) => void): Unsubscribe;
 //   { announceId, peerId, peerName, kind, id, startsInMs, startsAt } (local clock)
 getStartAnnouncements(): StartAnnouncement[]; // refined estimates, kept until 10 s after the start
+onPeerJoined(listener: (peer: { peerId; name }) => void): Unsubscribe; // synchronous, see below
 ```
 
 Share rejections: `invalid-kind`, `invalid-text`, `empty`, `too-large`, `too-many-documents`,
@@ -240,6 +241,21 @@ nothing. Re-sharing identical text is a no-op; different text replaces the docum
 kind. Receivers only ever expose complete, hash-verified documents; when a sharer replaces a
 document, the old one is removed at once (`reason: 'replaced'`) and the new one becomes
 `available` when it has arrived.
+
+### Peer-join ordering
+
+`onPeerJoined` fires **synchronously** from the event in which the mesh first learns of a peer
+(signalling `peers` / `peer-joined`, or a first signal from an unknown member) — before that
+peer's data channel can exist, because opening it needs further signalling round-trips. Since a
+sharer only ever answers `doc-req` for its **current** id of a kind (stale ids are ignored, and
+chunks are sent only to the requesting peer, never broadcast), a document replaced or withdrawn
+inside the listener can never reach the newcomer: the first `doc-list` it gets is the one sent
+when its channel opens, listing the replaced documents. Apps that publish per-audience content
+(the community sync, see `docs/community.md`) narrow what they share in this listener.
+`groupPeerJoin.test.ts` checks this for both offer directions with delays, duplicates, loss and
+reordering, and while another peer is still fetching the old version; a control case shows the
+newcomer does get the old document without the reshare. (`onChange` also fires synchronously
+for the same event, via the `connecting` status, but `onPeerJoined` is the documented contract.)
 
 ### Delivery algorithm
 

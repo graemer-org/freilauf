@@ -120,6 +120,18 @@ describe('RideStore', () => {
     expect(fs.readdirSync(store.dir)).toEqual(['r.json']);
   });
 
+  it('loads one full ride, null for missing or corrupt files', async () => {
+    const r = ride('full', 1_000_000, 11);
+    await store.save(r, true);
+    expect(await store.loadRide('full')).toEqual(r);
+    expect(await store.loadRide('missing')).toBeNull();
+    fs.writeFileSync(path.join(store.dir, 'broken.json'), '{nope');
+    const log = vi.fn();
+    expect(await new RideStore(store.dir, log).loadRide('broken')).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(await store.loadRide('../escape')).toBeNull();
+  });
+
   it('rejects invalid rides', async () => {
     await expect(store.save({ id: 'x' } as unknown as RecordedRide, true)).rejects.toThrow();
   });

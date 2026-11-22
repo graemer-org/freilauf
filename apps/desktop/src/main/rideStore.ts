@@ -95,6 +95,18 @@ export class RideStore {
     };
   }
 
+  /** The recorded ride, or null when there is no (readable) file for `id`. Never throws. */
+  async loadRide(id: string): Promise<RecordedRide | null> {
+    try {
+      return (await this.load(id)).ride;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.log(`could not load ride ${String(id).slice(0, 100)}: ${String(e)}`);
+      }
+      return null;
+    }
+  }
+
   async list(): Promise<RideListItem[]> {
     let names: string[];
     try {

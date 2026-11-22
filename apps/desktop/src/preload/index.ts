@@ -266,6 +266,7 @@ const api: FreilaufApi = {
 
   rides: {
     list: () => ipcRenderer.invoke(IPC.ridesList) as Promise<RideListItem[]>,
+    load: (id) => ipcRenderer.invoke(IPC.ridesLoad, id) as ReturnType<FreilaufApi['rides']['load']>,
     save: (ride, finished) => ipcRenderer.invoke(IPC.ridesSave, ride, finished) as Promise<void>,
     exportFit: (id) => ipcRenderer.invoke(IPC.ridesExportFit, id) as Promise<string | null>,
     delete: (id) => ipcRenderer.invoke(IPC.ridesDelete, id) as Promise<void>,

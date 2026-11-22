@@ -214,6 +214,23 @@ describe('validateRideFacts', () => {
     expect(validateRideFacts([])).toBeNull();
   });
 
+  it('marks backfilled facts and keeps the marker through storage', () => {
+    const b = rideFacts({
+      rideId: 'old',
+      startedAt: T0,
+      samples: samples({ id: 'old', start: T0, seconds: 600, powerW: 200 }),
+      ftpW: 250,
+      utcOffsetMin: CET,
+      backfilled: true,
+    });
+    expect(b?.backfilled).toBe(true);
+    expect(b?.groupRide).toBe(false);
+    expect(validateRideFacts(JSON.parse(JSON.stringify(b)))).toEqual(b);
+    expect('backfilled' in f).toBe(false);
+    expect(validateRideFacts({ ...JSON.parse(JSON.stringify(f)), backfilled: 'yes' })).toBeNull();
+    expect(validateRideFacts({ ...JSON.parse(JSON.stringify(f)), backfilled: false })).toBeNull();
+  });
+
   it('keeps facts of a later scoring version as they are', () => {
     const j = { ...JSON.parse(JSON.stringify(f)), scoringVersion: 2, points: 77 };
     expect(validateRideFacts(j)?.points).toBe(77);

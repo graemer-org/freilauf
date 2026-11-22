@@ -10,6 +10,7 @@ import { BleHeartRateSensor, FtmsTrainer, ZwiftRideController } from '@freilauf/
 import type { SimulatedRig } from '@freilauf/sim';
 import { createSimulatedRig } from '@freilauf/sim';
 import { createStore } from 'zustand/vanilla';
+import type { StoreApi } from 'zustand/vanilla';
 import type {
   DeepPartial,
   FtpTestOutcome,
@@ -33,6 +34,17 @@ import type { GroupLink } from '../core/rideController';
 import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
 import type { ImportResult, KeyValueStorage, WorkoutEntry } from '../core/workoutLibrary';
+import { CommunityService } from '../core/communityService';
+import type {
+  CommunityActionResult,
+  CommunityGroupLink,
+  CommunityView,
+  CreateChallengeInput,
+  LeaderboardView,
+  LeaderboardViewQuery,
+} from '../core/communityService';
+import type { Visibility } from '@freilauf/community';
+import { utf8Length } from '@freilauf/community';
 
 export type GroupStatus =
   | { phase: 'idle' }
@@ -73,6 +85,12 @@ export interface AppState {
   sharingWorkoutId: string | null;
   /** Seconds until a synchronised group start; null when none is pending. */
   groupCountdownS: number | null;
+  /**
+   * Points, totals, friends, leaderboard and challenges (docs/community.md). Replaced only when
+   * something visible changed — never by the 4 Hz live tick — and sub-objects keep their
+   * identity while unchanged, so selectors like `s => s.community.leaderboard` are cheap.
+   */
+  community: CommunityView;
 }
 
 export interface SharedWorkout {
@@ -86,7 +104,7 @@ export interface GroupConnector {
   create(name: string, signallingUrl: string): Promise<JoinedGroup>;
   join(codeOrLink: string, name: string, signallingUrl: string): Promise<JoinedGroup>;
 }
-export interface JoinedGroup extends GroupLink {
+export interface JoinedGroup extends GroupLink, CommunityGroupLink {
   readonly joinLink: string;
   leave(): void;
   /** Offers an encoded workout to the group. Returns null, or why it was refused. */
@@ -119,8 +137,10 @@ export interface AppBluetoothTransport extends BleTransport {
 export interface AppOptions {
   /** Replaces the default `WebBluetoothTransport` (not used in sim mode). */
   createTransport?: (api: FreilaufApi) => AppBluetoothTransport;
-  /** Where imported workouts are kept. Defaults to localStorage; null = memory only. */
+  /** Where imported workouts and community data are kept. Defaults to localStorage; null = memory only. */
   storage?: KeyValueStorage | null;
+  /** Clock for the community features (tests). Default Date.now. */
+  now?: () => number;
 }
 
 function defaultStorage(): KeyValueStorage | null {
@@ -140,7 +160,9 @@ type AnyDevice = Trainer | HeartRateSensor | Controller;
  * and the group, and exposes plain state for React through a zustand store.
  */
 export class App {
-  readonly store = createStore<AppState>(() => ({
+  readonly #community: CommunityService;
+  readonly store: StoreApi<AppState>;
+  static #initialState = (community: CommunityView): AppState => ({
     ready: false,
     simMode: false,
     settings: null,
@@ -158,7 +180,8 @@ export class App {
     sharedWorkouts: [],
     sharingWorkoutId: null,
     groupCountdownS: null,
-  }));
+    community,
+  });
 
   readonly #api: FreilaufApi;
   readonly #groupConnector: GroupConnector | null;
@@ -182,6 +205,8 @@ export class App {
   #capture: ControllerCapture | null = null;
   #lastCaptureFlush = 0;
   #groupPeers = new Set<string>();
+  /** At least one other rider was in the group at some point during the current ride. */
+  #rideHadCompany = false;
 
   constructor(
     api: FreilaufApi,
@@ -196,10 +221,17 @@ export class App {
     this.#createTransport =
       options.createTransport ??
       ((a) => new WebBluetoothTransport(a.bluetooth, undefined, this.#logger.scope('ble')));
-    this.#library = new WorkoutLibrary(
-      options.storage === undefined ? defaultStorage() : options.storage,
-    );
+    const storage = options.storage === undefined ? defaultStorage() : options.storage;
+    this.#library = new WorkoutLibrary(storage);
+    this.#community = new CommunityService({
+      storage,
+      now: options.now,
+      log: this.#logger.scope('community'),
+      onNotice: (kind, message) => this.notify(kind, message),
+    });
+    this.store = createStore<AppState>(() => App.#initialState(this.#community.view));
     this.store.setState({ workouts: this.#library.list() });
+    this.#community.subscribe((community) => this.store.setState({ community }));
   }
 
   async init(): Promise<void> {
@@ -207,6 +239,7 @@ export class App {
     const simMode = this.#api.simMode;
     this.store.setState({ settings, simMode });
     this.#logger.setSecrets({ riderName: settings.rider.name });
+    this.#community.setDisplayName(settings.rider.name);
     this.#logger.log('info', 'renderer', 'main window app starting', {
       simMode,
       userAgent: globalThis.navigator?.userAgent,
@@ -228,6 +261,7 @@ export class App {
       this.#api.settings.onChange((next) => {
         this.#logger.setSecrets({ riderName: next.rider.name });
         this.store.setState({ settings: next });
+        this.#community.setDisplayName(next.rider.name);
         this.#controller?.updateSettings(next);
       }),
       this.#api.overlay.onEditMode((overlayEditMode) => this.store.setState({ overlayEditMode })),
@@ -241,9 +275,16 @@ export class App {
       this.#tickCountdown();
       this.#controller?.tick();
       this.#tickDiagnostics();
+      this.#community.tick(); // no-op until the minute changes
     }, TICK_MS);
     this.store.setState({ ready: true });
-    void this.refreshRides();
+    void this.refreshRides().then(() =>
+      // Once per installation: rides saved before the community features existed.
+      this.#community.backfill(
+        { list: () => this.#api.rides.list(), load: (id) => this.#api.rides.load(id) },
+        settings.rider.ftpW,
+      ),
+    );
 
     if (simMode) {
       this.#startSimulation();
@@ -259,6 +300,7 @@ export class App {
     this.#deviceMonitor.dispose();
     if (this.#timer) clearInterval(this.#timer);
     for (const off of this.#cleanup) off();
+    this.#community.dispose(); // withdraws its documents and writes pending changes
     this.#group?.leave();
     this.#controller?.dispose();
     void this.#rig?.dispose();
@@ -441,6 +483,7 @@ export class App {
   // ───────────── ride ─────────────
 
   startRide(): void {
+    if (this.#controller?.rideState === 'idle') this.#rideHadCompany = false;
     this.#controller?.start();
   }
 
@@ -450,7 +493,12 @@ export class App {
 
   async finishRide(): Promise<void> {
     try {
+      const groupRide = this.#rideHadCompany || this.#groupPeers.size > 0;
+      const ftpW = this.store.getState().settings?.rider.ftpW ?? 0;
       const finished = await this.#controller?.finish();
+      this.#rideHadCompany = false;
+      // The FTP in force during the ride (an FTP test result is only accepted afterwards).
+      if (finished) this.#community.recordRide(finished.ride, { ftpW, groupRide });
       this.store.setState({ selectedWorkoutId: null, ftpOutcome: finished?.ftpTest ?? null });
       if (finished) this.notify('info', 'Ride saved.');
       else this.notify('info', 'Ride was shorter than 10 seconds and was not saved.');
@@ -544,9 +592,14 @@ export class App {
   }
 
   async deleteRide(id: string): Promise<void> {
-    await this.#api.rides
-      .delete(id)
-      .catch((err: unknown) => this.notify('error', errorMessage(err)));
+    const deleted = await this.#api.rides.delete(id).then(
+      () => true,
+      (err: unknown) => {
+        this.notify('error', errorMessage(err));
+        return false;
+      },
+    );
+    if (deleted) this.#community.removeRide(id);
     await this.refreshRides();
   }
 
@@ -569,6 +622,7 @@ export class App {
     this.#groupPeers = new Set();
     for (const off of this.#groupCleanup) off();
     this.#groupCleanup = [];
+    this.#community.detach();
     this.#group?.leave();
     this.#group = null;
     this.#startAt = null;
@@ -585,13 +639,17 @@ export class App {
   shareWorkout(id: string): void {
     const exported = this.#library.export(id, 'freilauf');
     if (!this.#group || !exported) return;
+    // The workout takes precedence over community extras (challenges, relays) in the budget.
+    this.#community.makeRoom(utf8Length(exported.text));
     const refused = this.#group.shareWorkout(exported.text);
+    this.#community.resync();
     if (refused) this.notify('error', `Could not share the workout (${refused}).`);
     else this.store.setState({ sharingWorkoutId: id });
   }
 
   stopSharingWorkout(): void {
     this.#group?.stopSharingWorkout();
+    this.#community.resync();
     this.store.setState({ sharingWorkoutId: null });
   }
 
@@ -678,6 +736,7 @@ export class App {
       });
       this.#group = group;
       this.#controller?.setGroup(group);
+      this.#community.attach(group);
       this.#groupCleanup = [
         group.onSharedWorkoutsChange(() => this.#refreshSharedWorkouts()),
         group.onStart((startsInMs, peerName) => {
@@ -699,6 +758,69 @@ export class App {
       });
       this.store.setState({ group: { phase: 'error', message: errorMessage(err) } });
     }
+  }
+
+  // ───────────── community (docs/community.md) ─────────────
+  // State: `state.community` (CommunityView). Every action re-publishes to the group at once
+  // and returns `{ ok: true }` or `{ ok: false, error }` with a message for the rider.
+
+  /** Chooses the leaderboard shown in `state.community.leaderboard` (remembered). */
+  setLeaderboardView(query: Partial<LeaderboardViewQuery>): CommunityActionResult {
+    return this.#community.setLeaderboardView(query);
+  }
+
+  /** Any other leaderboard, computed on demand (e.g. a challenge's participants). */
+  communityLeaderboard(query: LeaderboardViewQuery): LeaderboardView {
+    return this.#community.leaderboard(query);
+  }
+
+  /** What a friend may see of me: 'none' | 'totals' | 'everything'. */
+  setContactVisibility(riderId: string, visibility: Visibility): CommunityActionResult {
+    return this.#community.setContactVisibility(riderId, visibility);
+  }
+
+  /** Local name for a friend; null (or '') shows their own name again. */
+  renameContact(riderId: string, alias: string | null): CommunityActionResult {
+    return this.#community.renameContact(riderId, alias);
+  }
+
+  /** Removes a friend — which blocks them (see docs/community.md). */
+  removeContact(riderId: string): CommunityActionResult {
+    return this.#community.removeContact(riderId);
+  }
+
+  unblockContact(riderId: string): CommunityActionResult {
+    return this.#community.unblockContact(riderId);
+  }
+
+  /** Visibility new friends get on the first shared session (default 'totals'). */
+  setDefaultVisibility(visibility: Visibility): void {
+    this.#community.setDefaultVisibility(visibility);
+  }
+
+  /** "Friends of friends may see my totals" (default off). */
+  setFriendsOfFriends(allowed: boolean): void {
+    this.#community.setFriendsOfFriends(allowed);
+  }
+
+  createChallenge(input: CreateChallengeInput): CommunityActionResult {
+    return this.#community.createChallenge(input);
+  }
+
+  inviteToChallenge(challengeId: string, riderId: string): CommunityActionResult {
+    return this.#community.inviteToChallenge(challengeId, riderId);
+  }
+
+  respondToChallenge(challengeId: string, response: 'accepted' | 'declined'): CommunityActionResult {
+    return this.#community.respondToChallenge(challengeId, response);
+  }
+
+  leaveChallenge(challengeId: string): CommunityActionResult {
+    return this.#community.leaveChallenge(challengeId);
+  }
+
+  cancelChallenge(challengeId: string): CommunityActionResult {
+    return this.#community.cancelChallenge(challengeId);
   }
 
   // ───────────── settings / misc ─────────────
@@ -790,6 +912,9 @@ export class App {
           }
         }
         this.#groupPeers = ids;
+        if (ids.size > 0 && this.#controller && this.#controller.rideState !== 'idle') {
+          this.#rideHadCompany = true;
+        }
       }
     } catch {
       // diagnostics must never break the tick

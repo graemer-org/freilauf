@@ -27,6 +27,13 @@ import { WebSocketSignalling, type WebSocketFactory } from './signalling/websock
 import type { GroupRider, RiderState } from './types';
 import type { IceServerConfig, PeerConnectionFactory } from './webrtc';
 
+/** A peer that just entered the room (see `GroupRide.onPeerJoined`). */
+export interface PeerJoined {
+  peerId: string;
+  /** Display name from signalling (sanitised; may be 'Rider' until known). */
+  name: string;
+}
+
 /** What the app feeds in; name and timestamp are added by GroupRide. */
 export type LocalRiderState = Omit<RiderState, 'name' | 'sentAt'>;
 
@@ -66,7 +73,7 @@ export class GroupRide {
   #mesh: PeerMesh;
   #riders = new RemoteRiders();
   #docs: SharedDocuments;
-  #events = new Events<{ change: undefined }>();
+  #events = new Events<{ change: undefined; 'peer-joined': PeerJoined }>();
   #now: () => number;
   #timers: Timers;
   #interval: unknown;
@@ -130,6 +137,11 @@ export class GroupRide {
     });
     const changed = () => this.#events.emit('change', undefined);
     this.#unsubscribe = [
+      // Synchronous, and strictly before the data channel to that peer can exist (see
+      // onPeerJoined): the mesh emits this when it first learns of the peer.
+      this.#mesh.on('peer-joined', ({ peerId, name }) => {
+        this.#events.emit('peer-joined', { peerId, name: sanitizeName(name) || 'Rider' });
+      }),
       this.#mesh.on('message', ({ peerId, data }) => {
         const state = decodeStateMessage(data);
         if (state) {
@@ -201,6 +213,19 @@ export class GroupRide {
   /** Called when riders, connections or the signalling state change. */
   onChange(listener: () => void): Unsubscribe {
     return this.#events.on('change', listener);
+  }
+
+  /**
+   * Called **synchronously** when a peer enters the room (or is first heard of), before any
+   * data-channel message can be exchanged with it: the channel needs further signalling
+   * round-trips, and this fires from the same event that creates the mesh's record of the peer.
+   * Because a document request is only ever answered for the *current* document of a kind,
+   * documents replaced or withdrawn inside this listener can never reach the newcomer. Use it
+   * for anything that must change before a new peer is served (docs/p2p.md, "Peer-join
+   * ordering"). Also followed by an `onChange` notification.
+   */
+  onPeerJoined(listener: (peer: PeerJoined) => void): Unsubscribe {
+    return this.#events.on('peer-joined', listener);
   }
 
   // ---- shared documents (see docs/p2p.md, "Shared documents") ---------------------------------

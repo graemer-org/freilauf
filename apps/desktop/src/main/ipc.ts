@@ -158,6 +158,10 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
 
   // rides
   handle(IPC.ridesList, mainOnly, () => deps.rides.list());
+  handle(IPC.ridesLoad, mainOnly, (_who, id) => {
+    if (!isShortString(id)) bad(IPC.ridesLoad);
+    return deps.rides.loadRide(id);
+  });
   handle(IPC.ridesSave, mainOnly, async (_who, ride, finished) => {
     if (!isRecordedRide(ride) || typeof finished !== 'boolean') bad(IPC.ridesSave);
     await deps.rides.save(ride, finished);

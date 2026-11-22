@@ -29,6 +29,7 @@ export const IPC = {
   btCancelPicker: 'bt:cancel-picker',
 
   ridesList: 'rides:list',
+  ridesLoad: 'rides:load',
   ridesSave: 'rides:save',
   ridesExportFit: 'rides:export-fit',
   ridesDelete: 'rides:delete',

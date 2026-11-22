@@ -100,6 +100,12 @@ export interface RideFactsInput {
   utcOffsetMin: number;
   /** True if the ride was ridden in a group session with at least one other rider. */
   groupRide?: boolean;
+  /**
+   * True when the facts are computed after the fact for a ride recorded before the community
+   * features existed: `ftpW` is then the FTP at backfill time (an approximation) and
+   * `groupRide` is unknown (false).
+   */
+  backfilled?: boolean;
 }
 
 /** Immutable summary of one ride. All quantities are rounded integers unless noted. */
@@ -126,6 +132,8 @@ export interface RideFacts {
   readonly avgSpeedMps: number;
   readonly best: Readonly<BestEfforts>;
   readonly groupRide: boolean;
+  /** Present (true) only for facts backfilled later, see `RideFactsInput.backfilled`. */
+  readonly backfilled?: true;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -269,6 +277,7 @@ export function rideFacts(input: RideFactsInput): RideFacts | null {
     avgSpeedMps: moving > 0 ? round(distanceM / movingS, 2) : 0,
     best: Object.freeze(best),
     groupRide: input.groupRide === true,
+    ...(input.backfilled === true ? { backfilled: true as const } : {}),
   });
 }
 
@@ -311,6 +320,7 @@ export function validateRideFacts(v: unknown): RideFacts | null {
   if (ftp !== null && !isIntIn(ftp, FTP_MIN_W, FTP_MAX_W)) return null;
   if (!fin(v.avgSpeedMps) || v.avgSpeedMps < 0 || v.avgSpeedMps > MAX_SPEED_MPS) return null;
   if (typeof v.groupRide !== 'boolean') return null;
+  if (v.backfilled !== undefined && v.backfilled !== true) return null;
   if (!isRecord(v.best)) return null;
   const best = emptyBestEfforts();
   for (const k of BEST_EFFORT_KEYS) {
@@ -339,5 +349,6 @@ export function validateRideFacts(v: unknown): RideFacts | null {
     avgSpeedMps: v.avgSpeedMps,
     best: Object.freeze(best),
     groupRide: v.groupRide,
+    ...(v.backfilled === true ? { backfilled: true as const } : {}),
   });
 }

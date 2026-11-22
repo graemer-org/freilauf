@@ -177,9 +177,11 @@ the next session without that rider.
 
 **Transport race (integration requirement).** The P2P layer serves our current documents to a
 newly connected peer by itself. The app must therefore re-run `documentsToShare` **synchronously
-in the membership-change handler** (`onChange` on `peer-joined`), before the newcomer's data
-channel can open — the channel needs further signalling round-trips, so a synchronous reshare
-wins. The newcomer is then unidentified → identity only.
+in the peer-join handler** (`GroupRide.onPeerJoined`), before the newcomer's data channel can
+open — the channel needs further signalling round-trips, and requests are only answered for the
+current document of a kind, so a synchronous reshare wins (see [`p2p.md`](p2p.md#peer-join-ordering)).
+The newcomer is then unidentified → identity only. The app does exactly this; see
+[Integration](#integration-in-the-app).
 
 ## Relaying (friends of friends)
 
@@ -374,6 +376,75 @@ JSON, and a way to keep a room open.
 - Automatic challenges, uninviting participants, editing a challenge's target after creation.
 - Deletion requests to other riders: once shared, data stays with the recipient until it is
   replaced or evicted.
+
+## Integration in the app
+
+Implemented in `apps/desktop/src/renderer/core/communityService.ts` (`CommunityService`, no
+DOM/Electron; clock, UTC offset, randomness, timers and storage are injected) and wired into the
+app store (`apps/desktop/src/renderer/main/appStore.ts`); the browser build uses the same code.
+
+- **Storage**: one `CommunityState` JSON in `localStorage` under `freilauf.community.v1`
+  (period accumulators are stripped — `migrate` rebuilds them from the facts), plus a small
+  `freilauf.community.v1.meta` (backfill marker, selected leaderboard). Loaded with `migrate`;
+  unreadable data is copied once to `freilauf.community.v1.corrupt` and replaced by a fresh
+  state; blocked storage works in memory. Saves are debounced (2 s) and flushed on close.
+  A failing `setItem` (quota) keeps the data in memory, shows one notice and retries on the
+  next change (`state.community.storage.saveFailed`).
+- **Size**: realistic use (a few hundred rides, dozens of friends) is ~0.1–0.5 MB. At every cap
+  at once (5000 rides, 500 contacts + 500 tombstones, 300 cached standings, 64 full challenges)
+  the persisted JSON is ≈ 4 MB (≈ 485 B per ride, ≈ 4 KB per cached standing) — close to the
+  ~5 M characters Chromium allows per origin, which the workout library shares. That is why
+  save failures are handled; moving the state to IndexedDB/the main process would be the next
+  step if it ever matters.
+- **Rides**: `finishRide` → `recordRide(ride, { ftpW: settings FTP during the ride, groupRide:
+another rider was in the group at some point of the ride })`; idempotent per ride id.
+  Deleting a ride from the history → `removeRide`.
+- **Backfill**: once per installation (marker in the meta key) the service lists the saved rides
+  (`FreilaufApi.rides.list`) and loads the finished ones that are not in the ledger yet with the
+  additive `FreilaufApi.rides.load(id)` (desktop: IPC `rides:load` → `RideStore.loadRide`;
+  browser: IndexedDB), oldest first, four per step with a yield in between. The FTP is the
+  **current** one, an approximation for older rides, flagged with `backfilled: true` in the
+  facts; `groupRide` is unknown and stored as false. Rides deleted meanwhile are skipped. A
+  failed run (e.g. the list could not be read) is retried on the next start.
+- **Profile**: the display name follows `settings.rider.name`.
+- **Document kinds** in a session: `fl-standing`, `fl-challenges`, `fl-relay`, next to `workout`
+  — 4 kinds, the transport's maximum. The community budget is `min(24 KiB, 32 KiB − bytes of the
+other local documents)`; before the rider shares a workout the app re-publishes with the
+  workout's size reserved (`makeRoom`), so the workout always fits and challenges/relays shrink.
+  A community document the transport refuses is withdrawn (fail closed), never left at an older
+  version.
+- **Sync** (`attach(group)` on entering a group, `detach()` before leaving): a map p2p peer id →
+  rider id (null until that peer's `fl-standing` arrived; the rider id comes from
+  `mergeIncoming`). Re-published synchronously on peer join (`onPeerJoined`, before the
+  newcomer can be served), on membership changes, after every merge that changed state or
+  identified a peer, after own rides and every user action (visibility, removal, challenges),
+  and every 5 minutes (standing refresh, contacts' last-seen). Documents of a peer are merged
+  whenever its set of community document ids changes, only while it is in the room.
+- **No-leak test**: `communitySync.integration.test.ts` runs riders over the real `GroupRide`,
+  the fake WebRTC network (delays, duplicates, loss, reordering) and the in-process signalling
+  hub: A publishes at `everything` with B present, then C joins (unknown, or a contact set to
+  `none`) — C never receives A's richer standing (`"l":"e"`, resp. any standing). Disabling
+  the "unidentified counts as `none`" rule makes these tests fail.
+- **Time**: views are computed with "now" rounded down to the minute and refreshed by the app's
+  tick only when the minute changes (period rollover, remaining time, staleness).
+- **Log** (source `community`): load/save problems, rides added/removed (counts only),
+  publishing level changes (counts), merge summaries (change counts, rejection reasons),
+  challenge actions (type only), backfill result.
+
+### What the UI gets (`state.community`, `CommunityView`)
+
+`profile` (riderId, name, defaultVisibility, friendsOfFriends) · `week` / `month` (key, bounds,
+`PeriodTotals` with points and best efforts) · `leaderboard` (the selected period/metric/scope,
+`periodKey`, rows) · `challenges` (each with `progress` from `challengeProgress`, `myState`,
+`isCreator`, `canInvite`) · `invitations` · `contacts` (display name, visibility, present,
+latest standing's age/staleness/relayer) · `blocked` · `session` (peers, identified, level) ·
+`backfill` · `storage`. Every part keeps its object identity while its content is unchanged.
+Actions on `App`: `setLeaderboardView`, `communityLeaderboard`, `setContactVisibility`,
+`renameContact`, `removeContact`, `unblockContact`, `setDefaultVisibility`,
+`setFriendsOfFriends`, `createChallenge`, `inviteToChallenge`, `respondToChallenge`,
+`leaveChallenge`, `cancelChallenge` (results `{ ok: true } | { ok: false, error }` with a
+message for the rider). `CHALLENGE_TEMPLATES` describes the seven templates (metrics, target
+ranges) for the creation form.
 
 ## Integration checklist (app)
 

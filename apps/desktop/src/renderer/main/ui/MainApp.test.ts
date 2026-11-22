@@ -12,6 +12,7 @@ import type { WorkoutLive } from '../../../shared/contract';
 import { WorkoutLibrary } from '../../core/workoutLibrary';
 import type { TabId } from './MainApp';
 import { defaultTab, MainApp } from './index';
+import { CommunityService } from '../../core/communityService';
 
 function baseState(): AppState {
   return {
@@ -32,6 +33,7 @@ function baseState(): AppState {
     sharedWorkouts: [],
     sharingWorkoutId: null,
     groupCountdownS: null,
+  community: new CommunityService({ storage: null }).view,
   };
 }
 
