@@ -1,0 +1,21 @@
+{
+  "name": "@freilauf/signalling",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0"
+  }
+}

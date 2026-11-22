@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Freilauf — indoor cycling without the virtual world</title>
+    <meta
+      name="description"
+      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, a stats overlay over your own video, and peer-to-peer group rides. No account, no telemetry."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3f3f6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href="https://graemer-org.github.io/freilauf/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Freilauf" />
+    <meta property="og:title" content="Freilauf — indoor cycling without the virtual world" />
+    <meta
+      property="og:description"
+      content="Your own video, your friends, your data. Open source, local-first, no account."
+    />
+    <meta property="og:url" content="https://graemer-org.github.io/freilauf/" />
+    <meta property="og:image" content="https://graemer-org.github.io/freilauf/assets/site/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Freilauf: the ride screen with power, an animated rider on a climb, and the project's tagline."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Freilauf — indoor cycling without the virtual world" />
+    <meta
+      name="twitter:description"
+      content="Your own video, your friends, your data. Open source, local-first, no account."
+    />
+    <meta
+      name="twitter:image"
+      content="https://graemer-org.github.io/freilauf/assets/site/og.png"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="top">
+      <div class="wrap top-inner">
+        <a class="brand" href="./" aria-label="Freilauf, home">
+          <svg
+            class="mark"
+            viewBox="0 0 1024 1024"
+            width="28"
+            height="28"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill="currentColor"
+              d="M465.5,248.1L491.4,244.8L496.5,194.4L527.5,194.4L532.6,244.8L558.5,248.1L584.1,253.9L606.0,208.2L635.2,218.8L622.7,267.9L646.0,279.9L668.0,294.1L704.3,258.7L728.1,278.7L699.5,320.5L717.3,339.7L733.1,360.6L779.3,339.7L794.8,366.6L753.7,396.2L763.8,420.3L771.6,445.4L822.1,441.5L827.5,472.1L778.7,485.8L780.0,512.0L778.7,538.2L827.5,551.9L822.1,582.5L771.6,578.6L763.8,603.7L753.7,627.8L794.8,657.4L779.3,684.3L733.1,663.4L717.3,684.3L699.5,703.5L728.1,745.3L704.3,765.3L668.0,729.9L646.0,744.1L622.7,756.1L635.2,805.2L606.0,815.8L584.1,770.1L558.5,775.9L532.6,779.2L527.5,829.6L496.5,829.6L491.4,779.2L465.5,775.9L439.9,770.1L418.0,815.8L388.8,805.2L401.3,756.1L378.0,744.1L356.0,729.9L319.7,765.3L295.9,745.3L324.5,703.5L306.7,684.3L290.9,663.4L244.7,684.3L229.2,657.4L270.3,627.8L260.2,603.7L252.4,578.6L201.9,582.5L196.5,551.9L245.3,538.2L244.0,512.0L245.3,485.8L196.5,472.1L201.9,441.5L252.4,445.4L260.2,420.3L270.3,396.2L229.2,366.6L244.7,339.7L290.9,360.6L306.7,339.7L324.5,320.5L295.9,278.7L319.7,258.7L356.0,294.1L378.0,279.9L401.3,267.9L388.8,218.8L418.0,208.2L439.9,253.9Z"
+            />
+            <circle cx="512" cy="512" r="200" fill="var(--bg)" />
+            <circle cx="512" cy="512" r="124" fill="none" stroke="currentColor" stroke-width="44" />
+            <circle cx="512" cy="512" r="40" fill="currentColor" />
+          </svg>
+          <span>Freilauf</span>
+        </a>
+        <nav aria-label="Sections">
+          <ul class="nav">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#friends">Friends</a></li>
+            <li><a href="#status">Status</a></li>
+            <li><a href="#join">Join in</a></li>
+            <li><a href="https://github.com/graemer-org/freilauf">GitHub</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="wrap">
+          <p class="eyebrow">Open source · local-first · early</p>
+          <h1 id="hero-title">Indoor cycling without the virtual world.</h1>
+          <p class="lede">
+            Your own video, your friends, your data. Freilauf connects your smart trainer, shifts
+            gears in software and puts your numbers over whatever is on your screen. It starts in
+            seconds, needs no account, and keeps every ride on your machine.
+          </p>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf"
+              >Get it on GitHub</a
+            >
+            <a class="btn" href="https://github.com/graemer-org/freilauf/tree/main/docs"
+              >Read the docs</a
+            >
+          </div>
+          <figure class="hero-shot">
+            <picture>
+              <source
+                media="(prefers-color-scheme: dark)"
+                srcset="assets/site/ride-climb-dark.webp"
+              />
+              <img
+                src="assets/site/ride-climb-light.webp"
+                width="1280"
+                height="720"
+                fetchpriority="high"
+                alt="The Ride screen during an 8 % climb: a large power reading, an animated rider on a tilted road with an elevation profile, cadence, speed, gear 12 of 24, time, distance and heart rate."
+              />
+            </picture>
+            <figcaption>
+              All screenshots are from simulation mode, which runs the whole app without hardware.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="wrap">
+          <h2 id="features-title">What it does</h2>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>Your numbers over anything</h3>
+              <p>
+                A transparent, always-on-top, click-through overlay with the stats you choose, on
+                top of a film, a race stream or any other app. A hotkey switches it into edit mode
+                to move and resize it.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/overlay.webp"
+              width="720"
+              height="416"
+              loading="lazy"
+              decoding="async"
+              alt="Semi-transparent overlay tiles for power, heart rate, cadence, speed, gear, time and distance, with a small list of group riders, over a colourful striped background."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>Structured workouts in ERG mode</h3>
+              <p>
+                The trainer holds the target power while you pedal. Import <code>.zwo</code> files,
+                pick from a built-in library, or measure your FTP with a 20-minute or a ramp test.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/workout-erg.webp"
+              width="960"
+              height="540"
+              loading="lazy"
+              decoding="async"
+              alt="A workout in progress: target 91 watts in the warm-up step, a coloured chart of the whole sweet-spot workout, and the time left in the step."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>Ride together, directly</h3>
+              <p>
+                Up to eight friends in a room, connected peer-to-peer. Share a workout with the
+                group and start it together on a countdown; everyone's targets follow their own FTP.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/group-ride.webp"
+              width="960"
+              height="540"
+              loading="lazy"
+              decoding="async"
+              alt="The ride scene with three riders side by side on a flat road; the other two are labelled Cleo and Ben."
+            />
+          </div>
+
+          <ul class="grid" role="list">
+            <li>
+              <h3>Virtual shifting</h3>
+              <p>
+                24 gears in software, sent to the trainer as standard FTMS simulation parameters — a
+                single-cog bike rides like it has a cassette.
+              </p>
+            </li>
+            <li>
+              <h3>Free ride with gradient</h3>
+              <p>
+                Set the slope and feel it. An animated scene shows the climb, an elevation profile
+                and steering.
+              </p>
+            </li>
+            <li>
+              <h3>Recording and <code>.fit</code> export</h3>
+              <p>
+                Every ride autosaves locally and exports to <code>.fit</code> for whatever you use
+                to analyse it.
+              </p>
+            </li>
+            <li>
+              <h3>In the browser, too</h3>
+              <p>
+                A web version runs from Docker Compose, for example on a home server, with the
+                group-ride relay built in.
+              </p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="friends" class="section alt" aria-labelledby="friends-title">
+        <div class="wrap two">
+          <div>
+            <h2 id="friends-title">Ride with friends</h2>
+            <ol class="steps">
+              <li>One of you creates a group and gets a <strong>six-letter room code</strong>.</li>
+              <li>
+                Friends enter the code and connect <strong>directly to each other</strong> over
+                WebRTC. Power, speed and position go from rider to rider.
+              </li>
+              <li>Share a workout and start it together.</li>
+            </ol>
+            <p>
+              A <strong>tiny signalling server</strong> only introduces the riders and passes on the
+              connection handshake. It stores nothing and never sees ride data. There is no public
+              one yet: you run it yourself with one command or a small container.
+            </p>
+            <p class="note">
+              Connections use public STUN servers and no TURN relay, so some networks (mobile
+              carriers, some company or university networks) will not connect.
+            </p>
+            <p>
+              <a href="https://github.com/graemer-org/freilauf/blob/main/docs/p2p.md"
+                >How group rides work</a
+              >
+            </p>
+          </div>
+          <figure class="diagram">
+            <svg viewBox="0 0 420 340" role="img" aria-labelledby="dia-title dia-desc">
+              <title id="dia-title">Peer-to-peer group ride</title>
+              <desc id="dia-desc">
+                Three riders, A, B and C, each connected directly to the other two. A small
+                signalling server above them is linked by dashed lines, used only for the handshake.
+              </desc>
+              <g class="d-sig">
+                <rect x="130" y="10" width="160" height="58" rx="12" />
+                <text x="210" y="34" text-anchor="middle">signalling</text>
+                <text x="210" y="56" text-anchor="middle" class="d-small">handshake only</text>
+              </g>
+              <g class="d-dash">
+                <path d="M160 68 L88 196" />
+                <path d="M260 68 L332 196" />
+                <path d="M210 68 L210 124" />
+              </g>
+              <g class="d-link">
+                <path d="M100 236 L320 236" />
+                <path d="M92 214 L196 162" />
+                <path d="M328 214 L224 162" />
+              </g>
+              <g class="d-node">
+                <circle cx="210" cy="150" r="26" />
+                <circle cx="78" cy="226" r="26" />
+                <circle cx="342" cy="226" r="26" />
+              </g>
+              <g class="d-label">
+                <text x="210" y="156" text-anchor="middle">B</text>
+                <text x="78" y="232" text-anchor="middle">A</text>
+                <text x="342" y="232" text-anchor="middle">C</text>
+              </g>
+              <text x="210" y="296" text-anchor="middle" class="d-cap">
+                ride data flows rider to rider
+              </text>
+              <text x="210" y="318" text-anchor="middle" class="d-cap d-small">
+                up to 8 riders, every one connected to every other
+              </text>
+            </svg>
+          </figure>
+        </div>
+      </section>
+
+      <section id="data" class="section" aria-labelledby="data-title">
+        <div class="wrap">
+          <h2 id="data-title">Your data stays yours</h2>
+          <ul class="grid" role="list">
+            <li>
+              <h3>No account</h3>
+              <p>Nothing to sign up for, nothing to log into. Install it and ride.</p>
+            </li>
+            <li>
+              <h3>No backend, no telemetry</h3>
+              <p>
+                Rides, settings and workouts are files on your machine. No analytics, no crash
+                reporting, no update pings; only a group ride you join talks to the network.
+              </p>
+            </li>
+            <li>
+              <h3>Open formats</h3>
+              <p>
+                <code>.fit</code> for rides, <code>.zwo</code> for workouts, and documented wire
+                protocols for group rides.
+              </p>
+            </li>
+            <li>
+              <h3>MIT licensed</h3>
+              <p>
+                All of it. Device protocols are reimplemented clean-room, with no code from GPL
+                projects.
+              </p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="status" class="section alt" aria-labelledby="status-title">
+        <div class="wrap narrow">
+          <h2 id="status-title">Honest status</h2>
+          <p>
+            Freilauf is <strong>early</strong> and has <strong>no published releases yet</strong>;
+            you build it from source. Everything on this page works and is tested end to end against
+            simulated devices — about 650 unit tests plus Playwright end-to-end tests of the desktop
+            app and the browser build — but very little has met real hardware.
+          </p>
+          <h3>First real-hardware test, 22 November 2026</h3>
+          <p class="small">
+            Windows 11 · Wahoo KICKR CORE · Zwift Ride smart frame · Bluetooth heart-rate strap
+          </p>
+          <ul class="checks" role="list">
+            <li class="ok">
+              Pairing worked for the trainer, the frame's controllers and the heart-rate strap.
+            </li>
+            <li class="ok">
+              The d-pad, A, B, Y, both shift buttons on each grip and the left power button are
+              decoded correctly.
+            </li>
+            <li class="open">
+              Z and the right power button are inferred and unconfirmed; the brake and steering
+              paddles are not decoded yet. Keyboard shifting and steering always work.
+            </li>
+            <li class="open">
+              The overlay over fullscreen video on Windows and macOS is not confirmed yet.
+            </li>
+          </ul>
+          <p>
+            <strong>Not tried on real hardware yet:</strong> ERG workouts on a trainer, the FTP
+            tests, steering with the controllers, group rides across real networks (only on one
+            machine so far), the Docker image build, and macOS in general.
+          </p>
+          <p>
+            <strong>Community features</strong> — points, weekly and monthly totals, friends,
+            challenges and leaderboards synced peer-to-peer — are in the app's Community tab, tested
+            against simulated riders; not yet between real machines.
+          </p>
+          <p>
+            <strong>Installers</strong> will be unsigned at first, so Windows and macOS will warn
+            before opening them.
+          </p>
+        </div>
+      </section>
+
+      <section id="hardware" class="section" aria-labelledby="hardware-title">
+        <div class="wrap narrow">
+          <h2 id="hardware-title">Hardware it targets</h2>
+          <ul class="plain" role="list">
+            <li>
+              <strong>Smart trainers</strong> that speak standard Bluetooth FTMS. Tested so far with
+              a Wahoo KICKR CORE.
+            </li>
+            <li>
+              <strong>Smart-frame handlebar controllers.</strong> Works in part with the Zwift Ride
+              smart frame (see above).
+            </li>
+            <li>
+              <strong>Heart-rate straps</strong> using the standard Bluetooth Heart Rate Service.
+            </li>
+          </ul>
+          <p class="small">
+            Freilauf is an independent project and is not affiliated with, endorsed by or sponsored
+            by Wahoo Fitness, Zwift or any other company mentioned. Product names and trademarks
+            belong to their owners and are used only to describe compatibility.
+          </p>
+        </div>
+      </section>
+
+      <section id="join" class="section alt" aria-labelledby="join-title">
+        <div class="wrap">
+          <h2 id="join-title">Join in</h2>
+          <p class="intro">
+            The most valuable help right now is riding it on real hardware and telling us what
+            happened. You do not need to write code.
+          </p>
+          <ul class="grid" role="list">
+            <li>
+              <h3>Test your hardware</h3>
+              <p>
+                Pair your trainer, strap or controllers and open an issue with your system, devices,
+                what happened and the diagnostic log. Controller button captures and trainers other
+                than the one above help most.
+              </p>
+            </li>
+            <li>
+              <h3>Protocol notes</h3>
+              <p>
+                Share what your own captures show, with sources and a confidence level, so drivers
+                can be written clean-room.
+              </p>
+            </li>
+            <li>
+              <h3>Workouts and design</h3>
+              <p>
+                Original <code>.zwo</code> workouts you are happy to publish under MIT, and a
+                careful eye on the app, the overlay and the ride scene.
+              </p>
+            </li>
+            <li>
+              <h3>Code and, later, translations</h3>
+              <p>
+                The contributing guide has the setup and the few rules. Translations come once the
+                text settles.
+              </p>
+            </li>
+          </ul>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf/issues"
+              >Open an issue</a
+            >
+            <a class="btn" href="https://github.com/graemer-org/freilauf/blob/main/CONTRIBUTING.md"
+              >Contributing guide</a
+            >
+            <a
+              class="btn"
+              href="https://github.com/graemer-org/freilauf/blob/main/docs/diagnostics.md"
+              >Where the log is</a
+            >
+          </div>
+          <h3 class="roadmap-title">Next on the roadmap</h3>
+          <p class="small">
+            GPX routes with a map · drafting in group rides · Strava upload · a Wi-Fi connection to
+            the trainer · signed installers · an optional always-on relay peer for leaderboards.
+            None of it is built yet.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap foot-inner">
+        <p>
+          <a href="https://github.com/graemer-org/freilauf">Source on GitHub</a> ·
+          <a href="https://github.com/graemer-org/freilauf/blob/main/LICENSE">MIT licence</a> · ©
+          2026 Freilauf contributors
+        </p>
+        <p class="small">
+          Freilauf is not affiliated with, endorsed by or sponsored by any trainer, smart-frame or
+          platform maker. This site loads nothing from anywhere else and sets no cookies.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

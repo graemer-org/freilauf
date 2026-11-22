@@ -1,0 +1,284 @@
+import { createEmitter } from '../emitter';
+import type { Unsubscribe } from '../emitter';
+import type { Schedule } from '../managedDevice';
+import type { BlePeripheral, GattConnection, Uuid } from '../types';
+
+// In-memory GATT fakes for tests (this package's and other packages').
+
+/** Parses "02 44 a0-0f" style hex (whitespace, '-' and ':' ignored). */
+export function hex(text: string): Uint8Array {
+  const clean = text.replace(/[\s:-]/g, '');
+  if (clean.length % 2 !== 0 || /[^0-9a-f]/i.test(clean)) throw new Error(`bad hex: ${text}`);
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+export function toHex(bytes: Uint8Array | DataView): string {
+  const u8 =
+    bytes instanceof DataView ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : bytes;
+  return [...u8].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+}
+
+/** DataView over a copy of the given bytes or hex string. */
+export function dataView(bytes: Uint8Array | string): DataView {
+  const u8 = typeof bytes === 'string' ? hex(bytes) : bytes.slice();
+  return new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+}
+
+export interface FakeWrite {
+  service: Uuid;
+  characteristic: Uuid;
+  data: Uint8Array;
+  withoutResponse: boolean;
+  connection: FakeGattConnection;
+}
+
+/**
+ * Called for every write. Return bytes (or hex) to have them delivered as a
+ * notification/indication on `respondOn` (default: the written characteristic)
+ * after the write resolves; return undefined for no response; throw to make
+ * the write reject.
+ */
+export type WriteResponder = (write: FakeWrite) => Uint8Array | string | undefined | void;
+
+const key = (service: Uuid, characteristic: Uuid) => `${service}|${characteristic}`;
+
+export class FakeGattConnection implements GattConnection {
+  connected = true;
+  /** Writes made on this connection. */
+  readonly writes: FakeWrite[] = [];
+  private readonly peripheral: FakePeripheral;
+  private readonly listeners = new Map<string, Set<(data: DataView) => void>>();
+  private readonly disconnectEmitter = createEmitter<void>();
+
+  constructor(peripheral: FakePeripheral) {
+    this.peripheral = peripheral;
+  }
+
+  async hasService(service: Uuid): Promise<boolean> {
+    this.assertConnected();
+    return this.peripheral.services.has(service);
+  }
+
+  async read(service: Uuid, characteristic: Uuid): Promise<DataView> {
+    this.assertConnected();
+    const v = this.peripheral.values.get(key(service, characteristic));
+    if (!v) throw new Error(`fake: no readable value for ${characteristic}`);
+    return dataView(v);
+  }
+
+  async write(
+    service: Uuid,
+    characteristic: Uuid,
+    data: Uint8Array,
+    options?: { withoutResponse?: boolean },
+  ): Promise<void> {
+    this.assertConnected();
+    const w: FakeWrite = {
+      service,
+      characteristic,
+      data: data.slice(),
+      withoutResponse: options?.withoutResponse ?? false,
+      connection: this,
+    };
+    this.writes.push(w);
+    this.peripheral.writes.push(w);
+    const r = this.peripheral.responders.get(key(service, characteristic));
+    if (!r) return;
+    const response = r.fn(w);
+    if (response === undefined) return;
+    const target = r.respondOn ?? characteristic;
+    // Deliver after the write has resolved, like a real indication.
+    void Promise.resolve().then(() => {
+      if (this.connected) this.notify(service, target, response);
+    });
+  }
+
+  async subscribe(
+    service: Uuid,
+    characteristic: Uuid,
+    listener: (data: DataView) => void,
+  ): Promise<Unsubscribe> {
+    this.assertConnected();
+    if (!this.peripheral.services.has(service)) throw new Error(`fake: no service ${service}`);
+    const failure = this.peripheral.subscribeFailures.get(key(service, characteristic));
+    if (failure) throw failure;
+    const k = key(service, characteristic);
+    let set = this.listeners.get(k);
+    if (!set) this.listeners.set(k, (set = new Set()));
+    set.add(listener);
+    return () => set.delete(listener);
+  }
+
+  isSubscribed(service: Uuid, characteristic: Uuid): boolean {
+    return (this.listeners.get(key(service, characteristic))?.size ?? 0) > 0;
+  }
+
+  /** Delivers a notification to this connection's subscribers. */
+  notify(service: Uuid, characteristic: Uuid, data: Uint8Array | string): void {
+    if (!this.connected) return;
+    for (const l of [...(this.listeners.get(key(service, characteristic)) ?? [])]) l(dataView(data));
+  }
+
+  async disconnect(): Promise<void> {
+    this.close();
+  }
+
+  onDisconnect(listener: () => void): Unsubscribe {
+    return this.disconnectEmitter.on(listener);
+  }
+
+  /** Simulates link loss (fires onDisconnect once). */
+  drop(): void {
+    this.close();
+  }
+
+  private close(): void {
+    if (!this.connected) return;
+    this.connected = false;
+    this.listeners.clear();
+    this.disconnectEmitter.emit();
+    this.disconnectEmitter.clear();
+  }
+
+  private assertConnected(): void {
+    if (!this.connected) throw new Error('fake: not connected');
+  }
+}
+
+export interface FakePeripheralOptions {
+  id?: string;
+  name?: string;
+  services?: Uuid[];
+}
+
+export class FakePeripheral implements BlePeripheral {
+  readonly id: string;
+  readonly name: string;
+  readonly services: Set<Uuid>;
+  /** Every connection ever returned, oldest first. */
+  readonly connections: FakeGattConnection[] = [];
+  /** Writes across all connections, oldest first. */
+  readonly writes: FakeWrite[] = [];
+  connectAttempts = 0;
+  /** @internal */ readonly values = new Map<string, Uint8Array>();
+  /** @internal */ readonly responders = new Map<string, { fn: WriteResponder; respondOn?: Uuid }>();
+  /** @internal */ readonly subscribeFailures = new Map<string, Error>();
+  private readonly connectFailures: Error[] = [];
+  private failAll: Error | null = null;
+
+  constructor(options: FakePeripheralOptions = {}) {
+    this.id = options.id ?? 'fake-1';
+    this.name = options.name ?? 'Fake Device';
+    this.services = new Set(options.services ?? []);
+  }
+
+  async connect(): Promise<GattConnection> {
+    this.connectAttempts++;
+    const failure = this.connectFailures.shift() ?? this.failAll;
+    if (failure) throw failure;
+    const c = new FakeGattConnection(this);
+    this.connections.push(c);
+    return c;
+  }
+
+  /** The most recent connection if it is still up. */
+  get current(): FakeGattConnection | null {
+    const c = this.connections.at(-1);
+    return c?.connected ? c : null;
+  }
+
+  /** Makes the next `count` connect() calls reject. */
+  failNextConnects(count = 1, error = new Error('fake: connect failed')): void {
+    for (let i = 0; i < count; i++) this.connectFailures.push(error);
+  }
+
+  /** Makes every connect() reject until called with null. */
+  failConnects(error: Error | null = new Error('fake: connect failed')): void {
+    this.failAll = error;
+  }
+
+  failSubscribe(service: Uuid, characteristic: Uuid, error = new Error('fake: subscribe failed')): void {
+    this.subscribeFailures.set(key(service, characteristic), error);
+  }
+
+  setValue(service: Uuid, characteristic: Uuid, bytes: Uint8Array | string): void {
+    this.values.set(key(service, characteristic), typeof bytes === 'string' ? hex(bytes) : bytes);
+  }
+
+  /** Scripts responses to writes on a characteristic (persists across reconnects). */
+  respondToWrites(
+    service: Uuid,
+    characteristic: Uuid,
+    fn: WriteResponder,
+    options: { respondOn?: Uuid } = {},
+  ): void {
+    this.responders.set(
+      key(service, characteristic),
+      options.respondOn ? { fn, respondOn: options.respondOn } : { fn },
+    );
+  }
+
+  /** Pushes a notification on the current connection (no-op if none). */
+  notify(service: Uuid, characteristic: Uuid, data: Uint8Array | string): void {
+    this.current?.notify(service, characteristic, data);
+  }
+
+  /** Drops the current link, as if the device went out of range. */
+  dropLink(): void {
+    this.current?.drop();
+  }
+
+  writesTo(characteristic: Uuid): FakeWrite[] {
+    return this.writes.filter((w) => w.characteristic === characteristic);
+  }
+}
+
+/**
+ * Deterministic `Schedule` for tests. `advance(ms)` runs due timers in order
+ * and lets pending promise callbacks settle between them.
+ */
+export class FakeScheduler {
+  private nowMs = 0;
+  private seq = 0;
+  private timers: Array<{ at: number; seq: number; fn: () => void }> = [];
+
+  readonly schedule: Schedule = (fn, ms) => {
+    const t = { at: this.nowMs + Math.max(0, ms), seq: this.seq++, fn };
+    this.timers.push(t);
+    return () => {
+      this.timers = this.timers.filter((x) => x !== t);
+    };
+  };
+
+  readonly now = (): number => this.nowMs;
+
+  /** Delays of the currently pending timers, relative to now. */
+  get pendingDelays(): number[] {
+    return this.timers.map((t) => t.at - this.nowMs);
+  }
+
+  async advance(ms: number): Promise<void> {
+    const end = this.nowMs + ms;
+    await flushPromises();
+    for (;;) {
+      const next = this.timers
+        .filter((t) => t.at <= end)
+        .sort((a, b) => a.at - b.at || a.seq - b.seq)[0];
+      if (!next) break;
+      this.timers = this.timers.filter((t) => t !== next);
+      this.nowMs = next.at;
+      next.fn();
+      await flushPromises();
+    }
+    this.nowMs = end;
+    await flushPromises();
+  }
+}
+
+/** Lets all queued promise callbacks run (uses one macrotask turn). */
+export function flushPromises(): Promise<void> {
+  const g = globalThis as unknown as { setTimeout(fn: () => void, ms: number): unknown };
+  return new Promise((resolve) => g.setTimeout(resolve, 0));
+}

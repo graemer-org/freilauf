@@ -1,0 +1,20 @@
+{
+  "name": "@freilauf/session",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@freilauf/devices": "workspace:*",
+    "@freilauf/sim": "workspace:*"
+  },
+  "devDependencies": {
+    "@garmin/fitsdk": "^21.222.0"
+  }
+}

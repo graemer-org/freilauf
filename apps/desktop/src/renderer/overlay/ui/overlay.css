@@ -1,0 +1,533 @@
+/*
+ * Freilauf stats overlay. Floats over arbitrary (often bright) video, so:
+ *  - the page itself is fully transparent;
+ *  - text is always opaque with a dark outline + shadow;
+ *  - only the backdrop layers fade (alpha = --ov-backdrop-alpha).
+ * Order: tokens → base → layout → tiles → status → group → edit chrome.
+ */
+
+/* ───────── tokens ───────── */
+
+.ov-root {
+  --ov-backdrop-alpha: 0.55;
+  --ov-cells: 1;
+  --ov-outline: rgb(0 0 0 / 0.92);
+  --ov-text: #ffffff;
+  --ov-text-2: #d5d8de;
+  --ov-dim: #b3b7bf;
+  --ov-accent: #4c9dff;
+  --ov-local: #ffd66b;
+  --ov-alert: #e5484d;
+  --ov-gap: clamp(3px, 0.9vmin + 1px, 14px);
+  --ov-radius: clamp(6px, 2.2vmin, 18px);
+  --ov-font:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Display', 'Segoe UI Variable',
+    'Segoe UI', system-ui, sans-serif;
+  /* Secondary text (status, group) follows the window size. */
+  --ov-small: clamp(11px, min(5vh, 3.4vw), 34px);
+}
+
+/* ───────── base ───────── */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.ov-root {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  container: ov / size;
+  background: transparent;
+  color: var(--ov-text);
+  font-family: var(--ov-font);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.ov-root *,
+.ov-root *::before,
+.ov-root *::after {
+  box-sizing: border-box;
+}
+
+/* Legible on anything: opaque glyphs, outer stroke plus a soft dark halo. */
+.ov-text {
+  opacity: 1;
+  paint-order: stroke fill;
+  -webkit-text-stroke: max(1.5px, 0.07em) var(--ov-outline);
+  text-shadow:
+    0 0 1px #000,
+    0 1px 2px rgb(0 0 0 / 0.85),
+    0 0 0.3em rgb(0 0 0 / 0.55);
+}
+
+/* Only this layer fades with the opacity setting. */
+.ov-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: rgb(14 16 20 / var(--ov-backdrop-alpha));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / calc(var(--ov-backdrop-alpha) * 0.12));
+  pointer-events: none;
+}
+
+/* ───────── layout ───────── */
+
+.ov-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template:
+    'status' auto
+    'workout' auto
+    'tiles' minmax(0, 1fr)
+    'group' auto / minmax(0, 1fr);
+  gap: var(--ov-gap);
+  padding: var(--ov-gap);
+}
+
+/* Wide windows: the group list sits beside the tiles. */
+@container ov (aspect-ratio > 1.9) {
+  .ov-body--group {
+    grid-template:
+      'status status' auto
+      'workout workout' auto
+      'tiles group' minmax(0, 1fr) / minmax(0, 1fr) auto;
+  }
+}
+
+.ov-status-row {
+  grid-area: status;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ov-gap);
+}
+
+.ov-tiles {
+  grid-area: tiles;
+  min-width: 0;
+  min-height: 0;
+  container: ov-tiles / size;
+}
+
+/*
+ * Rows and columns are chosen so each cell is about twice as wide as tall:
+ * rows ≈ √(2 · cells · height / width). Type size --u follows the cell.
+ */
+.ov-grid {
+  --rows: clamp(1, round(sqrt(2 * var(--ov-cells) * 100cqh / 100cqw)), max(1, var(--ov-cells) - 1));
+  --cols: round(up, var(--ov-cells) / var(--rows), 1);
+  /* Rows actually filled once the column count is rounded up. */
+  --rows-used: round(up, var(--ov-cells) / var(--cols), 1);
+  --cw: calc((100cqw - (var(--cols) - 1) * var(--ov-gap)) / var(--cols));
+  --ch: calc((100cqh - (var(--rows-used) - 1) * var(--ov-gap)) / var(--rows-used));
+  --u: clamp(11px, min(var(--cw) / 4, var(--ch) / 1.75), 220px);
+
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--cw) - 0.5px), 1fr));
+  grid-auto-rows: minmax(0, var(--ch));
+  grid-auto-flow: row dense;
+  align-content: start;
+  gap: var(--ov-gap);
+  height: 100%;
+}
+
+/* ───────── tiles ───────── */
+
+.ov-tile {
+  --k: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--u) * 0.1);
+  min-width: 0;
+  padding: 0 calc(var(--u) * 0.32);
+  overflow: hidden;
+  border-radius: min(var(--ov-radius), calc(var(--u) * 0.3));
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ov-tile--s {
+  --k: 0.85;
+}
+
+.ov-tile--l {
+  --k: 1.3;
+  grid-column: span 2;
+}
+
+.ov-tile > :not(.ov-backdrop) {
+  position: relative;
+  z-index: 1;
+}
+
+.ov-label {
+  color: var(--ov-text-2);
+  font-size: max(10px, calc(var(--u) * 0.3));
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  -webkit-text-stroke-width: max(2px, 0.12em);
+}
+
+.ov-value-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.12em;
+  font-size: calc(var(--u) * var(--k));
+}
+
+.ov-value {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ov-unit {
+  color: var(--ov-text-2);
+  font-size: max(10px, 0.34em);
+  font-weight: 650;
+  -webkit-text-stroke-width: max(2px, 0.1em);
+}
+
+/* Idle: glyphs turn grey (still opaque) so it is clear nothing is recorded. */
+.ov-root--idle .ov-tile .ov-text {
+  color: var(--ov-dim);
+}
+
+/* ───────── status & warnings ───────── */
+
+.ov-status,
+.ov-warning {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.3em 0.8em;
+  border-radius: 999px;
+  font-size: var(--ov-small);
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.ov-status > .ov-text {
+  position: relative;
+  z-index: 1;
+}
+
+.ov-status::before {
+  content: '';
+  position: relative;
+  z-index: 1;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 0.12em #fff,
+    0 0 0 1px rgb(0 0 0 / 0.6);
+}
+
+/* Warning ignores the backdrop setting on purpose: it must always be seen. */
+.ov-warning {
+  padding-left: 0.5em;
+  background: var(--ov-alert);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.35),
+    0 0.15em 0.6em rgb(0 0 0 / 0.45);
+  animation: ov-ring 1.6s ease-out infinite;
+}
+
+.ov-warning > .ov-text {
+  -webkit-text-stroke-width: 0;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 0.35);
+}
+
+.ov-warning-icon {
+  display: inline-grid;
+  place-items: end center;
+  width: 1.15em;
+  height: 1em;
+  padding-bottom: 0.08em;
+  background: #fff;
+  color: var(--ov-alert);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  font-size: 0.9em;
+  font-weight: 900;
+  line-height: 1;
+}
+
+@keyframes ov-ring {
+  0% {
+    box-shadow:
+      0 0 0 0 rgb(229 72 77 / 0.7),
+      0 0.15em 0.6em rgb(0 0 0 / 0.45);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0.45em rgb(229 72 77 / 0),
+      0 0.15em 0.6em rgb(0 0 0 / 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-warning {
+    animation: none;
+  }
+}
+
+/* ───────── workout strip ───────── */
+
+.ov-workout {
+  grid-area: workout;
+  position: relative;
+  display: grid;
+  gap: 0.3em;
+  min-width: 0;
+  padding: 0.35em 0.7em 0.45em;
+  border-radius: var(--ov-radius);
+  font-size: var(--ov-small);
+  line-height: 1.15;
+}
+
+.ov-workout > :not(.ov-backdrop) {
+  position: relative;
+  z-index: 1;
+}
+
+.ov-wo-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7em;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ov-wo-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ov-text-2);
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+
+.ov-wo-target {
+  flex: none;
+  font-size: 1.35em;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.ov-wo-time {
+  flex: none;
+  font-size: 1.35em;
+  font-weight: 700;
+}
+
+/* Track fades with the backdrop; the fill stays opaque with a dark edge. */
+.ov-wo-bar {
+  position: relative;
+  height: max(3px, 0.22em);
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / calc(var(--ov-backdrop-alpha) * 0.35));
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.7);
+}
+
+.ov-wo-bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ov-text);
+}
+
+.ov-wo-cue {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-workout--done .ov-wo-label {
+  color: var(--ov-text);
+}
+
+/* ───────── group ───────── */
+
+.ov-group {
+  grid-area: group;
+  position: relative;
+  justify-self: start;
+  align-self: start;
+  max-width: 100%;
+  padding: 0.35em 0.5em;
+  border-radius: var(--ov-radius);
+  font-size: clamp(11px, min(4.4vh, 3vw), 30px);
+  line-height: 1.2;
+}
+
+.ov-group-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(3em, auto) auto auto auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ov-group-row {
+  display: contents;
+}
+
+.ov-group-row > span {
+  padding: 0.14em 0.4em;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ov-g-name {
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ov-g-gap,
+.ov-g-num {
+  text-align: right;
+}
+
+.ov-g-num small {
+  margin-left: 0.15em;
+  color: var(--ov-text-2);
+  font-size: 0.7em;
+}
+
+/* Local rider: warm highlight and a marker, not colour alone. */
+.ov-group-row--local > span {
+  color: var(--ov-local);
+  font-weight: 800;
+}
+
+.ov-group-row--local > .ov-g-name::before {
+  content: '▸ ';
+}
+
+.ov-group-row--stale > span {
+  color: var(--ov-dim);
+  font-style: italic;
+}
+
+/* ───────── edit chrome ───────── */
+
+.ov-root--edit {
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.18);
+  box-shadow:
+    inset 0 0 0 2px var(--ov-accent),
+    inset 0 0 0 3px rgb(0 0 0 / 0.5);
+}
+
+.ov-edit-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  margin: 4px 4px 0;
+  padding: 3px 3px 3px 10px;
+  border-radius: 8px;
+  background: rgb(22 24 30 / 0.92);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 550;
+  -webkit-app-region: drag;
+  app-region: drag;
+  cursor: move;
+}
+
+.ov-edit-bar::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ov-accent);
+}
+
+.ov-edit-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-done {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #2a6ee0;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.ov-done:hover {
+  background: #3a7cec;
+}
+
+.ov-done:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.ov-resize {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px 0 7px 0;
+  background: var(--ov-accent);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.ov-resize svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}

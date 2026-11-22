@@ -1,0 +1,122 @@
+import type { RecordedRide, RideSample } from '../types';
+
+/** Aggregates of a recorded ride, used for the FIT lap/session and the ride list. */
+export interface RideSummary {
+  /** Unix epoch ms of the start (earliest of `startedAt` and the first sample). */
+  startTime: number;
+  /** Unix epoch ms of the last sample (equals `startTime` for an empty ride). */
+  endTime: number;
+  /** Wall-clock duration in seconds, pauses included. */
+  elapsedS: number;
+  /** Recorded (moving/timer) duration in seconds, pauses excluded. */
+  durationS: number;
+  distanceM: number;
+  avgSpeedMps: number;
+  maxSpeedMps: number;
+  /** Mean power over all samples (zeros included). */
+  avgPowerW: number;
+  maxPowerW: number;
+  /** Mean cadence over samples with cadence > 0 (Garmin's default "exclude zeros"). */
+  avgCadenceRpm: number;
+  maxCadenceRpm: number;
+  /** `null` when no sample carries heart rate. */
+  avgHeartRateBpm: number | null;
+  maxHeartRateBpm: number | null;
+  /** Mechanical work in kJ (sum of power × sample interval). */
+  workKj: number;
+  /**
+   * Estimated energy expenditure in kcal. Uses the common cycling approximation
+   * kcal ≈ kJ of mechanical work: gross efficiency (~24 %) and the kJ→kcal
+   * factor (1 / 4.184) roughly cancel out.
+   */
+  caloriesKcal: number;
+  sampleCount: number;
+}
+
+/** Longest interval (s) a single sample may contribute to work — guards against gaps. */
+const MAX_SAMPLE_DT_S = 5;
+
+const fin = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Samples usable for encoding: those with a finite timestamp. */
+export function usableSamples(ride: RecordedRide): RideSample[] {
+  return ride.samples.filter((s) => fin(s.timestamp));
+}
+
+export function rideSummary(ride: RecordedRide): RideSummary {
+  const samples = usableSamples(ride);
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+
+  const candidates = [ride.startedAt, first?.timestamp].filter(fin);
+  const startTime = candidates.length > 0 ? Math.min(...candidates) : 0;
+  const endTime = last ? Math.max(last.timestamp, startTime) : startTime;
+
+  let durationS = 0;
+  let distanceM = 0;
+  let maxSpeed = 0;
+  let powerSum = 0;
+  let powerN = 0;
+  let maxPower = 0;
+  let cadSum = 0;
+  let cadN = 0;
+  let maxCad = 0;
+  let hrSum = 0;
+  let hrN = 0;
+  let maxHr = 0;
+  let workJ = 0;
+  let prevElapsed = 0;
+
+  for (const s of samples) {
+    if (fin(s.elapsedS)) {
+      durationS = Math.max(durationS, s.elapsedS);
+    }
+    if (fin(s.distanceM)) distanceM = Math.max(distanceM, s.distanceM);
+    if (fin(s.speedMps) && s.speedMps > maxSpeed) maxSpeed = s.speedMps;
+    if (fin(s.powerW)) {
+      const p = Math.max(0, s.powerW);
+      powerSum += p;
+      powerN++;
+      if (p > maxPower) maxPower = p;
+      let dt = 1;
+      if (fin(s.elapsedS)) {
+        dt = Math.min(MAX_SAMPLE_DT_S, Math.max(0, s.elapsedS - prevElapsed));
+      }
+      workJ += p * dt;
+    }
+    if (fin(s.elapsedS)) prevElapsed = s.elapsedS;
+    if (fin(s.cadenceRpm) && s.cadenceRpm > 0) {
+      cadSum += s.cadenceRpm;
+      cadN++;
+      if (s.cadenceRpm > maxCad) maxCad = s.cadenceRpm;
+    }
+    if (fin(s.heartRateBpm) && s.heartRateBpm > 0) {
+      hrSum += s.heartRateBpm;
+      hrN++;
+      if (s.heartRateBpm > maxHr) maxHr = s.heartRateBpm;
+    }
+  }
+
+  // Fall back to the sample count (1 Hz) if elapsedS was unusable.
+  if (durationS === 0 && samples.length > 1) durationS = samples.length;
+
+  const workKj = workJ / 1000;
+  return {
+    startTime,
+    endTime,
+    elapsedS: (endTime - startTime) / 1000,
+    durationS,
+    distanceM,
+    avgSpeedMps: durationS > 0 ? distanceM / durationS : 0,
+    maxSpeedMps: maxSpeed,
+    avgPowerW: powerN > 0 ? powerSum / powerN : 0,
+    maxPowerW: maxPower,
+    avgCadenceRpm: cadN > 0 ? cadSum / cadN : 0,
+    maxCadenceRpm: maxCad,
+    avgHeartRateBpm: hrN > 0 ? hrSum / hrN : null,
+    maxHeartRateBpm: hrN > 0 ? maxHr : null,
+    workKj,
+    caloriesKcal: workKj,
+    sampleCount: samples.length,
+  };
+}

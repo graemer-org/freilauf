@@ -1,0 +1,13 @@
+# Keep the build context small and free of host build output.
+**/node_modules
+**/dist
+**/out
+**/release
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/*.log
+.git
+.github
+.DS_Store
+docs
