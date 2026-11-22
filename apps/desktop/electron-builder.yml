@@ -1,0 +1,96 @@
+# electron-builder configuration for the Freilauf desktop app.
+# Build and package for the current OS:  pnpm --filter @freilauf/desktop dist
+# How releases are cut and what each artifact is: docs/releasing.md
+# Option reference: node_modules/app-builder-lib/scheme.json (electron-builder 26)
+
+appId: org.graemer.freilauf
+productName: Freilauf
+copyright: Copyright © 2026 Freilauf contributors
+
+directories:
+  buildResources: build # icon.png, entitlements, installer.nsh
+  output: release/${version}
+
+# electron-vite bundles everything main, preload and the renderers need
+# (including the @freilauf/* workspace packages) into out/. At runtime main
+# only requires `electron` and Node built-ins, so no node_modules are shipped.
+# The negated pattern also stops electron-builder from copying the
+# `dependencies` (react, zustand, workspace sources) that are already bundled.
+files:
+  - out/**/*
+  - package.json
+  - '!node_modules/**/*'
+# Nothing to rebuild: there are no native modules.
+npmRebuild: false
+asar: true
+
+# Registered in the macOS Info.plist and the Linux .desktop file; Windows uses
+# build/installer.nsh. The app does not handle freilauf:// links yet.
+protocols:
+  - name: Freilauf
+    schemes: [freilauf]
+
+# No auto-update yet (future work, see docs/releasing.md); `gh` uploads the
+# artifacts in CI, so electron-builder never publishes.
+publish: null
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  # Unsigned: without CSC_LINK / WIN_CSC_LINK electron-builder skips signing.
+  # To sign later, set those secrets (or azureSignOptions) - see docs/releasing.md.
+
+nsis:
+  # One-click, per-user install into %LOCALAPPDATA%\Programs\Freilauf:
+  # no admin rights and no UAC prompt.
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-${version}-win-${arch}-setup.${ext}
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Freilauf
+  deleteAppDataOnUninstall: false
+
+mac:
+  category: public.app-category.healthcare-fitness
+  # One universal (arm64 + x64) build: one download that works on every Mac,
+  # at roughly twice the size of a single-arch build.
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  # No Developer ID certificate yet: ad-hoc sign ("-") so the app at least
+  # carries a valid signature (unsigned arm64 apps do not launch at all).
+  # To sign with a real certificate, remove this line and provide CSC_LINK /
+  # CSC_KEY_PASSWORD (+ APPLE_API_* for notarisation) - see docs/releasing.md.
+  identity: '-'
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: false
+  darkModeSupport: true
+  extendInfo:
+    NSBluetoothAlwaysUsageDescription: Freilauf uses Bluetooth to connect to your smart trainer, heart-rate strap and handlebar controllers.
+    NSBluetoothPeripheralUsageDescription: Freilauf uses Bluetooth to connect to your smart trainer, heart-rate strap and handlebar controllers.
+
+dmg:
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  executableName: freilauf
+  # .desktop file name = desktopName in package.json, which Electron also uses
+  # as the Wayland app_id / X11 WM_CLASS, so windows match their launcher.
+  syncDesktopName: true
+  category: Utility
+  synopsis: Local-first indoor cycling
+  # Bluetooth on Linux goes through BlueZ over D-Bus; nothing to declare here.

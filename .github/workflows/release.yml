@@ -1,0 +1,134 @@
+name: Release
+
+# Builds the installers for Windows, macOS and Linux.
+# - Push a tag `vX.Y.Z` (matching apps/desktop/package.json): builds everything
+#   and creates a DRAFT GitHub Release with the installers and SHA256SUMS.txt
+#   attached. A maintainer reviews and publishes it by hand.
+# - Run manually (workflow_dispatch): dry run. Builds everything and uploads
+#   the installers as workflow artifacts only; nothing is published.
+# See docs/releasing.md.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify version, typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from "packageManager" in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches the app version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match apps/desktop/package.json version $version (expected v$version)"
+            exit 1
+          fi
+          echo "Releasing version $version"
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  package:
+    name: Package (${{ matrix.platform }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # No Apple Developer ID certificate yet: never pick one up from the
+      # keychain. electron-builder.yml ad-hoc signs the macOS app instead.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # electron-vite build, bundle check, electron-builder for the runner's OS
+      # (targets in apps/desktop/electron-builder.yml). Never publishes.
+      - run: pnpm --filter @freilauf/desktop dist
+      - name: List artifacts
+        run: ls -la apps/desktop/release/*/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.platform }}
+          path: |
+            apps/desktop/release/*/Freilauf-*.exe
+            apps/desktop/release/*/Freilauf-*.zip
+            apps/desktop/release/*/Freilauf-*.dmg
+            apps/desktop/release/*/Freilauf-*.AppImage
+          if-no-files-found: error
+          compression-level: 0 # already compressed
+          retention-days: 14
+
+  release:
+    name: Draft GitHub Release
+    needs: package
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Re-run of this workflow: replace the assets, keep the notes.
+            gh release upload "$TAG" dist/* --clobber
+          else
+            prerelease=()
+            case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+            gh release create "$TAG" dist/* \
+              --draft \
+              --verify-tag \
+              --title "Freilauf ${TAG#v}" \
+              --generate-notes \
+              "${prerelease[@]}"
+          fi

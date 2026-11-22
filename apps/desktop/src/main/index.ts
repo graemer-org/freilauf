@@ -31,7 +31,7 @@ if (process.env.FREILAUF_USER_DATA) {
 const simMode = process.env.FREILAUF_SIM === '1';
 const bleLogEnabled = process.env.FREILAUF_BLE_LOG === '1';
 
-if (process.platform === 'win32') app.setAppUserModelId('org.freilauf.desktop');
+if (process.platform === 'win32') app.setAppUserModelId('org.graemer.freilauf');
 
 // The ride runs in the main window, which is usually hidden behind a
 // fullscreen video. Chromium would throttle its timers (down to once a minute

@@ -48,6 +48,31 @@ sponsored by Wahoo Fitness, Zwift or any other company mentioned. All product
 names and trademarks belong to their respective owners and are used only to
 describe compatibility.
 
+## Install
+
+Download the installer for your system from the
+[latest GitHub Release](https://github.com/graemer-org/freilauf/releases/latest):
+
+| System                              | File                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| Windows 10/11 (x64)                 | `Freilauf-<version>-win-x64-setup.exe` (or the portable `…-win-x64.zip`) |
+| macOS 12+ (Apple Silicon and Intel) | `Freilauf-<version>-mac-universal.dmg`                                   |
+| Linux (x64)                         | `Freilauf-<version>-linux-x86_64.AppImage` (`chmod +x`, then run it)     |
+
+The builds are **not code-signed yet**, so your system will warn you once:
+
+- **Windows:** SmartScreen says "Windows protected your PC" / unknown
+  publisher. Click **More info → Run anyway**. The installer needs no admin
+  rights (it installs for the current user only).
+- **macOS:** Gatekeeper says the app "cannot be opened" or "is damaged".
+  Drag Freilauf to Applications, then **right-click → Open** (on macOS 15+:
+  try to open it once, then **System Settings → Privacy & Security → Open
+  Anyway**), or run `xattr -dr com.apple.quarantine /Applications/Freilauf.app`.
+  Allow Bluetooth access when asked.
+
+`SHA256SUMS.txt` in each release lists the checksums. Details and how
+releases are made: [docs/releasing.md](docs/releasing.md).
+
 ## Quick start
 
 Requires Node.js ≥ 22.18 and pnpm 10 (`corepack enable` picks up the version

@@ -10,6 +10,7 @@
     "dev": "pnpm --filter @freilauf/desktop dev",
     "dev:sim": "pnpm --filter @freilauf/desktop dev:sim",
     "build": "pnpm --filter @freilauf/desktop build",
+    "dist": "pnpm --filter @freilauf/desktop dist",
     "signalling": "pnpm --filter @freilauf/signalling start",
     "test": "vitest run",
     "test:watch": "vitest",
