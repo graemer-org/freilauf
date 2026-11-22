@@ -67,7 +67,12 @@ describe('sanitizeSettings', () => {
       DEFAULT_SETTINGS,
       problems,
     );
-    expect(s.rider).toEqual({ name: 'Bo', massKg: DEFAULT_SETTINGS.rider.massKg, bikeMassKg: 9 });
+    expect(s.rider).toEqual({
+      name: 'Bo',
+      massKg: DEFAULT_SETTINGS.rider.massKg,
+      bikeMassKg: 9,
+      ftpW: DEFAULT_SETTINGS.rider.ftpW,
+    });
     expect(s.overlay.backdropOpacity).toBe(DEFAULT_SETTINGS.overlay.backdropOpacity);
     expect(s.overlay.bounds).toBeNull();
     expect(s.overlay.tiles).toEqual([{ stat: 'power', size: 'm' }]);

@@ -22,6 +22,9 @@ function baseState(): AppState {
     notices: [],
     overlayEditMode: false,
     simEffortW: 180,
+  workouts: [],
+  selectedWorkoutId: null,
+  ftpOutcome: null,
   };
 }
 

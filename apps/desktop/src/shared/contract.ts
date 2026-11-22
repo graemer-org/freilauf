@@ -16,7 +16,9 @@ export type StatId =
   | 'gear'
   | 'time'
   | 'distance'
-  | 'gradient';
+  | 'gradient'
+  | 'targetPower'
+  | 'intervalRemaining';
 
 export const ALL_STATS: readonly StatId[] = [
   'power',
@@ -29,6 +31,8 @@ export const ALL_STATS: readonly StatId[] = [
   'time',
   'distance',
   'gradient',
+  'targetPower',
+  'intervalRemaining',
 ];
 
 export interface OverlayTile {
@@ -63,7 +67,13 @@ export interface RememberedDevice {
 export type ShiftAction = 'shiftUp' | 'shiftDown' | 'none';
 
 export interface Settings {
-  rider: { name: string; massKg: number; bikeMassKg: number };
+  rider: {
+    name: string;
+    massKg: number;
+    bikeMassKg: number;
+    /** Functional threshold power in watts; workouts are scaled by it. */
+    ftpW: number;
+  };
   /** Devices to reconnect to on start. */
   devices: Partial<Record<DeviceKind, RememberedDevice>>;
   shifting: {
@@ -79,7 +89,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  rider: { name: 'Rider', massKg: 75, bikeMassKg: 8 },
+  rider: { name: 'Rider', massKg: 75, bikeMassKg: 8, ftpW: 200 },
   devices: {},
   shifting: {
     physicalRatio: 2.4,
@@ -127,6 +137,47 @@ export interface LiveState {
   devices: Record<DeviceKind, DeviceStatus | null>;
   group: { roomCode: string; riders: GroupRider[] } | null;
   localName: string;
+  /** Present while a structured workout is loaded for the current ride. */
+  workout?: WorkoutLive | null;
+}
+
+/** The running workout as shown in the main window and overlay. */
+export interface WorkoutLive {
+  id: string;
+  name: string;
+  /** 'erg': the trainer holds targetPowerW. 'free': simulation mode, rider paces. */
+  mode: 'erg' | 'free';
+  /** e.g. "Interval 3/8 · on" */
+  label: string;
+  targetPowerW: number | null;
+  cadenceRpm?: number;
+  elapsedS: number;
+  totalDurationS: number;
+  segmentElapsedS: number;
+  segmentRemainingS: number;
+  totalRemainingS: number;
+  next?: { label: string; targetPowerW: number | null; durationS: number };
+  /** Coaching text to show right now, if any. */
+  cue?: string;
+  /** 1 = as written; the rider can scale all targets 0.5–1.5. */
+  intensity: number;
+  finished: boolean;
+  /** Set when the workout is an FTP test. */
+  ftpTest?: 'twentyMinute' | 'ramp';
+  /** False before the ride starts (workout selected, waiting). */
+  started: boolean;
+}
+
+/** Result of an FTP test, offered to the rider after the ride. */
+export interface FtpTestOutcome {
+  kind: 'twentyMinute' | 'ramp';
+  valid: boolean;
+  /** Why the result is not valid, in plain words. */
+  reason?: string;
+  ftpW: number;
+  /** 20-minute average or best one-minute power, depending on the test. */
+  basisPowerW: number;
+  previousFtpW: number;
 }
 
 /** A device offered by Chromium's Bluetooth chooser (select-bluetooth-device). */

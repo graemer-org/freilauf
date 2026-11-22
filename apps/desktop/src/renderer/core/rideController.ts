@@ -12,7 +12,22 @@ import type { RecordedRide, RideSnapshot } from '@freilauf/session';
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
 import { DEFAULT_BIKE, SoftwareShifter } from '@freilauf/sim';
-import type { DeviceStatus, LiveState, Settings } from '../../shared/contract';
+import type { FtpTestProtocol, Timeline, Workout } from '@freilauf/workouts';
+import {
+  WorkoutRunner,
+  buildTimeline,
+  detectRampFailure,
+  evaluateRampTest,
+  evaluateTwentyMinuteTest,
+  ftpTestEffortWindow,
+} from '@freilauf/workouts';
+import type {
+  DeviceStatus,
+  FtpTestOutcome,
+  LiveState,
+  Settings,
+  WorkoutLive,
+} from '../../shared/contract';
 
 /** The part of a group ride the controller needs; implemented by @freilauf/p2p's GroupRide. */
 export interface GroupLink {
@@ -45,6 +60,34 @@ const MIN_RIDE_SAMPLES = 10;
 
 type Devices = { trainer: Trainer; heartRate: HeartRateSensor; controller: Controller };
 
+/** A workout chosen for the next (or current) ride. */
+interface Plan {
+  workout: Workout;
+  timeline: Timeline;
+  ftpTest: FtpTestProtocol | null;
+  /** Created when the ride starts. */
+  runner: WorkoutRunner | null;
+  /** What the trainer was last told, so we only write on change. */
+  applied: { mode: 'erg' | 'free'; targetPowerW: number | null; gradePercent?: number } | null;
+  /** Ramp test: the rider could not hold the target any more. */
+  endedEarly: boolean;
+  lastFailureCheckS: number;
+}
+
+export interface FinishedRide {
+  ride: RecordedRide;
+  /** Present when the ride was an FTP test. */
+  ftpTest: FtpTestOutcome | null;
+}
+
+const INVALID_REASONS: Record<string, string> = {
+  'invalid-window': 'The test effort could not be located in the ride.',
+  'window-too-short': 'The test effort was too short.',
+  'cut-short': 'The ride ended before the test effort was complete.',
+  'too-few-samples': 'Too much of the test effort has no power data.',
+  'no-power': 'No power was recorded during the test effort.',
+};
+
 /**
  * Wires devices, virtual shifting, the ride session and the group together.
  * No timers and no DOM: the owner calls tick() about four times per second.
@@ -60,6 +103,7 @@ export class RideController {
   #group: GroupLink | null = null;
   #gradePercent = 0;
   #lastAutosaveAt = 0;
+  #plan: Plan | null = null;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -95,12 +139,12 @@ export class RideController {
           if (data.powerW !== undefined) this.#session.setPower(data.powerW);
           if (data.cadenceRpm !== undefined) this.#session.setCadence(data.cadenceRpm);
         }),
-        // A (re)connected trainer knows nothing about the current gear and gradient.
+        // A (re)connected trainer knows nothing about the current gear, gradient or target.
         device.onState((state) => {
-          if (state === 'connected') this.#shifter.resync();
+          if (state === 'connected') this.#resyncTrainer();
         }),
       );
-      if (device.state === 'connected') this.#shifter.resync();
+      if (device.state === 'connected') this.#resyncTrainer();
     } else if (device.kind === 'heartRate') {
       subs.push(device.onHeartRate((bpm) => this.#session.setHeartRate(bpm)));
     } else {
@@ -115,6 +159,7 @@ export class RideController {
   updateSettings(settings: Settings): void {
     const before = this.#settings;
     this.#settings = settings;
+    this.#plan?.runner?.setFtp(settings.rider.ftpW);
     const changed =
       before.rider.massKg !== settings.rider.massKg ||
       before.rider.bikeMassKg !== settings.rider.bikeMassKg ||
@@ -126,6 +171,44 @@ export class RideController {
       // Mass changes apply to the next ride; a running session keeps its physics.
       if (this.#session.state === 'idle') this.#session = this.#newSession();
     }
+  }
+
+  /**
+   * Chooses the workout for the next ride (null = free ride). Only possible
+   * while no ride is in progress. Pass the protocol for FTP tests so the
+   * result can be evaluated at the end.
+   */
+  selectWorkout(workout: Workout | null, ftpTest: FtpTestProtocol | null = null): boolean {
+    if (this.#session.state !== 'idle') return false;
+    this.#plan = workout
+      ? {
+          workout,
+          timeline: buildTimeline(workout),
+          ftpTest,
+          runner: null,
+          applied: null,
+          endedEarly: false,
+          lastFailureCheckS: 0,
+        }
+      : null;
+    return true;
+  }
+
+  get selectedWorkout(): Workout | null {
+    return this.#plan?.workout ?? null;
+  }
+
+  skipWorkoutSegment(): void {
+    this.#plan?.runner?.skipSegment();
+  }
+
+  restartWorkoutSegment(): void {
+    this.#plan?.runner?.back();
+  }
+
+  /** Scales all workout targets; returns the clamped factor in effect. */
+  setWorkoutIntensity(factor: number): number {
+    return this.#plan?.runner?.setIntensity(factor) ?? 1;
   }
 
   shift(delta: number): void {
@@ -142,9 +225,17 @@ export class RideController {
     if (this.#session.state === 'paused') {
       this.#session.resume();
     } else if (this.#session.state === 'idle') {
-      this.#session = this.#newSession();
+      this.#session = this.#newSession(this.#plan?.workout.name);
       this.#session.start();
       this.#lastAutosaveAt = this.#now();
+      if (this.#plan) {
+        this.#plan.runner = new WorkoutRunner(this.#plan.workout, {
+          ftpW: this.#settings.rider.ftpW,
+        });
+        this.#plan.applied = null;
+        this.#plan.endedEarly = false;
+        this.#plan.lastFailureCheckS = 0;
+      }
     }
   }
 
@@ -152,14 +243,18 @@ export class RideController {
     this.#session.pause();
   }
 
-  /** Ends the ride and saves it. Returns the ride, or null if it was too short to keep. */
-  async finish(): Promise<RecordedRide | null> {
+  /** Ends the ride and saves it. Returns null if it was too short to keep. */
+  async finish(): Promise<FinishedRide | null> {
     if (this.#session.state === 'idle') return null;
     const ride = this.#session.finish();
+    const plan = this.#plan;
     this.#session = this.#newSession();
+    // The workout is done with; the next ride is a free ride unless one is chosen again.
+    this.#plan = null;
+    this.#shifter.resync(); // leave ERG: back to the simulated road
     if (ride.samples.length < MIN_RIDE_SAMPLES) return null;
     await this.#options.saveRide(ride, true);
-    return ride;
+    return { ride, ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null };
   }
 
   /** Advances the ride and publishes the live state. */
@@ -168,6 +263,7 @@ export class RideController {
     this.#session.setGradient(this.#gradePercent);
     const ride = this.#session.tick();
     const now = this.#now();
+    const workout = this.#driveWorkout(ride);
 
     if (ride.state !== 'idle' && now - this.#lastAutosaveAt >= AUTOSAVE_INTERVAL_MS) {
       this.#lastAutosaveAt = now;
@@ -197,6 +293,7 @@ export class RideController {
         ? { roomCode: this.#group.roomCode, riders: this.#group.getRiders() }
         : null,
       localName: this.#settings.rider.name,
+      workout,
     };
     this.#options.onLive(live);
     return live;
@@ -218,12 +315,137 @@ export class RideController {
     return { ...DEFAULT_BIKE, totalMassKg: massKg + bikeMassKg };
   }
 
-  #newSession(): RideSession {
+  #newSession(name?: string): RideSession {
     return new RideSession({
       bike: this.#bike(),
       riderMassKg: this.#settings.rider.massKg,
       now: this.#now,
+      name,
     });
+  }
+
+  /** True while the trainer is (or should be) holding a workout's target power. */
+  get #ergActive(): boolean {
+    return this.#plan?.applied?.mode === 'erg';
+  }
+
+  #resyncTrainer(): void {
+    // In ERG the next tick re-sends the target; sending the road would leave ERG.
+    if (this.#plan?.applied) this.#plan.applied = null;
+    else this.#shifter.resync();
+  }
+
+  /** Advances the workout and tells the trainer when the target or mode changed. */
+  #driveWorkout(ride: RideSnapshot): WorkoutLive | null {
+    const plan = this.#plan;
+    if (!plan) return null;
+    const base = {
+      id: plan.workout.id,
+      name: plan.workout.name,
+      totalDurationS: plan.timeline.totalDurationS,
+      ftpTest: plan.ftpTest?.kind,
+    };
+    const runner = plan.runner;
+    if (!runner) {
+      // Selected, ride not started: show what is coming.
+      const first = plan.timeline.segments[0];
+      return {
+        ...base,
+        mode: 'free',
+        label: first?.label ?? '',
+        targetPowerW: null,
+        elapsedS: 0,
+        segmentElapsedS: 0,
+        segmentRemainingS: first ? first.endS - first.startS : 0,
+        totalRemainingS: plan.timeline.totalDurationS,
+        intensity: 1,
+        finished: false,
+        started: false,
+      };
+    }
+
+    const update = runner.update(ride.elapsedS);
+
+    if (plan.ftpTest?.openEnded && !plan.endedEarly && ride.state === 'riding') {
+      const second = Math.floor(ride.elapsedS);
+      if (second > plan.lastFailureCheckS) {
+        plan.lastFailureCheckS = second;
+        const window = ftpTestEffortWindow(plan.ftpTest);
+        plan.endedEarly = detectRampFailure(
+          this.#session.toRecordedRide().samples,
+          plan.timeline,
+          this.#settings.rider.ftpW,
+          ride.elapsedS,
+          { fromS: window.startS, intensity: update.intensity },
+        );
+      }
+    }
+
+    const finished = update.finished || plan.endedEarly;
+    const mode = finished ? 'free' : update.mode;
+    const targetPowerW = mode === 'erg' ? update.targetPowerW : null;
+    const gradePercent = mode === 'free' && !finished ? update.gradePercent : undefined;
+
+    const applied = plan.applied;
+    const trainer = this.#devices.trainer;
+    if (ride.state !== 'idle' && trainer?.state === 'connected') {
+      if (mode === 'erg' && targetPowerW !== null) {
+        if (applied?.mode !== 'erg' || applied.targetPowerW !== targetPowerW) {
+          plan.applied = { mode, targetPowerW };
+          trainer
+            .setTargetPower(targetPowerW)
+            .catch((err: unknown) =>
+              this.#options.onError?.(`Trainer rejected target power: ${String(err)}`),
+            );
+        }
+      } else if (applied?.mode !== 'free' || applied.gradePercent !== gradePercent) {
+        plan.applied = { mode: 'free', targetPowerW: null, gradePercent };
+        if (gradePercent !== undefined) this.setGradient(gradePercent);
+        this.#shifter.resync();
+      }
+    }
+
+    return {
+      ...base,
+      mode,
+      label: finished ? 'Workout complete' : update.label,
+      targetPowerW,
+      cadenceRpm: finished ? undefined : update.cadenceRpm,
+      elapsedS: update.elapsedS,
+      segmentElapsedS: update.segmentElapsedS,
+      segmentRemainingS: finished ? 0 : update.segmentRemainingS,
+      totalRemainingS: finished ? 0 : update.totalRemainingS,
+      next: finished ? undefined : update.next,
+      cue: finished ? undefined : update.cue?.message,
+      intensity: update.intensity,
+      finished,
+      started: true,
+    };
+  }
+
+  #evaluateFtpTest(protocol: FtpTestProtocol, ride: RecordedRide): FtpTestOutcome {
+    const window = ftpTestEffortWindow(protocol);
+    const previousFtpW = this.#settings.rider.ftpW;
+    if (protocol.kind === 'ramp') {
+      const r = evaluateRampTest(ride.samples, window.startS);
+      return {
+        kind: 'ramp',
+        valid: r.valid,
+        reason: r.reason ? (INVALID_REASONS[r.reason] ?? r.reason) : undefined,
+        ftpW: r.ftpW,
+        basisPowerW: r.bestOneMinutePowerW,
+        previousFtpW,
+      };
+    }
+    const r = evaluateTwentyMinuteTest(ride.samples, window.startS, window.endS);
+    return {
+      kind: 'twentyMinute',
+      valid: r.valid,
+      reason: r.reason ? (INVALID_REASONS[r.reason] ?? r.reason) : undefined,
+      ftpW: r.ftpW,
+      basisPowerW: r.averagePowerW,
+      previousFtpW,
+    };
   }
 
   #newShifter(initialGear?: number): SoftwareShifter {
@@ -232,6 +454,8 @@ export class RideController {
         const trainer = this.#devices.trainer;
         // Without a connected trainer there is nothing to tell; resync() runs on connect.
         if (!trainer || trainer.state !== 'connected') return Promise.resolve();
+        // In ERG the trainer holds a power target; simulation parameters would end that.
+        if (this.#ergActive) return Promise.resolve();
         return trainer.setSimulation(params);
       },
       {

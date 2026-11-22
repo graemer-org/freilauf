@@ -1,5 +1,6 @@
 import type { RecordedRide } from '@freilauf/session';
 import { createSimulatedRig } from '@freilauf/sim';
+import { TWENTY_MINUTE_TEST, getBuiltinWorkout } from '@freilauf/workouts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LiveState } from '../../shared/contract';
 import { DEFAULT_SETTINGS } from '../../shared/contract';
@@ -54,7 +55,8 @@ describe('RideController with the simulated rig', () => {
     expect(live.devices.trainer).toEqual({ name: rig.trainer.name, state: 'connected' });
 
     const ride = await controller.finish();
-    expect(ride?.samples).toHaveLength(60);
+    expect(ride?.ride.samples).toHaveLength(60);
+    expect(ride?.ftpTest).toBeNull();
     expect(saved.at(-1)).toMatchObject({ finished: true });
     expect(saved.filter((s) => !s.finished)).toHaveLength(2); // autosaves at 30 s and 60 s
     expect(controller.rideState).toBe('idle');
@@ -133,6 +135,96 @@ describe('RideController with the simulated rig', () => {
     expect(sent.at(-1)).toMatchObject({ name: 'Rider', gear: 12 });
     expect(await controller.finish()).toBeNull();
     expect(saved).toHaveLength(0);
+    await rig.dispose();
+  });
+  it('structured workout: ERG targets follow the plan, shifting does not leave ERG', async () => {
+    const { rig, controller, run, errors } = await setup();
+    const workout = getBuiltinWorkout('builtin-sweet-spot-3x12')!;
+    expect(controller.selectWorkout(workout)).toBe(true);
+    const waiting = await run(1);
+    expect(waiting.workout).toMatchObject({ name: workout.name, started: false });
+
+    controller.start();
+    expect(controller.selectWorkout(null)).toBe(false); // not while riding
+    const early = await run(30);
+    expect(early.workout).toMatchObject({ mode: 'erg', started: true, finished: false });
+    const target = early.workout!.targetPowerW!;
+    expect(target).toBeGreaterThan(50);
+    expect(rig.trainer.mode).toBe('erg');
+    expect(rig.trainer.targetPowerW).toBe(target);
+    // The simulated trainer converges on the target.
+    expect(Math.abs(early.ride.power3sW - target)).toBeLessThan(25);
+
+    const simulationCommands = () =>
+      rig.trainer.commands.filter((c) => c.type === 'simulation').length;
+    const before = simulationCommands();
+    controller.shift(2);
+    controller.setGradient(3);
+    await run(2);
+    expect(simulationCommands()).toBe(before);
+    expect(rig.trainer.mode).toBe('erg');
+
+    // Intensity scales the target; skipping moves on.
+    controller.setWorkoutIntensity(0.5);
+    const eased = await run(2);
+    expect(eased.workout!.intensity).toBe(0.5);
+    expect(eased.workout!.targetPowerW!).toBeLessThan(target);
+    const label = eased.workout!.label;
+    controller.skipWorkoutSegment();
+    expect((await run(1)).workout!.label).not.toBe(label);
+
+    // After a trainer drop the target is sent again.
+    const commands = rig.trainer.commands.length;
+    rig.trainer.simulateDrop();
+    await run(5);
+    expect(rig.trainer.commands.length).toBeGreaterThan(commands);
+    expect(rig.trainer.mode).toBe('erg');
+
+    // Finishing returns the trainer to the simulated road and clears the plan.
+    const finished = await controller.finish();
+    expect(finished?.ride.name).toBe(workout.name);
+    await run(1);
+    expect(rig.trainer.mode).toBe('sim');
+    expect(controller.selectedWorkout).toBeNull();
+    expect(errors).toEqual([]);
+    await rig.dispose();
+  });
+
+  it('20-minute FTP test: the effort is a free ride and yields 95 % of its average', async () => {
+    const { rig, controller, run } = await setup();
+    controller.selectWorkout(TWENTY_MINUTE_TEST.workout, TWENTY_MINUTE_TEST);
+    controller.start();
+    const total = controller.tick().workout!.totalDurationS;
+    let sawFreeEffort = false;
+    for (let t = 0; t < total; t += 60) {
+      const live = await run(60);
+      if (live.workout!.mode === 'free' && !live.workout!.finished) {
+        sawFreeEffort = true;
+        expect(rig.trainer.mode).toBe('sim');
+      }
+    }
+    expect(sawFreeEffort).toBe(true);
+    const done = await run(2);
+    expect(done.workout!.finished).toBe(true);
+
+    const finished = await controller.finish();
+    const outcome = finished!.ftpTest!;
+    expect(outcome).toMatchObject({ kind: 'twentyMinute', valid: true, previousFtpW: 200 });
+    // The simulated rider holds about 180 W in the free effort.
+    expect(outcome.basisPowerW).toBeGreaterThan(150);
+    expect(outcome.basisPowerW).toBeLessThan(210);
+    expect(outcome.ftpW).toBe(Math.round(outcome.basisPowerW * 0.95));
+    await rig.dispose();
+  });
+
+  it('an FTP test that is abandoned early is reported as not valid', async () => {
+    const { rig, controller, run } = await setup();
+    controller.selectWorkout(TWENTY_MINUTE_TEST.workout, TWENTY_MINUTE_TEST);
+    controller.start();
+    await run(60);
+    const finished = await controller.finish();
+    expect(finished!.ftpTest).toMatchObject({ valid: false });
+    expect(finished!.ftpTest!.reason).toBeTruthy();
     await rig.dispose();
   });
 });

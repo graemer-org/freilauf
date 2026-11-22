@@ -53,6 +53,8 @@ const STAT_IDS: Record<StatId, true> = {
   time: true,
   distance: true,
   gradient: true,
+  targetPower: true,
+  intervalRemaining: true,
 };
 const TILE_SIZES: Record<OverlayTile['size'], true> = { s: true, m: true, l: true };
 
@@ -319,6 +321,7 @@ export function sanitizeSettings(
         0,
         60,
       ),
+      ftpW: Math.round(num(rider.ftpW, fallback.rider.ftpW, 'rider.ftpW', problems, 50, 600)),
     },
     devices: sanitizeDevices(root.devices, fallback.devices, problems),
     shifting: {

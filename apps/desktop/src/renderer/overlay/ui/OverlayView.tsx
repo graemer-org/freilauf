@@ -22,7 +22,7 @@ export interface OverlayViewProps {
 function safeValue(stat: StatId, live: LiveState | null): string {
   if (!live) return PLACEHOLDER;
   try {
-    return statValue(stat, live.ride);
+    return statValue(stat, live.ride, live.workout);
   } catch {
     return PLACEHOLDER;
   }

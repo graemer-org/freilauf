@@ -73,6 +73,8 @@ const LABELS: Record<StatId, string> = {
   time: 'Time',
   distance: 'Distance',
   gradient: 'Gradient',
+  targetPower: 'Target',
+  intervalRemaining: 'Interval',
 };
 
 const UNITS: Record<StatId, string> = {
@@ -86,6 +88,8 @@ const UNITS: Record<StatId, string> = {
   time: '',
   distance: 'km',
   gradient: '%',
+  targetPower: 'W',
+  intervalRemaining: '',
 };
 
 export function statLabel(stat: StatId): string {
@@ -101,7 +105,11 @@ const round = (v: number): string => (isFiniteNumber(v) ? fixed(Math.round(v), 0
 const dec = (v: number, d: number): string => (isFiniteNumber(v) ? fixed(v, d) : MISSING);
 
 /** The bare display value of a stat (no unit), `–` when missing. */
-export function statValue(stat: StatId, ride: RideSnapshot): string {
+export function statValue(
+  stat: StatId,
+  ride: RideSnapshot,
+  workout?: { targetPowerW: number | null; segmentRemainingS: number; finished: boolean } | null,
+): string {
   switch (stat) {
     case 'power':
       return round(ride.powerW);
@@ -129,5 +137,12 @@ export function statValue(stat: StatId, ride: RideSnapshot): string {
       const text = fixed(ride.gradePercent, 1);
       return ride.gradePercent > 0 && Number(text) !== 0 ? `+${text}` : text;
     }
+    case 'targetPower':
+      // No workout, or a free-ride block: there is no target to show.
+      return workout && !workout.finished && workout.targetPowerW !== null
+        ? round(workout.targetPowerW)
+        : MISSING;
+    case 'intervalRemaining':
+      return workout && !workout.finished ? formatDuration(workout.segmentRemainingS) : MISSING;
   }
 }
