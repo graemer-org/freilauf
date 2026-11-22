@@ -10,6 +10,7 @@ import {
   applySettingsPatch,
   deepMerge,
   forgetDevice,
+  migrateSettings,
   sanitizeSettings,
 } from '../../desktop/src/main/settings';
 import type { DeepPartial, Settings } from '../../desktop/src/shared/contract';
@@ -97,7 +98,11 @@ export class BrowserSettingsStore {
     if (text === null) return structuredClone(defaults);
     try {
       const problems: string[] = [];
-      const settings = sanitizeSettings(JSON.parse(text) as unknown, defaults, problems);
+      const settings = sanitizeSettings(
+        migrateSettings(JSON.parse(text) as unknown),
+        defaults,
+        problems,
+      );
       if (problems.length) this.#log(`stored settings partly invalid: ${problems.join('; ')}`);
       return settings;
     } catch {

@@ -250,19 +250,33 @@ async function groupRide(browser, base) {
     await waitForText(p, 'stat-power', /[1-9]\d+/);
   }
   await a.getByTestId('tab-group').click();
+  // Served from localhost: the same-origin server is configured, with a "this computer" note.
+  check(
+    'group tab offers Create with the same-origin server',
+    (await a.getByTestId('group-create').count()) > 0 &&
+      (await a.getByTestId('group-local-note').count()) === 1,
+  );
   await a.getByTestId('group-create').first().click();
-  const code = (await waitForText(a, 'group-code', /[A-Z0-9]{4,}/)).trim();
+  const code = (await waitForText(a, 'group-code', /[A-Z0-9]{3}-?[A-Z0-9]{3}/)).trim();
+  const link = (await text(a, 'group-link')).trim();
   check(
     'group created over same-origin /signal',
     wsUrls.some((u) => u.endsWith('/signal')),
     `code ${code}, ws ${wsUrls.join(', ')}`,
   );
+  check(
+    'the invite link carries the server',
+    /^freilauf:\/\/join\/[A-Z0-9]{6}\?s=ws/.test(link) &&
+      decodeURIComponent(link.split('?s=')[1] ?? '').endsWith('/signal'),
+    link,
+  );
 
+  // The second rider pastes the whole invite, as a friend would.
   await b.getByTestId('tab-group').click();
-  await b.getByTestId('group-join-input').fill(code.replace(/\s+/g, ''));
+  await b.getByTestId('group-join-input').fill(`Ride with me: ${link}`);
   await b.getByTestId('group-join').click();
-  await waitForText(b, 'group-code', /[A-Z0-9]{4,}/);
-  check('second rider joins with the code', true);
+  await waitForText(b, 'group-code', /[A-Z0-9]{3}-?[A-Z0-9]{3}/);
+  check('second rider joins with the invite link', true);
 
   let seen = false;
   try {
@@ -280,6 +294,14 @@ async function groupRide(browser, base) {
     seen
       ? `A sees: ${(await text(a, 'group-rider')).replace(/\s+/g, ' ')}`
       : 'no remote rider row within 20 s',
+  );
+  const peerStates = await a
+    .getByTestId('group-peer')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('data-state')));
+  check(
+    'the host sees the guest as connected',
+    peerStates.join() === 'connected',
+    peerStates.join(),
   );
   check('no console errors (group pages)', problems.length === 0, problems.join(' | '));
   await ctxA.close();

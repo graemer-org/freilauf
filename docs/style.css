@@ -375,6 +375,38 @@ figcaption {
   padding-left: 0.3em;
 }
 
+.needs {
+  list-style: none;
+  margin: 0 0 1.4em;
+  padding: 0;
+}
+
+.needs li {
+  margin-bottom: 0.75em;
+  padding-left: 0.9em;
+  border-left: 3px solid var(--accent);
+}
+
+.links a {
+  font-weight: 600;
+}
+
+.links .small a {
+  font-weight: 400;
+}
+
+.doc-cols {
+  display: grid;
+  gap: 1rem 3rem;
+  margin-top: 1.5rem;
+}
+
+@media (min-width: 860px) {
+  .doc-cols {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .note {
   color: var(--text-2);
   font-size: 0.95em;

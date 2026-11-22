@@ -98,7 +98,8 @@ is opened over plain HTTP.
 The NAS does not need to be reachable from the internet for solo riding — only
 the name must resolve to the NAS on your network and the certificate must be
 valid. For group rides with friends elsewhere, they need to reach the same
-HTTPS address.
+HTTPS address from the internet: see
+[Host rides for your friends](group-rides.md#b-on-a-nas-with-a-reverse-proxy-example-synology).
 
 No public name at all? Alternatives, in order of preference:
 
@@ -122,7 +123,7 @@ reverse proxy's default 60 s read timeout from closing the connection.
 | Settings           | JSON file in the user data folder                                                            | `localStorage` of this browser, for this address; synced between open tabs                                                                                                                                                                                                                                                                 |
 | Rides              | JSON files; "Open folder"                                                                    | IndexedDB of this browser, for this address. **"Export .fit" downloads the file.** Clearing site data deletes rides — export the ones you keep.                                                                                                                                                                                            |
 | Browser support    | — (bundled Chromium)                                                                         | Chrome or Edge (desktop, Android). Not Firefox, not Safari, not any browser on iPhone/iPad. Brave: enable `brave://flags/#brave-web-bluetooth-api`.                                                                                                                                                                                        |
-| Group rides        | Signalling server set in Settings                                                            | Defaults to the same address, `wss://<host>/signal` (or `ws://` over plain HTTP); can be changed in Settings                                                                                                                                                                                                                               |
+| Group rides        | Join with an invite link; to host, set a signalling server once (Group tab or Settings)      | Defaults to the same address, `wss://<host>/signal` (or `ws://` over plain HTTP); can be changed in Settings                                                                                                                                                                                                                               |
 | Simulation         | `pnpm dev:sim`                                                                               | Add `?sim=1` to the address                                                                                                                                                                                                                                                                                                                |
 | Diagnostic log     | always on, `userData/logs/freilauf.log`; `FREILAUF_BLE_LOG=1` adds every raw frame           | always on, in memory for the tab; _Export log_ downloads it; warnings/errors also in the console; `freilaufDiagnostics()` prints the buffer; `?blelog=1` adds raw frames                                                                                                                                                                   |
 
@@ -132,15 +133,20 @@ settings and rides, and paired devices must be paired again for each.
 
 ## Group rides through the same port
 
-The container also is a signalling server: create a group in the **Group**
-tab, share the room code, and others join with it — from the web version on
-the same address, or from the desktop app with **Settings → Group →
-Signalling server URL** set to `wss://<your-host>/signal`.
+The container is also a group-ride signalling server, at `/signal` on the same address. Riders
+who open your web version use it automatically: create a ride in the **Group** tab and send
+the **invite link**. Friends paste the link into their Group tab — in the web version or the
+desktop app — and need nothing else, because the link carries the server address
+(`wss://<your-host>/signal`).
 
-The server only relays the WebRTC handshake; ride data flows directly between
-the riders' browsers (see [p2p.md](p2p.md)). Riders behind restrictive
-(symmetric) NATs may not be able to connect to each other — there is no TURN
-relay.
+For friends outside your home, that address must be reachable from the internet over HTTPS
+(port forwarding to the reverse proxy above). The rider guide,
+[group-rides.md](group-rides.md), walks through it, including how to check it and what the
+server sees.
+
+The server only relays the WebRTC handshake; ride data flows directly between the riders'
+browsers. Riders behind restrictive (symmetric) NATs may not be able to connect to each other —
+there is no TURN relay. Technical details: [p2p.md](p2p.md).
 
 ## Troubleshooting
 
@@ -161,16 +167,18 @@ Bluetooth), then reload.
 to another app (Zwift, the manufacturer's app, the desktop Freilauf). Close
 it, wake the trainer, and try again.
 
-**Group ride: "connecting" forever or an error** — the WebSocket to `/signal`
-is blocked. With a reverse proxy, make sure the **WebSocket** custom headers
+**Group ride: "Server not reachable" or "That address is not a group-ride
+server"** — the WebSocket to `/signal` is blocked. **Test connection** in the
+Group tab checks it from the app. With a reverse proxy, make sure the **WebSocket** custom headers
 are enabled on the entry. Check in the browser's DevTools → Network → WS that
 `wss://<host>/signal` connects (101 Switching Protocols). Opening
 `https://<host>/signal` in a tab must answer "connect via WebSocket" (HTTP 426)
 — if you get the app or a 404 instead, the proxy is not forwarding that path.
 
-**Riders join but do not see each other** — the signalling worked but the
-direct WebRTC connection did not (strict firewalls / NAT). Try another
-network for one of the riders.
+**Riders join but do not see each other** ("cannot connect" next to a rider)
+— the signalling worked but the direct WebRTC connection did not (strict
+firewalls / NAT). Try another network for one of the riders. More in the
+[group-ride troubleshooting](group-rides.md#troubleshooting).
 
 **"Pop-out stats" button missing** — Document Picture-in-Picture needs Chrome
 or Edge 116 or newer on desktop.

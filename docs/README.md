@@ -1,5 +1,19 @@
 # Freilauf docs
 
+## For riders
+
+- [getting-started.md](getting-started.md) — build or install, first start, pairing devices,
+  the overlay and its hotkey, simulation mode, where the log is
+- [group-rides.md](group-rides.md) — ride with friends: join with an invite link, or host a
+  signalling server (Docker, NAS, small server), privacy, troubleshooting
+- [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
+  NAS, and how it differs from the desktop app
+- [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it is, how to export
+  it, what it contains and what it leaves out
+- [Reporting a hardware test](../README.md#reporting-a-hardware-test) — what to put in an issue
+
+The rest of this page is technical: decisions, protocols and how features are built.
+
 ## Architecture decisions (`adr/`)
 
 | ADR                                  | Topic                                                                    |
@@ -19,11 +33,11 @@ Anything not yet confirmed on real hardware is marked unverified.
   Zwift Ride smart frame (proprietary, **partly verified**), including how to
   make a controller capture
 
-## Features
+## Features (technical)
 
 - [p2p.md](p2p.md) — peer-to-peer group rides: room codes, the signalling
   server, the WebRTC mesh and its message protocol, shared documents and the
-  synchronised start
+  synchronised start (for riders: [group-rides.md](group-rides.md))
 - [workouts.md](workouts.md) — structured workouts: model, ERG runner,
   `.zwo` import/export, built-in library, FTP tests
 - [community.md](community.md) — points, totals, friends, challenges and
@@ -31,17 +45,10 @@ Anything not yet confirmed on real hardware is marked unverified.
 
 ## Running and shipping
 
-- [docker.md](docker.md) — the browser version with Docker Compose, incl.
-  HTTPS on a Synology NAS, and how it differs from the desktop app
 - [releasing.md](releasing.md) — installers, the release workflow, unsigned
   builds
 - [website.md](website.md) — the project website (`index.html` in this folder) and how it is
   published with GitHub Pages.
-
-## Diagnostics
-
-- [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it
-  is, how to export it, what it contains and what it leaves out
 
 ## Development
 
@@ -54,7 +61,7 @@ pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 | `pnpm dev:sim`    | Same, with simulated devices (`FREILAUF_SIM=1`)                   |
 | `pnpm build`      | Production build of the desktop app                               |
 | `pnpm dist`       | Build installers for the current system (electron-builder)        |
-| `pnpm signalling` | Run the signalling server (`ws://localhost:8787`)                 |
+| `pnpm signalling` | Run the signalling server on port 8787 (see group-rides.md)       |
 | `pnpm test`       | Unit tests (Vitest) for all packages                              |
 | `pnpm test:watch` | Vitest in watch mode                                              |
 | `pnpm test:e2e`   | Build the desktop app and run the Electron e2e tests (Playwright) |

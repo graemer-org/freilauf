@@ -65,6 +65,17 @@ function liveState(overrides: Partial<LiveState> = {}): LiveState {
   };
 }
 
+function joinedGroup(roomCode: string, joinLink: string): AppState['group'] {
+  return {
+    phase: 'joined',
+    roomCode,
+    joinLink,
+    role: 'host',
+    signallingUrl: 'wss://signal.example.org',
+    peers: [],
+  };
+}
+
 /** Just enough of `App` for rendering; actions are never called during SSR. */
 function stubApp(state: AppState, extra: Record<string, unknown> = {}): App {
   const noop = (): void => undefined;
@@ -197,7 +208,7 @@ describe('MainApp (SSR)', () => {
         ...structuredClone(DEFAULT_SETTINGS),
         devices: { trainer: { id: 't1', name: 'Trainer' } },
       },
-      group: { phase: 'joined', roomCode: 'QX7-K2M', joinLink: 'freilauf://join/QX7-K2M' },
+      group: joinedGroup('QX7-K2M', 'freilauf://join/QX7-K2M'),
       live: liveState({
         group: {
           roomCode: 'QX7-K2M',
@@ -245,7 +256,10 @@ describe('MainApp (SSR)', () => {
     expect(html).toContain('−1.2 km');
     expect(html).toContain('rider-local');
     expect(html).toContain('rider-stale');
-    expect(html).toContain('ws://localhost:8787');
+    expect(html).toContain('signal.example.org');
+    expect(html).toContain('data-testid="group-link"');
+    // Riders are visible, so the room is not shown as empty.
+    expect(html).not.toContain('data-testid="group-empty"');
   });
 });
 
@@ -370,7 +384,7 @@ describe('Workouts tab (SSR)', () => {
 
   it('shows group sharing only when joined and the app can share', () => {
     const shared = withWorkouts({
-      group: { phase: 'joined', roomCode: 'QX7', joinLink: 'x' },
+      group: joinedGroup('QX7', 'x'),
       sharedWorkouts: [{ peerId: 'p1', peerName: 'Ben', workout: { ...imported, id: 'shared-1' } }],
     });
     expect(renderTab(shared, 'workouts')).not.toContain('Shared by the group');
@@ -406,11 +420,9 @@ describe('Ride tab with a workout (SSR)', () => {
     expect(html).not.toContain('data-testid="workout-panel"');
     expect(html).not.toContain('data-testid="workout-start-together"');
     // In a group, with the method available: start together.
-    const grouped = renderTab(
-      { ...state, group: { phase: 'joined', roomCode: 'Q', joinLink: 'x' } },
-      'ride',
-      { startTogether: () => undefined },
-    );
+    const grouped = renderTab({ ...state, group: joinedGroup('Q', 'x') }, 'ride', {
+      startTogether: () => undefined,
+    });
     expect(grouped).toContain('data-testid="workout-start-together"');
     expect(grouped).toContain('Start together in 10 s');
   });

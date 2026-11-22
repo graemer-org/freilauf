@@ -1,4 +1,4 @@
-import { GroupRide, contentHash, parseJoinLink } from '@freilauf/p2p';
+import { GroupRide, SignallingError, contentHash, parseJoinLink } from '@freilauf/p2p';
 import type { GroupConnector, JoinedGroup } from './appStore';
 
 const WORKOUT_KIND = 'workout';
@@ -49,6 +49,13 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
           : listener(e.peerId, e.kind),
       ),
     getPeers: () => ride.getPeers().map((p) => ({ peerId: p.peerId, name: p.name })),
+    getPeerStatuses: () =>
+      ride.getPeers().map((p) => ({
+        peerId: p.peerId,
+        name: p.name,
+        status: p.status,
+        attempts: p.attempts,
+      })),
     onPeerJoined: (listener) => ride.onPeerJoined(listener),
     onPeersChange: (listener) => ride.onChange(listener),
   };
@@ -62,7 +69,7 @@ export const webRtcGroupConnector: GroupConnector = {
 
   async join(codeOrLink, name, signallingUrl) {
     const link = parseJoinLink(codeOrLink);
-    if (!link) throw new Error('That is not a valid room code or join link.');
+    if (!link) throw new SignallingError('invalid-room', 'Not a valid room code or join link.');
     // A link names the signalling server its group lives on; a bare code uses ours.
     return adaptGroupRide(
       await GroupRide.join(link.roomCode, name, {

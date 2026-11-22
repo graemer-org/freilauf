@@ -85,6 +85,16 @@ describe('BrowserSettingsStore', () => {
     expect(s.group.signallingUrl).toBe(web.group.signallingUrl);
   });
 
+  it('replaces the old desktop default with the same-origin server on load', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ group: { signallingUrl: 'ws://localhost:8787' } }),
+    );
+    const s = new BrowserSettingsStore({ storage, defaults: web, ...quiet }).get();
+    expect(s.group.signallingUrl).toBe('wss://nas.example:8443/signal');
+  });
+
   it('forgets a device', () => {
     const store = new BrowserSettingsStore({
       storage: new MemoryStorage(),

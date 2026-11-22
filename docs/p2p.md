@@ -1,4 +1,7 @@
-# Group rides (peer-to-peer)
+# Group rides (peer-to-peer) — technical reference
+
+> This is the technical document: architecture, wire protocol, limits. **To ride with friends or
+> to host rides, read the rider guide: [group-rides.md](group-rides.md).**
 
 Freilauf group rides connect up to 8 friends directly over WebRTC data channels. There is no
 game server: every rider broadcasts their own state, every client renders the others from what

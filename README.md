@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="https://graemer-org.github.io/freilauf/">Website</a> ·
+  <a href="docs/getting-started.md">Getting started</a> ·
   <a href="#get-it">Get it</a> ·
   <a href="#ride-with-friends">Ride with friends</a> ·
   <a href="#join-in">Join in</a> ·
@@ -25,7 +26,7 @@ trainer, heart-rate strap and handlebar controllers, shifts gears in software, a
 transparent stats overlay over whatever is already on your screen.
 
 It starts in seconds and needs no account. Put on a film, a race or a playlist, and ride
-over it. Friends join with a six-letter code and ride with you peer-to-peer. Everything you
+over it. Friends join with an invite link and ride with you peer-to-peer. Everything you
 ride stays on your machine, as plain files in open formats.
 
 <p align="center">
@@ -91,6 +92,9 @@ riders only; standings and challenges between real machines have not been tried 
 
 ## Get it
 
+New here? [Getting started](docs/getting-started.md) walks from the first build to pairing,
+the overlay and simulation mode.
+
 **From source (works today).** You need Node.js ≥ 22.18 and pnpm 10 (`corepack enable` picks
 up the pinned version).
 
@@ -115,22 +119,23 @@ See [docs/docker.md](docs/docker.md).
 
 ## Ride with friends
 
-1. One rider creates a group in the **Group** tab and gets a six-letter room code.
-2. Everyone else enters the code (or opens the join link) and is connected **directly** to
-   every other rider over WebRTC: power, speed, heart rate and position go from rider to rider,
-   not through a server.
-3. Share a workout with the group, and start it together on a countdown. Each rider's targets
-   follow their own FTP.
+- **Join:** a friend sends you an **invite link**; paste it into the **Group** tab. Nothing to
+  set up — the link carries everything.
+- **Host:** one person in the group runs a small **signalling server** — one container, already
+  included in the [browser version](docs/docker.md) — reachable over HTTPS, and enters its
+  address once.
+- **Direct:** there is no account and no Freilauf server. The signalling server only introduces
+  the riders; power, speed, heart rate and position go straight from rider to rider over
+  WebRTC.
 
-The only server involved is a **tiny signalling server** that introduces the riders to each
-other and relays the connection handshake. It stores nothing and sees no ride data. The project
-does not run a public one yet, so one of you runs it — `pnpm signalling`, its
-[Docker image](apps/signalling/README.md), or the browser version's container, which includes
-it — and everyone points the app at it (Settings → Group).
+Up to eight riders in a room. Share a workout with the group and start it together on a
+countdown; each rider's targets follow their own FTP. Connections use public STUN servers and
+no TURN relay, so riders behind some networks (symmetric NAT, common on mobile carriers and
+some company or university networks) cannot connect.
 
-Connections use public STUN servers and no TURN relay, so riders behind some networks
-(symmetric NAT, common on mobile carriers and some company or university networks) will not
-be able to connect. The details, limits and the wire protocol are in [docs/p2p.md](docs/p2p.md).
+**[How to join and host a group ride](docs/group-rides.md)** — including a NAS or a small
+server, how to check it works, and what the server sees. Technical details:
+[docs/p2p.md](docs/p2p.md).
 
 ## Join in
 
@@ -149,7 +154,9 @@ on real hardware and tell us what happened. You do not need to write code.
 - **Design**: the app's look, the overlay, the ride scene, this README.
 - **Translations** — later, once the text settles; say hello if you want to help.
 
-**Reporting a hardware test.** Open an issue and include:
+### Reporting a hardware test
+
+Open an issue and include:
 
 - your operating system and version, and whether you used the desktop app or the browser
   version (which browser);
@@ -197,7 +204,8 @@ Next, roughly in this order of interest — none of it is built yet:
   every device has a simulated counterpart ([ADR 0001](docs/adr/0001-architecture.md)).
 - Virtual shifting scales the road sent to the trainer as FTMS simulation parameters
   ([ADR 0002](docs/adr/0002-virtual-shifting.md)).
-- Group rides are a WebRTC mesh; ride data never touches a server ([p2p](docs/p2p.md)).
+- Group rides are a WebRTC mesh; ride data never touches a server (technical:
+  [p2p](docs/p2p.md); for riders: [group-rides](docs/group-rides.md)).
 
 Commands, environment variables and the full documentation index: [docs/README.md](docs/README.md).
 

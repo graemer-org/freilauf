@@ -18,8 +18,10 @@ const nonEmpty =
     return t.length > 0 && t.length <= max ? t : undefined;
   };
 
+/** A ws(s):// address, or nothing (= no server set up; invite links still work). */
 const validUrl = (text: string): string | undefined => {
   const t = text.trim();
+  if (t === '') return '';
   return t.length <= 500 && /^wss?:\/\/[^\s]+$/i.test(t) ? t : undefined;
 };
 
@@ -335,9 +337,9 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
             value={group.signallingUrl}
             maxLength={500}
             validate={validUrl}
-            errorText="Enter a ws:// or wss:// URL."
-            hint="All riders in a group must use the same server and be able to reach it."
-            placeholder="wss://example.org"
+            errorText="Enter a ws:// or wss:// address, or leave it empty."
+            hint="Only needed to host rides: friends who join with your invite link use it automatically. Leave empty if you only join."
+            placeholder="wss://your-server.example/signal"
             onCommit={(signallingUrl) => update({ group: { signallingUrl } })}
           />
         </div>

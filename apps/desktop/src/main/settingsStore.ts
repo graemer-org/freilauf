@@ -8,7 +8,7 @@ import type { DeviceKind } from '@freilauf/devices';
 import type { DeepPartial, Settings } from '../shared/contract';
 import { DEFAULT_SETTINGS } from '../shared/contract';
 import { writeFileAtomicSync } from './atomicWrite';
-import { applySettingsPatch, forgetDevice, sanitizeSettings } from './settings';
+import { applySettingsPatch, forgetDevice, migrateSettings, sanitizeSettings } from './settings';
 
 export interface SettingsStoreOptions {
   debounceMs?: number;
@@ -57,7 +57,7 @@ export class SettingsStore {
       return sanitizeSettings(undefined, DEFAULT_SETTINGS);
     }
     const problems: string[] = [];
-    const settings = sanitizeSettings(raw, DEFAULT_SETTINGS, problems);
+    const settings = sanitizeSettings(migrateSettings(raw), DEFAULT_SETTINGS, problems);
     if (problems.length > 0) this.log(`ignored invalid settings: ${problems.join('; ')}`);
     return settings;
   }

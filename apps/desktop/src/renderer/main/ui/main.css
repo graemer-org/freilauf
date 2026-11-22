@@ -1758,13 +1758,125 @@ td.actions .button-row {
   margin: 0;
 }
 
-.room {
+/* Setup state: no server configured yet. */
+.group-setup {
+  display: grid;
+  gap: var(--s-5);
+  padding: var(--s-6);
+}
+
+.group-setup-head {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.group-setup-head .hint {
+  max-width: 40rem;
+  font-size: var(--text-md);
+}
+
+.group-paths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--s-4);
+}
+
+.group-path {
+  display: grid;
+  align-content: start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.group-path .join-form {
+  width: 100%;
+  margin: 0;
+}
+
+.server-form {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.server-form > label {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 550;
+}
+
+.group-path input[type='text'] {
+  background: var(--surface);
+}
+
+.probe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.probe-ok {
+  color: var(--ok);
+  font-weight: 550;
+}
+
+.probe-error {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.group-local > summary {
+  padding: 0 var(--s-1);
+}
+
+.group-local > p,
+.group-local > .btn {
+  margin: var(--s-3) var(--s-1) 0;
+}
+
+.group-next {
+  color: var(--text-2);
+}
+
+/* Joined: the invite first, then the code, the peers and the riders. */
+.invite {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--s-4);
   padding: var(--s-5) var(--s-5) var(--s-4);
+}
+
+.invite-text {
+  display: grid;
+  flex: 1 1 22rem;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.invite-link {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--fill);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.room-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  box-shadow: inset 0 1px 0 var(--separator);
 }
 
 .room-label {
@@ -1775,12 +1887,69 @@ td.actions .button-row {
 
 .room-code {
   font-family: var(--font-display);
-  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   letter-spacing: 0.04em;
-  line-height: 1.1;
   user-select: all;
+}
+
+.room-empty,
+.room-peers {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-3) var(--s-5) var(--s-4);
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+.peer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.peer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--fill);
+  font-size: var(--text-sm);
+  font-weight: 550;
+}
+
+.peer-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--off);
+}
+
+.peer-connected .peer-dot {
+  background: var(--ok);
+}
+
+.peer-trouble-note {
+  margin: var(--s-2) 0 0;
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+
+.peer.peer-trouble {
+  background: var(--warn-soft);
+}
+
+.peer-trouble .peer-dot {
+  background: var(--warn);
+}
+
+.peer-state {
+  color: var(--text-2);
+  font-weight: 450;
 }
 
 .riders {
@@ -1807,6 +1976,17 @@ td.actions .button-row {
 
 .server-note {
   padding: 0 var(--s-1);
+}
+
+div.server-note {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.server-note .link:disabled {
+  color: var(--text-2);
+  cursor: default;
+  text-decoration: none;
 }
 
 /* ───────── settings ───────── */

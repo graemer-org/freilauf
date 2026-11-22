@@ -116,6 +116,11 @@ export interface Settings {
     buttons: Partial<Record<ControllerButton, ShiftAction>>;
   };
   overlay: OverlaySettings;
+  /**
+   * `signallingUrl`: the group-ride signalling server this rider hosts rides on
+   * (and joins bare room codes with). '' = none set up: invite links still
+   * work, because they carry the host's server (docs/group-rides.md).
+   */
   group: { signallingUrl: string };
 }
 
@@ -152,8 +157,15 @@ export const DEFAULT_SETTINGS: Settings = {
     showGroup: true,
     editHotkey: 'CommandOrControl+Shift+O',
   },
-  group: { signallingUrl: 'ws://localhost:8787' },
+  group: { signallingUrl: '' },
 };
+
+/**
+ * The default until group rides got their setup screen. It only ever worked
+ * for trying group rides on one computer, so settings that still hold it are
+ * loaded as "not set up" (`migrateSettings` in main/settings.ts).
+ */
+export const LEGACY_DEFAULT_SIGNALLING_URL = 'ws://localhost:8787';
 
 export type DeepPartial<T> = T extends readonly unknown[]
   ? T
