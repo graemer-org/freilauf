@@ -1,0 +1,26 @@
+# Freilauf in the browser: `docker compose up -d`, then open http://localhost:8080
+# (Bluetooth needs HTTPS on any other address — see docs/docker.md).
+#
+# No volumes: settings and rides live in each browser, not on the server.
+services:
+  freilauf:
+    # Name of the locally built image. To use a published image instead,
+    # put its name here and remove `build:`.
+    image: freilauf-web:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: freilauf
+    ports:
+      - '8080:8080'
+    environment:
+      PORT: '8080'
+      # LOG_LEVEL: debug   # log every request and group room open/close
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
