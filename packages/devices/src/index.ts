@@ -8,3 +8,5 @@ export * from './managedDevice';
 export * from './ftmsTrainer';
 export * from './heartRateSensor';
 export * from './testing/fakeGatt';
+export * from './zwiftRide';
+export * from './zwiftRideController';
