@@ -36,6 +36,11 @@ function baseState(): AppState {
     community: new CommunityService({ storage: null }).view,
     lastButton: null,
     levers: null,
+    routes: [],
+    selectedRouteId: null,
+    routeTrack: null,
+    sharedRoutes: [],
+    sharingRouteId: null,
   };
 }
 

@@ -120,3 +120,67 @@ export function rideSummary(ride: RecordedRide): RideSummary {
     sampleCount: samples.length,
   };
 }
+
+/** Position and altitude aggregates of a ride that followed a route. */
+export interface RouteSummary {
+  startLat: number;
+  startLon: number;
+  endLat: number;
+  endLon: number;
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+  /** Climbing / descending (m), with a 1 m dead band against ripples. */
+  ascentM: number;
+  descentM: number;
+  avgAltitudeM: number | null;
+  minAltitudeM: number | null;
+  maxAltitudeM: number | null;
+}
+
+/** Null when no sample carries a position. */
+export function routeSummary(samples: readonly RideSample[]): RouteSummary | null {
+  const pos = samples.filter((s) => fin(s.lat) && fin(s.lon));
+  const first = pos[0];
+  const last = pos[pos.length - 1];
+  if (!first || !last) return null;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  for (const s of pos) {
+    minLat = Math.min(minLat, s.lat!);
+    maxLat = Math.max(maxLat, s.lat!);
+    minLon = Math.min(minLon, s.lon!);
+    maxLon = Math.max(maxLon, s.lon!);
+  }
+  const alts = samples.map((s) => s.altitudeM).filter(fin);
+  let ascentM = 0;
+  let descentM = 0;
+  let ref = alts[0] ?? 0;
+  for (const a of alts) {
+    if (a - ref >= 1) {
+      ascentM += a - ref;
+      ref = a;
+    } else if (ref - a >= 1) {
+      descentM += ref - a;
+      ref = a;
+    }
+  }
+  return {
+    startLat: first.lat!,
+    startLon: first.lon!,
+    endLat: last.lat!,
+    endLon: last.lon!,
+    minLat,
+    maxLat,
+    minLon,
+    maxLon,
+    ascentM,
+    descentM,
+    avgAltitudeM: alts.length > 0 ? alts.reduce((x, y) => x + y, 0) / alts.length : null,
+    minAltitudeM: alts.length > 0 ? alts.reduce((x, y) => Math.min(x, y)) : null,
+    maxAltitudeM: alts.length > 0 ? alts.reduce((x, y) => Math.max(x, y)) : null,
+  };
+}

@@ -8,6 +8,8 @@ import type {
   Unsubscribe,
 } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
+import type { RoutePosition, RouteTrack } from '@freilauf/routes';
+import { pointAt, positionAt } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
@@ -25,6 +27,7 @@ import type {
   DeviceStatus,
   FtpTestOutcome,
   LiveState,
+  RouteControl,
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
@@ -65,6 +68,16 @@ export interface RideControllerOptions {
 export type ShiftSource = 'ui' | 'keyboard' | `button:${string}` | (string & {});
 
 const AUTOSAVE_INTERVAL_MS = 30_000;
+
+/**
+ * Route gradient → trainer (docs/adr/0004-routes.md): a new gradient is sent when it differs
+ * from the last one sent by at least ROUTE_GRADE_STEP percentage points, at most once per
+ * ROUTE_GRADE_MIN_INTERVAL_MS; smaller differences are sent after ROUTE_GRADE_SETTLE_MS so
+ * the trainer ends up exactly on the road. Each send is one FTMS Control Point write.
+ */
+export const ROUTE_GRADE_STEP = 0.15;
+export const ROUTE_GRADE_MIN_INTERVAL_MS = 1_000;
+export const ROUTE_GRADE_SETTLE_MS = 5_000;
 /** Rides shorter than this are discarded on finish (accidental start). */
 const MIN_RIDE_SAMPLES = 10;
 
@@ -82,6 +95,15 @@ interface Plan {
   /** Ramp test: the rider could not hold the target any more. */
   endedEarly: boolean;
   lastFailureCheckS: number;
+}
+
+/** A route chosen for the next (or current) ride. */
+interface RoutePlan {
+  track: RouteTrack;
+  /** Gradient last given to the shifter (percent, after difficulty), and when. */
+  sent: { gradePercent: number; at: number } | null;
+  lastLap: number;
+  finishedLogged: boolean;
 }
 
 export interface FinishedRide {
@@ -114,6 +136,10 @@ export class RideController {
   #gradePercent = 0;
   #lastAutosaveAt = 0;
   #plan: Plan | null = null;
+  #route: RoutePlan | null = null;
+  /** Ridden distance at the last tick (the route position for the next one). */
+  #distanceM = 0;
+  readonly #routeLimit: RateLimiter;
   #steerButtons = new Set<'steerLeft' | 'steerRight'>();
   /** Signed lever positions, −1 … 1 per grip (see levers.ts). */
   #paddles = { left: 0, right: 0 };
@@ -134,6 +160,7 @@ export class RideController {
     this.#log = options.log ?? NULL_LOG;
     this.#commandLimit = new RateLimiter(10, 10_000, this.#now);
     this.#leverLimit = new RateLimiter(20, 10_000, this.#now);
+    this.#routeLimit = new RateLimiter(6, 60_000, this.#now);
     this.#session = this.#newSession();
     this.#shifter = this.#newShifter();
   }
@@ -234,6 +261,40 @@ export class RideController {
     return this.#plan?.workout ?? null;
   }
 
+  /**
+   * Chooses the route for the next ride (null = none). Only while no ride is in progress.
+   * Combines with a workout: in ERG segments the trainer holds the power and the route only
+   * advances; otherwise the route's gradient drives the trainer and manual gradient changes
+   * are ignored. The route stays selected after the ride.
+   */
+  selectRoute(track: RouteTrack | null): boolean {
+    if (this.#session.state !== 'idle') return false;
+    const before = this.#route?.track.id ?? null;
+    this.#route = track ? { track, sent: null, lastLap: 1, finishedLogged: false } : null;
+    if (track) {
+      this.#log.info(`route selected: ${track.name}`, {
+        id: track.id,
+        distanceKm: round(track.totalDistanceM / 1000, 2),
+        ascentM: Math.round(track.ascentM),
+        loop: track.loop,
+        stepM: round(track.stepM, 2),
+        samples: track.count,
+        difficulty: this.#difficulty(),
+      });
+    } else if (before) {
+      this.#log.info('route cleared');
+      // Back to a flat road the rider controls.
+      this.#gradePercent = 0;
+      this.#shifter.setGradient(0);
+      this.#session.setGradient(0);
+    }
+    return true;
+  }
+
+  get selectedRoute(): RouteTrack | null {
+    return this.#route?.track ?? null;
+  }
+
   skipWorkoutSegment(): void {
     this.#plan?.runner?.skipSegment();
   }
@@ -273,10 +334,17 @@ export class RideController {
     });
   }
 
-  setGradient(gradePercent: number): void {
+  /** Manual gradient. Ignored (returns false) while a route sets the gradient. */
+  setGradient(gradePercent: number): boolean {
+    if (this.#route) {
+      const d = this.#routeLimit.take('manual-gradient');
+      if (d.allowed) this.#log.debug('manual gradient ignored: a route sets the gradient');
+      return false;
+    }
     this.#gradePercent = Math.max(-15, Math.min(20, gradePercent));
     this.#shifter.setGradient(this.#gradePercent);
     this.#session.setGradient(this.#gradePercent);
+    return true;
   }
 
   start(): void {
@@ -286,13 +354,25 @@ export class RideController {
     } else if (this.#session.state === 'idle') {
       this.#log.info('ride started', {
         workout: this.#plan?.workout.name ?? null,
+        route: this.#route?.track.name ?? null,
         ftpTest: this.#plan?.ftpTest?.kind ?? null,
         trainer: this.#devices.trainer?.state ?? 'none',
         heartRate: this.#devices.heartRate?.state ?? 'none',
         controller: this.#devices.controller?.state ?? 'none',
       });
       this.#lastSegment = '';
-      this.#session = this.#newSession(this.#plan?.workout.name);
+      this.#session = this.#newSession(this.#plan?.workout.name ?? this.#route?.track.name);
+      this.#distanceM = 0;
+      const route = this.#route;
+      if (route) {
+        route.lastLap = 1;
+        route.finishedLogged = false;
+        const track = route.track;
+        this.#session.setPositionSource((d) => {
+          const p = pointAt(track, d);
+          return { lat: p.lat, lon: p.lon, altitudeM: p.elevationM };
+        });
+      }
       this.#session.start();
       this.#lastAutosaveAt = this.#now();
       if (this.#plan) {
@@ -317,6 +397,7 @@ export class RideController {
     const ride = this.#session.finish();
     const plan = this.#plan;
     this.#session = this.#newSession();
+    this.#distanceM = 0;
     // The workout is done with; the next ride is a free ride unless one is chosen again.
     this.#plan = null;
     this.#shifter.resync(); // leave ERG: back to the simulated road
@@ -333,6 +414,7 @@ export class RideController {
       avgPowerW: avg,
       kept: ride.samples.length >= MIN_RIDE_SAMPLES,
       workout: plan?.workout.name ?? null,
+      route: this.#route?.track.name ?? null,
     });
     if (ride.samples.length < MIN_RIDE_SAMPLES) return null;
     await this.#options.saveRide(ride, true);
@@ -342,6 +424,7 @@ export class RideController {
   /** Advances the ride and publishes the live state. */
   tick(): LiveState {
     this.#session.setGear(this.#shifter.gear, this.#shifter.gearCount);
+    const routePosition = this.#driveRoute();
     this.#session.setGradient(this.#gradePercent);
     const levers = leverOutput(this.#paddles, this.#settings.shifting.levers);
     const steering = combineSteering(levers, this.#buttonSteering());
@@ -349,6 +432,7 @@ export class RideController {
     this.#logLevers(levers, steering, braking);
     this.#session.setBrake(braking);
     const ride = this.#session.tick();
+    this.#distanceM = ride.distanceM;
     const now = this.#now();
     const workout = this.#driveWorkout(ride);
 
@@ -384,6 +468,7 @@ export class RideController {
       workout,
       steering,
       braking,
+      ...(this.#route ? { route: routePosition, routeControl: this.#routeControl() } : {}),
     };
     this.#options.onLive(live);
     return live;
@@ -409,9 +494,11 @@ export class RideController {
       case 'shiftDown':
         return this.shift(-1, source);
       case 'gradientUp':
-        return this.setGradient(this.#gradePercent + 0.5);
+        this.setGradient(this.#gradePercent + 0.5);
+        return;
       case 'gradientDown':
-        return this.setGradient(this.#gradePercent - 0.5);
+        this.setGradient(this.#gradePercent - 0.5);
+        return;
       case 'startPause':
         if (this.#session.state === 'riding') this.pause();
         else this.start();
@@ -496,6 +583,71 @@ export class RideController {
       now: this.#now,
       name,
     });
+  }
+
+  #difficulty(): number {
+    const d = this.#settings.route?.difficulty;
+    return typeof d === 'number' && Number.isFinite(d) ? Math.max(0, Math.min(100, d)) : 100;
+  }
+
+  /**
+   * Route position for this tick (from the distance ridden so far); sets the road gradient for
+   * the physics and, rate-limited, the felt gradient (× difficulty) for the trainer.
+   */
+  #driveRoute(): RoutePosition | null {
+    const route = this.#route;
+    if (!route) return null;
+    const pos = positionAt(route.track, this.#distanceM);
+    // The physics and the recording use the real road.
+    this.#gradePercent = pos.gradePercent;
+    if (pos.lap !== route.lastLap) {
+      route.lastLap = pos.lap;
+      this.#log.info(`route lap ${pos.lap}`, { distanceKm: round(this.#distanceM / 1000, 2) });
+    }
+    if (pos.finished && !route.finishedLogged) {
+      route.finishedLogged = true;
+      this.#log.info('route finished; the road continues flat', {
+        distanceKm: round(route.track.totalDistanceM / 1000, 2),
+      });
+    }
+    const target = Math.round(pos.gradePercent * this.#difficulty()) / 100;
+    const now = this.#now();
+    const sent = route.sent;
+    const diff = sent ? Math.abs(target - sent.gradePercent) : Infinity;
+    const since = sent ? now - sent.at : Infinity;
+    if (
+      diff > 0 &&
+      ((diff >= ROUTE_GRADE_STEP - 1e-9 && since >= ROUTE_GRADE_MIN_INTERVAL_MS) ||
+        (diff >= 0.01 && since >= ROUTE_GRADE_SETTLE_MS))
+    ) {
+      route.sent = { gradePercent: target, at: now };
+      const d = this.#routeLimit.take('route-gradient');
+      if (d.allowed) {
+        this.#log.debug(`route gradient → ${round(target, 2)} %`, {
+          roadPercent: round(pos.gradePercent, 2),
+          difficulty: this.#difficulty(),
+          distanceKm: round(pos.distanceM / 1000, 3),
+          erg: this.#ergActive,
+          ...(d.suppressed ? { suppressedBefore: d.suppressed } : {}),
+        });
+      }
+      // In ERG the shifter's sink drops the write; leaving ERG resyncs with this gradient.
+      this.#shifter.setGradient(target);
+    }
+    return pos;
+  }
+
+  #routeControl(): RouteControl {
+    return {
+      gradientLocked: true,
+      difficulty: this.#difficulty(),
+      trainerGradePercent: this.#ergActive ? null : (this.#route?.sent?.gradePercent ?? null),
+    };
+  }
+
+  /** What the trainer should feel now: the route's (scaled) gradient, or the manual one. */
+  #trainerGrade(): number {
+    return this.#route ? (this.#route.sent?.gradePercent ?? 0) : this.#gradePercent;
   }
 
   /** True while the trainer is (or should be) holding a workout's target power. */
@@ -586,7 +738,8 @@ export class RideController {
         }
       } else if (applied?.mode !== 'free' || applied.gradePercent !== gradePercent) {
         plan.applied = { mode: 'free', targetPowerW: null, gradePercent };
-        if (gradePercent !== undefined) this.setGradient(gradePercent);
+        // With a route, the route sets the gradient of free segments.
+        if (gradePercent !== undefined && !this.#route) this.setGradient(gradePercent);
         this.#shifter.resync();
       }
     }
@@ -658,7 +811,7 @@ export class RideController {
         initialGear,
       },
     );
-    shifter.setGradient(this.#gradePercent);
+    shifter.setGradient(this.#trainerGrade());
     shifter.onError((err) => {
       this.#log.warn('trainer rejected simulation parameters', { error: err });
       this.#options.onError?.(`Trainer rejected resistance: ${String(err)}`);

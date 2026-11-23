@@ -54,6 +54,10 @@ import type { Workout } from '@freilauf/workouts';
 import type { GroupLink } from '../core/rideController';
 import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
+import type { RouteTrack } from '@freilauf/routes';
+import { RouteLibrary } from '../core/routeLibrary';
+import type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
+import { decodeSharedRoutes, shareRouteInGroup } from '../core/routeSharing';
 import type { ImportResult, KeyValueStorage, WorkoutEntry } from '../core/workoutLibrary';
 import { CommunityService } from '../core/communityService';
 import type {
@@ -66,6 +70,15 @@ import type {
 } from '../core/communityService';
 import type { Visibility } from '@freilauf/community';
 import { utf8Length } from '@freilauf/community';
+
+export type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
+
+/** A route another rider in the group is offering. */
+export interface SharedRoute {
+  peerId: string;
+  peerName: string;
+  entry: RouteEntry;
+}
 
 export type GroupStatus =
   | { phase: 'idle' }
@@ -147,6 +160,16 @@ export interface AppState {
    * safe to select narrowly (`s => s.levers?.left`).
    */
   levers: LeverPositionsState | null;
+  /** Built-in and imported routes (docs/routes.md). */
+  routes: RouteEntry[];
+  /** The route chosen for the next/current ride; null = none (free road). */
+  selectedRouteId: string | null;
+  /** The full track of the selected route (scene, map); null without one. */
+  routeTrack: RouteTrack | null;
+  /** Routes other riders in the group are offering. */
+  sharedRoutes: SharedRoute[];
+  /** The route this rider is offering to the group, if any. */
+  sharingRouteId: string | null;
 }
 
 export interface LeverPositionsState {
@@ -267,6 +290,12 @@ export interface JoinedGroup extends GroupLink, CommunityGroupLink {
   /** Connection status of every other rider in the room (for the Group tab). */
   getPeerStatuses?(): PeerSample[];
   leave(): void;
+  /** Offers an encoded route to the group. Returns null, or why it was refused. */
+  shareRoute?(text: string): string | null;
+  stopSharingRoute?(): void;
+  /** Encoded routes currently offered by other riders. */
+  getSharedRoutes?(): { peerId: string; peerName: string; text: string }[];
+  onSharedRoutesChange?(listener: () => void): () => void;
   /** Offers an encoded workout to the group. Returns null, or why it was refused. */
   shareWorkout(text: string): string | null;
   stopSharingWorkout(): void;
@@ -345,11 +374,19 @@ export class App {
     community,
     lastButton: null,
     levers: null,
+    routes: [],
+    selectedRouteId: null,
+    routeTrack: null,
+    sharedRoutes: [],
+    sharingRouteId: null,
   });
 
   readonly #api: FreilaufApi;
   readonly #groupConnector: GroupConnector | null;
   readonly #library: WorkoutLibrary;
+  readonly #routes: RouteLibrary;
+  /** Decoded routes offered by the group, by peer (for useSharedRoute). */
+  #sharedRouteTracks = new Map<string, RouteTrack>();
   readonly #createTransport: (api: FreilaufApi) => AppBluetoothTransport;
   readonly #probeSignalling: (url: string) => Promise<ProbeResult>;
   /** When each not-yet-connected group peer was first seen (see `peerViews`). */
@@ -395,6 +432,7 @@ export class App {
       ((url) => probeSignallingServer(url, { online: () => globalThis.navigator?.onLine }));
     const storage = options.storage === undefined ? defaultStorage() : options.storage;
     this.#library = new WorkoutLibrary(storage);
+    this.#routes = new RouteLibrary(storage);
     this.#community = new CommunityService({
       storage,
       now: options.now,
@@ -402,7 +440,7 @@ export class App {
       onNotice: (kind, message) => this.notify(kind, message),
     });
     this.store = createStore<AppState>(() => App.#initialState(this.#community.view));
-    this.store.setState({ workouts: this.#library.list() });
+    this.store.setState({ workouts: this.#library.list(), routes: this.#routes.list() });
     this.#community.subscribe((community) => this.store.setState({ community }));
   }
 
@@ -712,6 +750,7 @@ export class App {
     this.#controller?.shift(delta, source);
   }
 
+  /** Manual gradient; ignored while a route is loaded (LiveState.routeControl). */
   setGradient(gradePercent: number): void {
     this.#controller?.setGradient(gradePercent);
   }
@@ -762,6 +801,125 @@ export class App {
 
   setWorkoutIntensity(factor: number): void {
     this.#controller?.setWorkoutIntensity(factor);
+  }
+
+  // ───────────── routes (docs/routes.md) ─────────────
+
+  /**
+   * Chooses the route for the next ride (null = none). Ignored while riding. Combines with a
+   * selected workout; the route stays selected after the ride.
+   */
+  selectRoute(id: string | null): boolean {
+    const found = id === null ? null : this.#routes.get(id);
+    if (id !== null && !found) return false;
+    if (!this.#controller?.selectRoute(found?.track ?? null)) {
+      this.notify('info', 'Finish the current ride before changing the route.');
+      return false;
+    }
+    this.store.setState({ selectedRouteId: id, routeTrack: found?.track ?? null });
+    return true;
+  }
+
+  /** Imports a GPX file (or our own route format). `fileName` names a GPX without a name. */
+  importRoute(
+    text: string,
+    fileName?: string,
+  ): { ok: true; entry: RouteEntry; warnings: string[] } | { ok: false; errors: string[] } {
+    const log = this.#logger.scope('routes');
+    const result: RouteImportResult = this.#routes.importText(text, fileName);
+    if (!result.ok) {
+      log.warn('route import refused', { bytes: text.length, errors: result.errors });
+      return result;
+    }
+    const { entry, warnings, stats } = result;
+    log.info(`route imported: ${entry.name}`, {
+      id: entry.id,
+      bytes: text.length,
+      distanceKm: Math.round(entry.totalDistanceM / 10) / 100,
+      ascentM: Math.round(entry.ascentM),
+      loop: entry.loop,
+      ...(stats
+        ? {
+            points: stats.inputPoints,
+            duplicates: stats.duplicatesDropped,
+            spikes: stats.spikesDropped,
+            rawAscentM: Math.round(stats.rawAscentM),
+          }
+        : {}),
+      storedKChars: Math.round(this.#routes.storedChars / 1000),
+      warnings,
+    });
+    this.store.setState({ routes: this.#routes.list() });
+    // A re-import of the selected route replaces its track (for the next ride).
+    if (this.store.getState().selectedRouteId === entry.id) this.selectRoute(entry.id);
+    return { ok: true, entry, warnings };
+  }
+
+  deleteRoute(id: string): void {
+    if (this.store.getState().selectedRouteId === id && !this.selectRoute(null)) return;
+    if (this.store.getState().sharingRouteId === id) this.stopSharingRoute();
+    if (this.#routes.remove(id)) {
+      this.#logger.log('info', 'routes', 'route deleted', { id });
+      this.store.setState({ routes: this.#routes.list() });
+    }
+  }
+
+  /** GPX file name and contents of a route (the prepared, smoothed track). */
+  exportRoute(id: string): { fileName: string; text: string } | null {
+    return this.#routes.export(id);
+  }
+
+  /** Offers a route to the group, at a resolution that fits the group's document budget. */
+  shareRoute(id: string): void {
+    const found = this.#routes.get(id);
+    const group = this.#group;
+    if (!group || !found) return;
+    const log = this.#logger.scope('routes');
+    const prepared = shareRouteInGroup(group, this.#community, found.track);
+    if (!prepared.ok) {
+      log.warn('route not shared', { id, reason: prepared.reason });
+      this.store.setState({ sharingRouteId: null });
+      this.notify('error', `Could not share the route: ${prepared.reason}.`);
+      return;
+    }
+    log.info(`route shared: ${found.track.name}`, {
+      id,
+      bytes: prepared.bytes,
+      stepM: Math.round(prepared.stepM * 10) / 10,
+    });
+    this.store.setState({ sharingRouteId: id });
+  }
+
+  stopSharingRoute(): void {
+    this.#group?.stopSharingRoute?.();
+    this.#community.resync();
+    this.store.setState({ sharingRouteId: null });
+  }
+
+  /** Adds a route offered by another rider to the library and selects it. */
+  useSharedRoute(peerId: string): void {
+    const track = this.#sharedRouteTracks.get(peerId);
+    if (!track) return;
+    const added = this.#routes.add(track);
+    if (!added.ok) {
+      this.notify('error', added.errors.join(' '));
+      return;
+    }
+    this.#logger.log('info', 'routes', `shared route added: ${track.name}`, { id: track.id });
+    this.store.setState({ routes: this.#routes.list() });
+    this.selectRoute(track.id);
+  }
+
+  #refreshSharedRoutes(): void {
+    const decoded = decodeSharedRoutes(this.#group?.getSharedRoutes?.() ?? []);
+    this.#sharedRouteTracks = new Map(decoded.map((d) => [d.peerId, d.track]));
+    this.store.setState({
+      sharedRoutes: decoded.map((d) => ({
+        peerId: d.peerId,
+        peerName: d.peerName,
+        entry: this.#routes.describe(d.track),
+      })),
+    });
   }
 
   /** Saves the FTP test result as the rider's new FTP. */
@@ -850,10 +1008,13 @@ export class App {
     this.#group = null;
     this.#startAt = null;
     this.#controller?.setGroup(null);
+    this.#sharedRouteTracks = new Map();
     this.store.setState({
       group: { phase: 'idle' },
       sharedWorkouts: [],
       sharingWorkoutId: null,
+      sharedRoutes: [],
+      sharingRouteId: null,
       groupCountdownS: null,
     });
   }
@@ -863,7 +1024,7 @@ export class App {
     const exported = this.#library.export(id, 'freilauf');
     if (!this.#group || !exported) return;
     // The workout takes precedence over community extras (challenges, relays) in the budget.
-    this.#community.makeRoom(utf8Length(exported.text));
+    this.#community.makeRoom(utf8Length(exported.text), 1);
     const refused = this.#group.shareWorkout(exported.text);
     this.#community.resync();
     if (refused) this.notify('error', `Could not share the workout (${refused}).`);
@@ -995,6 +1156,7 @@ export class App {
       this.#community.attach(group);
       this.#groupCleanup = [
         group.onSharedWorkoutsChange(() => this.#refreshSharedWorkouts()),
+        group.onSharedRoutesChange?.(() => this.#refreshSharedRoutes()) ?? (() => {}),
         group.onStart((startsInMs, peerName) => {
           // A start only makes sense for someone who is not riding yet.
           if (this.#controller?.rideState !== 'idle') return;
@@ -1013,6 +1175,7 @@ export class App {
         }) ?? (() => {}),
       ];
       this.#refreshSharedWorkouts();
+      this.#refreshSharedRoutes();
       this.store.setState({
         group: {
           phase: 'joined',
@@ -1052,7 +1215,14 @@ export class App {
     this.#controller?.setGroup(null);
     this.#groupPeers = new Set();
     this.#peerFirstSeen = new Map();
-    this.store.setState({ sharedWorkouts: [], sharingWorkoutId: null, groupCountdownS: null });
+    this.#sharedRouteTracks = new Map();
+    this.store.setState({
+      sharedWorkouts: [],
+      sharingWorkoutId: null,
+      sharedRoutes: [],
+      sharingRouteId: null,
+      groupCountdownS: null,
+    });
     void this.#showGroupError(failure, {
       action,
       input,

@@ -41,7 +41,10 @@ export interface RoutePosition {
   distanceM: number;
   /** 1-based lap on a loop route; always 1 otherwise. */
   lap: number;
-  /** Gradient under the rider in percent (what the trainer is told). */
+  /**
+   * Gradient of the road under the rider in percent. The trainer is told this × the difficulty
+   * setting (LiveState.routeControl.trainerGradePercent); 0 past the finish.
+   */
   gradePercent: number;
   elevationM: number;
   remainingM: number;

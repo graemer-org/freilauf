@@ -180,4 +180,32 @@ describe('RideSession', () => {
     b.session.setBrake(Number.NaN); // ignored like other non-finite inputs
     expect(b.ride(1, 220)).toEqual(a.ride(1, 220));
   });
+
+  it('records positions from a position source at the distance of each sample', () => {
+    const { session, ride } = setup();
+    const asked: number[] = [];
+    session.setPositionSource((d) => {
+      asked.push(d);
+      return { lat: 47 + d / 1e5, lon: 11, altitudeM: 500 + d / 100 };
+    });
+    session.start();
+    ride(10, 200);
+    const samples = session.toRecordedRide().samples;
+    expect(samples).toHaveLength(10);
+    for (const s of samples) {
+      expect(s.lat).toBeCloseTo(47 + s.distanceM / 1e5, 9);
+      expect(s.altitudeM).toBeCloseTo(500 + s.distanceM / 100, 9);
+    }
+    expect(asked).toHaveLength(10);
+    session.setPositionSource(() => null);
+    ride(2, 200);
+    expect(session.toRecordedRide().samples.at(-1)).not.toHaveProperty('lat');
+  });
+
+  it('samples have no position fields without a source', () => {
+    const { session, ride } = setup();
+    session.start();
+    ride(3, 200);
+    expect(Object.keys(session.toRecordedRide().samples[0]!)).not.toContain('lat');
+  });
 });

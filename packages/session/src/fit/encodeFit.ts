@@ -18,15 +18,18 @@ import {
   FILE_TYPE_ACTIVITY,
   LAP,
   LAP_TRIGGER_SESSION_END,
+  LAP_WITH_POSITION,
   MANUFACTURER_DEVELOPMENT,
   RECORD,
+  RECORD_WITH_POSITION,
   SESSION,
+  SESSION_WITH_POSITION,
   SESSION_TRIGGER_ACTIVITY_END,
   SPORT_CYCLING,
   SUB_SPORT_VIRTUAL_ACTIVITY,
 } from './messages';
-import type { RideSummary } from './summary';
-import { rideSummary, usableSamples } from './summary';
+import type { RideSummary, RouteSummary } from './summary';
+import { rideSummary, routeSummary, usableSamples } from './summary';
 import { ByteWriter, toRaw } from './writer';
 
 /** Seconds between the Unix epoch and the FIT epoch (1989-12-31T00:00:00Z). */
@@ -77,7 +80,12 @@ class FitBuilder {
     const w = this.out;
     w.u8(local); // normal header, data message
     for (const field of spec.fields) {
-      w.raw(field.type, toRaw(field.type, values[field.name], field.scale ?? 1));
+      const v = values[field.name];
+      const offset = field.offset ?? 0;
+      w.raw(
+        field.type,
+        toRaw(field.type, typeof v === 'number' ? v + offset : v, field.scale ?? 1),
+      );
     }
   }
 
@@ -155,6 +163,30 @@ function summaryValues(s: RideSummary, start: number | null, end: number | null)
   };
 }
 
+/** Degrees → FIT semicircles (2³¹ per 180°). */
+export function toSemicircles(degrees: number | null | undefined): number | null {
+  if (degrees === null || degrees === undefined || !Number.isFinite(degrees)) return null;
+  return Math.round((degrees * 2 ** 31) / 180);
+}
+
+function positionValues(r: RouteSummary): Values {
+  return {
+    startPositionLat: toSemicircles(r.startLat),
+    startPositionLong: toSemicircles(r.startLon),
+    endPositionLat: toSemicircles(r.endLat),
+    endPositionLong: toSemicircles(r.endLon),
+    totalAscent: r.ascentM,
+    totalDescent: r.descentM,
+    necLat: toSemicircles(r.maxLat),
+    necLong: toSemicircles(r.maxLon),
+    swcLat: toSemicircles(r.minLat),
+    swcLong: toSemicircles(r.minLon),
+    enhancedAvgAltitude: r.avgAltitudeM,
+    enhancedMinAltitude: r.minAltitudeM,
+    enhancedMaxAltitude: r.maxAltitudeM,
+  };
+}
+
 /**
  * Encodes a recorded ride as a FIT activity file (cycling / virtual_activity),
  * following Garmin's recommended message order for activity files:
@@ -169,6 +201,9 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
   const summary = rideSummary(ride);
   const start = toFitTimestamp(summary.startTime);
   const end = toFitTimestamp(summary.endTime);
+  // Rides along a route carry positions: then records, lap and session get position fields.
+  // Without positions the output is byte-for-byte what it was before routes existed.
+  const route = routeSummary(samples);
 
   const b = new FitBuilder();
   const serial = hash32(ride.id);
@@ -212,7 +247,15 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
         });
       }
     }
-    b.write(RECORD, {
+    b.write(route ? RECORD_WITH_POSITION : RECORD, {
+      ...(route
+        ? {
+            positionLat: toSemicircles(s.lat),
+            positionLong: toSemicircles(s.lon),
+            altitude: s.altitudeM,
+            enhancedAltitude: s.altitudeM,
+          }
+        : {}),
       timestamp: toFitTimestamp(s.timestamp),
       distance: s.distanceM,
       speed: s.speedMps,
@@ -226,14 +269,14 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
 
   b.write(EVENT, { timestamp: end, event: EVENT_TIMER, eventType: EVENT_TYPE_STOP_ALL, eventGroup: 0 });
 
-  const totals = summaryValues(summary, start, end);
-  b.write(LAP, {
+  const totals = { ...summaryValues(summary, start, end), ...(route ? positionValues(route) : {}) };
+  b.write(route ? LAP_WITH_POSITION : LAP, {
     ...totals,
     event: EVENT_LAP,
     eventType: EVENT_TYPE_STOP,
     lapTrigger: LAP_TRIGGER_SESSION_END,
   });
-  b.write(SESSION, {
+  b.write(route ? SESSION_WITH_POSITION : SESSION, {
     ...totals,
     event: EVENT_SESSION,
     eventType: EVENT_TYPE_STOP,

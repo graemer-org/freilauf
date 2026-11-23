@@ -19,7 +19,10 @@ export type StatId =
   | 'distance'
   | 'gradient'
   | 'targetPower'
-  | 'intervalRemaining';
+  | 'intervalRemaining'
+  | 'routeRemaining'
+  | 'ascentRemaining'
+  | 'elevation';
 
 export const ALL_STATS: readonly StatId[] = [
   'power',
@@ -34,6 +37,9 @@ export const ALL_STATS: readonly StatId[] = [
   'gradient',
   'targetPower',
   'intervalRemaining',
+  'routeRemaining',
+  'ascentRemaining',
+  'elevation',
 ];
 
 export interface OverlayTile {
@@ -170,6 +176,15 @@ export interface Settings {
    *   Every rider in a group needs at least one relay in common.
    */
   group: { useOwnServer: boolean; signallingUrl: string; relayUrls: string[] };
+  /** Riding routes (docs/routes.md, docs/adr/0004-routes.md). */
+  route: {
+    /**
+     * Trainer difficulty in percent (0 … 100, default 100): the share of each route gradient
+     * the trainer makes the rider feel. Speed, distance and the recording always use the
+     * real gradient. Descents are scaled alike.
+     */
+    difficulty: number;
+  };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -207,6 +222,7 @@ export const DEFAULT_SETTINGS: Settings = {
     editHotkey: 'CommandOrControl+Shift+O',
   },
   group: { useOwnServer: false, signallingUrl: '', relayUrls: [] },
+  route: { difficulty: 100 },
 };
 
 /**
@@ -242,8 +258,26 @@ export interface LiveState {
   steering?: number;
   /** Present while a route is loaded for the current ride. */
   route?: RoutePosition | null;
+  /** Present while a route is loaded: how it drives the trainer (see RouteControl). */
+  routeControl?: RouteControl | null;
   /** Brake from the controller levers or the brake key, 0 (none) … 1 (full). */
   braking?: number;
+}
+
+/** How a loaded route drives the trainer. */
+export interface RouteControl {
+  /**
+   * Always true while a route is loaded: the route sets the gradient and the manual gradient
+   * controls (buttons, keys, `setGradient`) are ignored.
+   */
+  gradientLocked: true;
+  /** Settings.route.difficulty in effect, 0 … 100. */
+  difficulty: number;
+  /**
+   * The gradient last sent to the trainer (road gradient × difficulty, before virtual gearing);
+   * null while an ERG workout segment holds the power instead.
+   */
+  trainerGradePercent: number | null;
 }
 
 /** The running workout as shown in the main window and overlay. */

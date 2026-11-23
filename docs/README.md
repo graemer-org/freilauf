@@ -6,6 +6,8 @@
   the overlay and its hotkey, simulation mode, where the log is
 - [group-rides.md](group-rides.md) — ride with friends: create a ride and send the link (no
   setup), what the public relay servers see, troubleshooting, and the advanced own-server option
+- [routes.md](routes.md) — riding real routes from GPX files: importing, what happens to noisy
+  elevation, difficulty, loops, sharing limits, recording with a map
 - [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
   NAS, and how it differs from the desktop app
 - [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it is, how to export
@@ -21,6 +23,7 @@ The rest of this page is technical: decisions, protocols and how features are bu
 | [0001](adr/0001-architecture.md)                 | Package boundaries, device/transport layers, the BLE adapter in Electron            |
 | [0002](adr/0002-virtual-shifting.md)             | Software virtual shifting via FTMS simulation parameters                            |
 | [0003](adr/0003-signalling-via-public-relays.md) | Group-ride signalling via public relays (Trystero); removal plan for the own server |
+| [0004](adr/0004-routes.md)                       | Routes: elevation smoothing, gradient update policy, difficulty, storage, sharing   |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.
@@ -86,6 +89,7 @@ pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 | `packages/p2p`       | Relay transport (Trystero), fallback signalling + WebRTC mesh, group state, documents |
 | `packages/workouts`  | Structured workouts, `.zwo` import/export, FTP tests                                  |
 | `packages/community` | Points, totals, contacts, challenges, leaderboards, sync                              |
+| `packages/routes`    | GPX import/export, route preparation and smoothing, queries, codec, built-in routes   |
 | `apps/desktop`       | Electron app: main window, overlay, Bluetooth chooser, persistence                    |
 | `apps/web`           | Browser build of the app (served by the Docker image)                                 |
 | `apps/signalling`    | Optional WebSocket signalling server (self-hostable fallback)                         |

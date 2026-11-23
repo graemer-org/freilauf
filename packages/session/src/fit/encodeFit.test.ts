@@ -198,6 +198,73 @@ describe('encodeFit', () => {
   });
 });
 
+describe('encodeFit with positions (route rides)', () => {
+  const lat0 = 47.123456;
+  const lon0 = -11.654321;
+  const withPos = (n: number) =>
+    makeRide(n, (i) => ({
+      lat: lat0 + i * 1e-5,
+      lon: lon0 - i * 2e-5,
+      altitudeM: i < n / 2 ? 600 + i * 0.5 : 600 + (n - i) * 0.5,
+    }));
+
+  it('writes record positions within centimetres and altitude with scale 5 / offset 500', () => {
+    const ride = withPos(300);
+    const msgs = decode(encodeFit(ride));
+    const records = msgs.recordMesgs ?? [];
+    expect(records).toHaveLength(300);
+    const semi = 180 / 2 ** 31;
+    ride.samples.forEach((s, i) => {
+      const r = records[i]!;
+      const lat = (r.positionLat as number) * semi;
+      const lon = (r.positionLong as number) * semi;
+      // 1 semicircle ≈ 0.9 cm; allow 2 cm.
+      expect(Math.abs(lat - s.lat!) * 111_320).toBeLessThan(0.02);
+      expect(Math.abs(lon - s.lon!) * 111_320 * Math.cos((lat0 * Math.PI) / 180)).toBeLessThan(0.02);
+      // Resolution 0.2 m (scale 5): within half of it.
+      expect(Math.abs((r.altitude as number) - s.altitudeM!)).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(Math.abs((r.enhancedAltitude as number) - s.altitudeM!)).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(r.power).toBe(s.powerW); // the usual fields are unchanged
+    });
+  });
+
+  it('fills start/end position, bounding box, ascent and descent in lap and session', () => {
+    const ride = withPos(400);
+    const msgs = decode(encodeFit(ride));
+    const semi = 180 / 2 ** 31;
+    for (const m of [msgs.sessionMesgs?.[0], msgs.lapMesgs?.[0]]) {
+      expect(m).toBeDefined();
+      expect((m!.startPositionLat as number) * semi).toBeCloseTo(lat0, 6);
+      expect((m!.startPositionLong as number) * semi).toBeCloseTo(lon0, 6);
+      expect((m!.endPositionLat as number) * semi).toBeCloseTo(lat0 + 399e-5, 6);
+      expect((m!.necLat as number) * semi).toBeCloseTo(lat0 + 399e-5, 6);
+      expect((m!.swcLong as number) * semi).toBeCloseTo(lon0 - 399 * 2e-5, 6);
+      expect(m!.totalAscent).toBeCloseTo(100, -1);
+      expect(m!.totalDescent).toBeCloseTo(100, -1);
+      expect(m!.enhancedMaxAltitude).toBeCloseTo(700, 0);
+      expect(m!.subSport).toBe('virtualActivity');
+    }
+  });
+
+  it('negative coordinates and the antimeridian side encode correctly', () => {
+    const msgs = decode(encodeFit(makeRide(3, () => ({ lat: -33.9, lon: 179.99, altitudeM: -20 }))));
+    const r = msgs.recordMesgs![0]!;
+    expect((r.positionLat as number) * (180 / 2 ** 31)).toBeCloseTo(-33.9, 6);
+    expect((r.positionLong as number) * (180 / 2 ** 31)).toBeCloseTo(179.99, 6);
+    expect(r.enhancedAltitude).toBeCloseTo(-20, 1);
+  });
+
+  it('rides without positions keep the old record layout (no position fields)', () => {
+    const plain = encodeFit(makeRide(50));
+    const msgs = decode(plain);
+    expect(msgs.recordMesgs?.[0]?.positionLat).toBeUndefined();
+    expect(msgs.sessionMesgs?.[0]?.startPositionLat).toBeUndefined();
+    expect(msgs.sessionMesgs?.[0]?.totalAscent).toBeUndefined();
+    // Positioned records are 18 bytes larger (4 + 4 + 2 + 4 + … per record).
+    expect(encodeFit(withPos(50)).length).toBeGreaterThan(plain.length + 50 * 14);
+  });
+});
+
 describe('rideSummary', () => {
   it('aggregates duration, distance, power, HR and work', () => {
     const s = rideSummary(makeRide(100, () => ({ powerW: 200 })));

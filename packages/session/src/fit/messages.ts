@@ -1,12 +1,14 @@
 /** FIT profile subset (global message numbers, field numbers, enums) used by the encoder. */
 import type { BaseType } from './writer';
-import { ENUM, UINT8, UINT16, UINT32, UINT32Z } from './writer';
+import { ENUM, SINT32, UINT8, UINT16, UINT32, UINT32Z } from './writer';
 
 export interface FieldSpec {
   readonly name: string;
   readonly num: number;
   readonly type: BaseType;
   readonly scale?: number;
+  /** FIT offset in physical units: raw = (value + offset) × scale. */
+  readonly offset?: number;
 }
 
 export interface MesgSpec {
@@ -14,8 +16,18 @@ export interface MesgSpec {
   readonly fields: readonly FieldSpec[];
 }
 
-const f = (name: string, num: number, type: BaseType, scale?: number): FieldSpec =>
-  scale === undefined ? { name, num, type } : { name, num, type, scale };
+const f = (
+  name: string,
+  num: number,
+  type: BaseType,
+  scale?: number,
+  offset?: number,
+): FieldSpec =>
+  offset !== undefined
+    ? { name, num, type, scale: scale ?? 1, offset }
+    : scale === undefined
+      ? { name, num, type }
+      : { name, num, type, scale };
 
 // Common field numbers.
 const TIMESTAMP = 253;
@@ -71,6 +83,52 @@ export const RECORD: MesgSpec = {
     f('heartRate', 3, UINT8),
   ],
 };
+
+/**
+ * Rides that followed a route also carry position and altitude. A separate definition, so
+ * rides without positions encode exactly as before.
+ */
+export const RECORD_WITH_POSITION: MesgSpec = {
+  globalNum: 20,
+  fields: [
+    ...RECORD.fields,
+    f('positionLat', 0, SINT32),
+    f('positionLong', 1, SINT32),
+    f('altitude', 2, UINT16, 5, 500),
+    f('enhancedAltitude', 78, UINT32, 5, 500),
+  ],
+};
+
+/** Position/altitude summary fields of lap (19) and session (18), by field number. */
+const positionFields = (n: {
+  startPositionLat: number;
+  startPositionLong: number;
+  endPositionLat: number;
+  endPositionLong: number;
+  totalAscent: number;
+  totalDescent: number;
+  necLat: number;
+  necLong: number;
+  swcLat: number;
+  swcLong: number;
+  enhancedAvgAltitude: number;
+  enhancedMinAltitude: number;
+  enhancedMaxAltitude: number;
+}): FieldSpec[] => [
+  f('startPositionLat', n.startPositionLat, SINT32),
+  f('startPositionLong', n.startPositionLong, SINT32),
+  f('endPositionLat', n.endPositionLat, SINT32),
+  f('endPositionLong', n.endPositionLong, SINT32),
+  f('totalAscent', n.totalAscent, UINT16),
+  f('totalDescent', n.totalDescent, UINT16),
+  f('necLat', n.necLat, SINT32),
+  f('necLong', n.necLong, SINT32),
+  f('swcLat', n.swcLat, SINT32),
+  f('swcLong', n.swcLong, SINT32),
+  f('enhancedAvgAltitude', n.enhancedAvgAltitude, UINT32, 5, 500),
+  f('enhancedMinAltitude', n.enhancedMinAltitude, UINT32, 5, 500),
+  f('enhancedMaxAltitude', n.enhancedMaxAltitude, UINT32, 5, 500),
+];
 
 /** Summary fields shared (by name) between lap and session. */
 const summaryFields = (n: {
@@ -158,6 +216,50 @@ export const SESSION: MesgSpec = {
     f('firstLapIndex', 25, UINT16),
     f('numLaps', 26, UINT16),
     f('trigger', 28, ENUM),
+  ],
+};
+
+export const LAP_WITH_POSITION: MesgSpec = {
+  globalNum: 19,
+  fields: [
+    ...LAP.fields,
+    ...positionFields({
+      startPositionLat: 3,
+      startPositionLong: 4,
+      endPositionLat: 5,
+      endPositionLong: 6,
+      totalAscent: 21,
+      totalDescent: 22,
+      necLat: 27,
+      necLong: 28,
+      swcLat: 29,
+      swcLong: 30,
+      enhancedAvgAltitude: 112,
+      enhancedMinAltitude: 113,
+      enhancedMaxAltitude: 114,
+    }),
+  ],
+};
+
+export const SESSION_WITH_POSITION: MesgSpec = {
+  globalNum: 18,
+  fields: [
+    ...SESSION.fields,
+    ...positionFields({
+      startPositionLat: 3,
+      startPositionLong: 4,
+      endPositionLat: 38,
+      endPositionLong: 39,
+      totalAscent: 22,
+      totalDescent: 23,
+      necLat: 29,
+      necLong: 30,
+      swcLat: 31,
+      swcLong: 32,
+      enhancedAvgAltitude: 126,
+      enhancedMinAltitude: 127,
+      enhancedMaxAltitude: 128,
+    }),
   ],
 };
 

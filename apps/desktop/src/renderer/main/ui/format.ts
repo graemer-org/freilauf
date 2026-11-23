@@ -75,6 +75,9 @@ const LABELS: Record<StatId, string> = {
   gradient: 'Gradient',
   targetPower: 'Target power',
   intervalRemaining: 'Step left',
+  routeRemaining: 'Route left',
+  ascentRemaining: 'Climb left',
+  elevation: 'Elevation',
 };
 
 const UNITS: Record<StatId, string> = {
@@ -90,6 +93,9 @@ const UNITS: Record<StatId, string> = {
   gradient: '%',
   targetPower: 'W',
   intervalRemaining: '',
+  routeRemaining: 'km',
+  ascentRemaining: 'm',
+  elevation: 'm',
 };
 
 export function statLabel(stat: StatId): string {
@@ -109,6 +115,7 @@ export function statValue(
   stat: StatId,
   ride: RideSnapshot,
   workout?: { targetPowerW: number | null; segmentRemainingS: number; finished: boolean } | null,
+  route?: { remainingM: number; ascentRemainingM: number; elevationM: number } | null,
 ): string {
   switch (stat) {
     case 'power':
@@ -144,5 +151,11 @@ export function statValue(
         : MISSING;
     case 'intervalRemaining':
       return workout && !workout.finished ? formatDuration(workout.segmentRemainingS) : MISSING;
+    case 'routeRemaining':
+      return route ? dec(route.remainingM / 1000, 1) : MISSING;
+    case 'ascentRemaining':
+      return route ? round(route.ascentRemainingM) : MISSING;
+    case 'elevation':
+      return route ? round(route.elevationM) : MISSING;
   }
 }

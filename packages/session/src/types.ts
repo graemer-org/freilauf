@@ -12,6 +12,18 @@ export interface RideSample {
   gradePercent: number;
   /** 1-based virtual gear. */
   gear: number;
+  /** Position on a route (degrees, WGS 84), when the ride followed one. */
+  lat?: number;
+  lon?: number;
+  /** Elevation of the route at this point (m), when the ride followed one. */
+  altitudeM?: number;
+}
+
+/** Where on a route a distance is; see RideSession.setPositionSource. */
+export interface RoutePositionFix {
+  lat: number;
+  lon: number;
+  altitudeM: number;
 }
 
 export interface RecordedRide {

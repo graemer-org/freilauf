@@ -70,6 +70,11 @@ function state(community: CommunityView, extra: Partial<AppState> = {}): AppStat
     community,
     lastButton: null,
     levers: null,
+    routes: [],
+    selectedRouteId: null,
+    routeTrack: null,
+    sharedRoutes: [],
+    sharingRouteId: null,
     ...extra,
   };
 }
