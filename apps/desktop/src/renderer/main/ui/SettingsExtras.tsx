@@ -387,9 +387,9 @@ export function LeverMapping({ levers }: { levers: LeverSettings }) {
         </div>
       </div>
       <p className="hint section-foot" data-testid="lever-hint">
-        The default assignment is a best guess from one recording of the real controllers. If
-        pulling the brake steers (or the other way round), press “Swap brake and steer on this
-        lever” or pick the right function for each direction.
+        The default assignment was confirmed on the real controllers. If pulling the brake steers on
+        yours (or the other way round), press “Swap brake and steer on this lever” or pick the right
+        function for each direction.
       </p>
     </>
   );

@@ -75,9 +75,9 @@ frame, a Bluetooth heart-rate strap:**
 - **All controller buttons are confirmed on hardware** (second and third pass, 22–23 November):
   every one of the sixteen decodes correctly, including Z and the right power button.
 - The **brake/steering levers are decoded**: each grip has one lever that moves both ways
-  (−100 … +100). Which direction brakes and which steers is still **a hypothesis** from one
-  capture, awaiting the tester's confirmation; Settings → Shifting shows each lever live and
-  lets you swap or reassign the directions. Braking slows the virtual bike only. Keyboard
+  (−100 … +100). Which direction brakes and which steers was worked out from a capture and
+  then **confirmed by the tester** with the live lever display in Settings → Shifting, where
+  the directions can also be swapped or reassigned. Braking slows the virtual bike only. Keyboard
   shifting, steering and braking (<kbd>S</kbd>) work regardless
   ([protocol notes](docs/protocols/zwift-ride.md)).
 - How the overlay behaves over fullscreen video on Windows and macOS has **not been confirmed**

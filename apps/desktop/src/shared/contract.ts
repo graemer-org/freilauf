@@ -128,7 +128,7 @@ export interface LeverSettings {
 }
 
 /**
- * Default lever meaning: a best guess from one hardware capture
+ * Default lever meaning: worked out from one hardware capture and confirmed by the tester
  * (docs/protocols/zwift-ride.md), mirror-symmetric between the grips —
  * right lever + = steer right, − = brake; left lever − = steer left, + = brake.
  */

@@ -11,12 +11,14 @@
 >   included, 2026-11-23), and the **lever (paddle) message layout**: four
 >   paddle sub-messages per keypad frame, locations 0 … 3, signed zigzag
 >   values −100 … +100 on locations 0 (left grip) and 1 (right grip).
-> - **Hypothesis, not confirmed:** the _physical meaning_ of the two lever
->   directions (which one brakes, which one steers) and of the bits
->   `0x00400` / `0x04000`, seen only with a lever at the end of its travel.
->   The app's default follows the hypothesis below; riders can swap or
->   reassign each direction in Settings → Shifting → Brake and steering
->   levers.
+> - **Confirmed by the tester (2026-11-23):** the default lever assignment
+>   below — which direction brakes and which steers on each grip — matches
+>   the real controllers when checked with the live lever display.
+> - **Still not recorded:** what the bits `0x00400` / `0x04000` are
+>   physically (a click at the end of the steer travel, or a separate side
+>   button that also moves the lever). They are seen only with a lever at
+>   the end of its travel. Riders can reassign every direction and button in
+>   Settings → Shifting.
 
 The protocol is proprietary and undocumented by the vendor.
 
@@ -140,7 +142,7 @@ Annotated frames (hex, as in the log):
 `0xffffbfff` with the right lever at +0.87 … +1.00 around 11:08:04.339–.550,
 `0xfffffbff` with the left lever at −1.00 around 11:08:07.279–.579.)
 
-### Working hypothesis for the physical meaning (unconfirmed)
+### Physical meaning of the lever directions (confirmed by the tester)
 
 Each lever has a **brake** direction and a **steer** direction, mirror-
 symmetric between the grips, and `0x00400` / `0x04000` are the click at the
