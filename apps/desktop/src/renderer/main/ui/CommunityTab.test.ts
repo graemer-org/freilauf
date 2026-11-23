@@ -69,6 +69,7 @@ function state(community: CommunityView, extra: Partial<AppState> = {}): AppStat
     groupCountdownS: null,
     community,
     lastButton: null,
+    levers: null,
     ...extra,
   };
 }
@@ -642,6 +643,76 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
     expect(text(card)).toContain('but not your name');
     expect(text(card)).toContain('docs/diagnostics.md');
     expect(text(card)).toContain('Help decode the controllers');
-    expect(text(card)).toContain('press each button once');
+    expect(text(card)).toContain('pull the brake all the way');
+  });
+
+  it('shows a live bar per lever with the dead zone, the raw value and the result', () => {
+    const html = render(
+      state(emptyView(), { levers: { left: -0.43, right: -0.715, at: Date.now() } }),
+      'settings',
+    );
+    const card = slice(html, 'data-testid="lever-mapping"', 'data-testid="lever-hint"');
+    const left = slice(card, 'data-testid="lever-left"', 'data-testid="lever-right"');
+    const right = slice(card, 'data-testid="lever-right"', 'data-testid="lever-deadzone"');
+    expect(text(left)).toContain('Left lever');
+    expect(text(left)).toContain('−43 %');
+    expect(left).toContain('aria-valuenow="-43"');
+    expect(left).toContain('data-value="-43"');
+    // Default dead zone ±5 %: a band of 5 % of the bar centred on 0.
+    expect(left).toContain('left:47.5%;width:5%');
+    expect(left).toContain('left:28.5%;width:21.5%');
+    expect(text(left)).toContain('Steering: 40 % left');
+    expect(text(right)).toContain('Brake: 70 %');
+    for (const side of ['left', 'right']) {
+      expect(card).toContain(`data-testid="lever-${side}-swap"`);
+      expect(card).toContain(`data-testid="lever-${side}-positive"`);
+      expect(card).toContain(`data-testid="lever-${side}-negative"`);
+    }
+    expect(text(left)).toContain('When the bar moves left (−)');
+    expect(text(left)).toContain('When the bar moves right (+)');
+    expect(text(card)).toContain('Swap brake and steer on this lever');
+    expect(left).toMatch(/data-testid="lever-left-positive"[\s\S]*?value="brake" selected=""/);
+    expect(right).toMatch(
+      /data-testid="lever-right-positive"[\s\S]*?value="steerRight" selected=""/,
+    );
+    expect(html).toMatch(/data-testid="lever-reset"[^>]*disabled/);
+    expect(text(html)).toContain('best guess from one recording');
+    expect(text(card)).toContain('±5 %');
+  });
+
+  it('lever display: at rest, swapped assignment, not connected', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.shifting.levers.right = { positive: 'brake', negative: 'steerRight' };
+    const swapped = render(
+      state(emptyView(), { settings, levers: { left: 0.01, right: 0.9, at: Date.now() } }),
+      'settings',
+    );
+    expect(text(slice(swapped, 'data-testid="lever-left-result"', '</p>'))).toContain('At rest');
+    expect(text(slice(swapped, 'data-testid="lever-right-result"', '</p>'))).toContain(
+      'Brake: 89 %',
+    );
+    expect(swapped).not.toMatch(/data-testid="lever-reset"[^>]*disabled/);
+
+    const offline = live();
+    offline.devices.controller = null;
+    const html = render(state(emptyView(), { live: offline }), 'settings');
+    expect(text(html)).toContain('Connect the controller to see the levers move here.');
+    expect(text(slice(html, 'data-testid="lever-left-result"', '</p>'))).toContain('Not connected');
+    expect(html).toContain('aria-valuenow="0"');
+  });
+});
+
+describe('Ride tab: brake key, brake cue and simulated levers (SSR)', () => {
+  it('lists the brake key, has a hidden brake cue and two lever sliders in sim mode', () => {
+    const html = render(
+      state(emptyView(), { levers: { left: 0, right: -0.5, at: Date.now() } }),
+      'ride',
+    );
+    expect(text(slice(html, 'class="hint shortcuts"', '</p>'))).toContain('S brake (hold)');
+    expect(html).toMatch(/data-testid="scene-brake"[^>]*hidden/);
+    expect(html).toContain('data-braking="0"');
+    expect(html).toContain('data-testid="sim-lever-left"');
+    expect(html).toMatch(/data-testid="sim-lever-right"[^>]*value="-50"/);
+    expect(html).toContain('data-testid="sim-levers-release"');
   });
 });

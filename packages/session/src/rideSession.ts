@@ -48,6 +48,8 @@ export class RideSession {
   #power: Timed<number> | null = null;
   #cadence: Timed<number> | null = null;
   #heartRate: Timed<number> | null = null;
+  /** 0 … 1; like a sensor value it lapses after SENSOR_TIMEOUT_MS without an update. */
+  #brake: Timed<number> | null = null;
   /** (time, watts, seconds) slices for the rolling 3 s average. */
   #powerWindow: { at: number; powerW: number; dtS: number }[] = [];
   /** Accumulators for the sample currently being recorded. */
@@ -74,6 +76,17 @@ export class RideSession {
   setHeartRate(bpm: number | null): void {
     this.#heartRate =
       bpm !== null && Number.isFinite(bpm) && bpm > 0 ? { value: bpm, at: this.#now() } : null;
+  }
+
+  /**
+   * Brake, 0 (off) … 1 (full). Slows the virtual bike only (speed and
+   * distance); the trainer's resistance is not changed. Must be refreshed
+   * like a sensor value: a brake not set again within 3 s no longer acts.
+   */
+  setBrake(fraction: number): void {
+    this.#brake = Number.isFinite(fraction)
+      ? { value: Math.max(0, Math.min(1, fraction)), at: this.#now() }
+      : null;
   }
 
   setGear(gear: number, gearCount: number): void {
@@ -142,7 +155,8 @@ export class RideSession {
   }
 
   #advance(now: number, dtS: number, powerW: number): void {
-    const step = stepBike(this.#speedMps, powerW, this.#gradePercent, this.#bike, dtS);
+    const brake = this.#fresh(this.#brake, now, SENSOR_TIMEOUT_MS) ?? 0;
+    const step = stepBike(this.#speedMps, powerW, this.#gradePercent, this.#bike, dtS, brake);
     this.#speedMps = step.speedMps;
     this.#distanceM += step.distanceM;
 

@@ -68,6 +68,43 @@ function useRideShortcuts(app: App): void {
   }, [app]);
 }
 
+/** Held for braking (like the levers, it slows the virtual bike only). */
+export const BRAKE_KEYS: readonly string[] = ['s', 'S'];
+
+/** Hold S to brake; released on key up, when the window loses focus and when the tab closes. */
+function useBrakeKey(app: App): void {
+  useEffect(() => {
+    let held = false;
+    const set = (next: boolean): void => {
+      if (next === held) return;
+      held = next;
+      app.setBrakeKey(next);
+    };
+    const onDown = (e: KeyboardEvent): void => {
+      if (!BRAKE_KEYS.includes(e.key)) return;
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isEditableTarget(e.target)) return;
+      const { picker, ftpOutcome } = app.store.getState();
+      if (picker || ftpOutcome) return;
+      e.preventDefault();
+      set(true);
+    };
+    const onUp = (e: KeyboardEvent): void => {
+      if (BRAKE_KEYS.includes(e.key)) set(false);
+    };
+    const release = (): void => set(false);
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', release);
+      release();
+    };
+  }, [app]);
+}
+
 type StatVariant = 'tile' | 'hero' | 'sub';
 
 const STAT_CLASS: Record<StatVariant, string> = {
@@ -309,6 +346,40 @@ const DROP_LABEL: Record<DeviceKind, string> = {
   controller: 'Drop controller',
 };
 
+/** Sim mode: one simulated lever, held where the slider is left (−100 … +100). */
+function SimLever({ side }: { side: 'left' | 'right' }) {
+  const app = useApp();
+  const live = useAppState((s) => s.levers?.[side] ?? 0);
+  const [draft, setDraft] = useState(() => Math.round(live * 100));
+  // Follow the controller (e.g. a drop returns the lever to rest) unless the slider differs only by rounding.
+  useEffect(() => setDraft(Math.round(live * 100)), [live]);
+  const id = `sim-lever-${side}`;
+  const set = (pct: number): void => {
+    setDraft(pct);
+    app.setSimLever(side, pct / 100);
+  };
+  return (
+    <label className="sim-lever" htmlFor={id}>
+      <span className="control-label">
+        {side === 'left' ? 'Left lever' : 'Right lever'}{' '}
+        <output>{`${draft > 0 ? '+' : draft < 0 ? '−' : ''}${Math.abs(draft)} %`}</output>
+      </span>
+      <input
+        id={id}
+        data-testid={id}
+        type="range"
+        min={-100}
+        max={100}
+        step={1}
+        value={draft}
+        style={rangeFill(draft, -100, 100)}
+        onChange={(e) => set(Number(e.currentTarget.value))}
+        onDoubleClick={() => set(0)}
+      />
+    </label>
+  );
+}
+
 function SimulationPanel() {
   const app = useApp();
   const simMode = useAppState((s) => s.simMode);
@@ -340,6 +411,21 @@ function SimulationPanel() {
           onChange={(e) => app.setSimEffort(Number(e.currentTarget.value))}
         />
       </label>
+      <div className="sim-levers" role="group" aria-label="Simulated levers">
+        <SimLever side="left" />
+        <SimLever side="right" />
+        <button
+          type="button"
+          className="btn btn-small"
+          data-testid="sim-levers-release"
+          onClick={() => {
+            app.setSimLever('left', 0);
+            app.setSimLever('right', 0);
+          }}
+        >
+          Release levers
+        </button>
+      </div>
       <div className="button-row">
         {(['trainer', 'heartRate', 'controller'] as const).map((kind) => (
           <button
@@ -383,6 +469,7 @@ function FreeRideHint({ onOpenWorkouts }: { onOpenWorkouts: (() => void) | undef
 export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}) {
   const app = useApp();
   useRideShortcuts(app);
+  useBrakeKey(app);
   const phase = useWorkoutPhase();
   const erg = phase === 'erg';
   return (
@@ -427,7 +514,8 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
         </section>
         <p className="hint shortcuts">
           <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>+</kbd> <kbd>−</kbd> shift · <kbd>[</kbd> <kbd>]</kbd>{' '}
-          gradient ∓0.5 % · <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>Space</kbd> start / pause
+          gradient ∓0.5 % · <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) ·{' '}
+          <kbd>Space</kbd> start / pause
         </p>
       </div>
       <SimulationPanel />

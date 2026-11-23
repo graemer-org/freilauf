@@ -70,4 +70,24 @@ describe('ZwiftRideController', () => {
     expect(controller.state).toBe('connected');
     expect(peripheral.writesTo(ZWIFT_SYNC_RX_CHARACTERISTIC)).toHaveLength(2);
   });
+
+  it('emits signed lever values per grip and returns a held lever to rest when the link drops', async () => {
+    const { peripheral, controller } = await setup();
+    const levers: { side: string; value: number }[] = [];
+    controller.onPaddle((e) => levers.push(e));
+    // Captured frame: right lever at +100, left at rest, locations 2 and 3 ignored.
+    peripheral.notify(
+      ZWIFT_RIDE_SERVICE,
+      ZWIFT_ASYNC_CHARACTERISTIC,
+      '2308ffffffff0f1a04080010001a05080110c8011a04080210001a0408031000',
+    );
+    expect(levers).toEqual([
+      { side: 'left', value: 0 },
+      { side: 'right', value: 1 },
+    ]);
+    peripheral.dropLink();
+    await flushPromises();
+    expect(levers.at(-1)).toEqual({ side: 'right', value: 0 });
+    expect(levers).toHaveLength(3); // the left lever was already at rest
+  });
 });

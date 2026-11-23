@@ -12,6 +12,8 @@ import type { ControllerButton, DeviceKind } from '@freilauf/devices';
 import type {
   Bounds,
   DeepPartial,
+  LeverFunction,
+  LeverSettings,
   OverlayTile,
   RememberedDevice,
   Settings,
@@ -55,6 +57,14 @@ const SHIFT_ACTIONS: Record<ShiftAction, true> = {
   steerLeft: true,
   steerRight: true,
 };
+const LEVER_FUNCTIONS: Record<LeverFunction, true> = {
+  none: true,
+  steerLeft: true,
+  steerRight: true,
+  brake: true,
+};
+/** Largest accepted lever dead zone (fraction of full travel). */
+export const MAX_LEVER_DEADZONE = 0.5;
 const STAT_IDS: Record<StatId, true> = {
   power: true,
   power3s: true,
@@ -246,6 +256,34 @@ function sanitizeButtons(
   return out;
 }
 
+/** Lever directions: each one a known function; dead zone 0 … MAX_LEVER_DEADZONE. */
+function sanitizeLevers(raw: unknown, fallback: LeverSettings, problems: Problems): LeverSettings {
+  const root = obj(raw, 'shifting.levers', problems);
+  const grip = (side: 'left' | 'right'): LeverSettings['left'] => {
+    const g = obj(root[side], `shifting.levers.${side}`, problems);
+    const dir = (d: 'positive' | 'negative'): LeverFunction => {
+      const v = g[d];
+      if (v === undefined) return fallback[side][d];
+      if (has(LEVER_FUNCTIONS, v)) return v;
+      problems.push(`shifting.levers.${side}.${d}: unknown lever function`);
+      return fallback[side][d];
+    };
+    return { positive: dir('positive'), negative: dir('negative') };
+  };
+  return {
+    left: grip('left'),
+    right: grip('right'),
+    deadzone: num(
+      root.deadzone,
+      fallback.deadzone,
+      'shifting.levers.deadzone',
+      problems,
+      0,
+      MAX_LEVER_DEADZONE,
+    ),
+  };
+}
+
 function sanitizeTiles(raw: unknown, fallback: OverlayTile[], problems: Problems): OverlayTile[] {
   if (raw === undefined) return clone(fallback);
   if (!Array.isArray(raw)) {
@@ -385,6 +423,7 @@ export function sanitizeSettings(
       ),
       trainerMassKg,
       buttons: sanitizeButtons(shifting.buttons, fallback.shifting.buttons, problems),
+      levers: sanitizeLevers(shifting.levers, fallback.shifting.levers, problems),
     },
     overlay: {
       visible: bool(overlay.visible, fallback.overlay.visible, 'overlay.visible', problems),

@@ -1,10 +1,12 @@
 /**
  * Always-on protocol capture for the Zwift Ride controllers (the protocol is
- * reverse-engineered and only partly verified, docs/protocols/zwift-ride.md).
+ * reverse-engineered; buttons and the lever layout are verified, the meaning
+ * of the lever directions is not yet, docs/protocols/zwift-ride.md).
  * Pure: feed it the driver's raw frames; it writes compact log lines.
  *
  * - Keypad frames (0x23): every CHANGE is logged with its hex, the decoded
- *   pressed set, paddles, the raw bitmap and any cleared bit that is not in
+ *   pressed set, paddles (and any non-zero paddle at a location other than
+ *   left/right, "otherPaddles"), the raw bitmap and any cleared bit that is not in
  *   the button table ("unknownBits" — a button we cannot map yet). Identical
  *   consecutive frames are collapsed into a count.
  * - Unknown message types: the first frame of each type in full, then counted
@@ -124,6 +126,10 @@ export class ControllerCapture {
         if (unknown) context.unknownBits = bitList(unknown);
         if (msg.paddles.length)
           context.paddles = msg.paddles.map((p) => `${p.side}:${p.value.toFixed(2)}`);
+        // Locations 2 and 3 were always 0 so far; anything else is news.
+        const others = msg.otherPaddles.filter((p) => p.value !== 0);
+        if (others.length)
+          context.otherPaddles = others.map((p) => `${p.location}:${p.value.toFixed(2)}`);
         if (decision.suppressed) context.suppressedBefore = decision.suppressed;
         const what = pressed.length ? pressed.join('+') : unknown ? 'unmapped bit(s)' : 'none';
         this.#log.info(`keypad ${h} → pressed ${what}`, context);

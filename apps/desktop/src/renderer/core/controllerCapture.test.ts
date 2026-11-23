@@ -56,6 +56,26 @@ describe('ControllerCapture', () => {
     expect(lines[3]!.context).toMatchObject({ pressed: [], up: ['shiftDownRight'] });
   });
 
+  it('logs the lever values of a captured frame; locations 2 and 3 only when non-zero', () => {
+    const { lines, log } = recorder();
+    const c = new ControllerCapture({ log, now: () => 0 });
+    const hex = (h: string) => ({
+      characteristic: 'async' as const,
+      bytes: new Uint8Array(h.split(' ').map((b) => Number.parseInt(b, 16))),
+    });
+    // Real frame (2026-11-23): right lever at +100.
+    c.frame(
+      hex(
+        '23 08 ff ff ff ff 0f 1a 04 08 00 10 00 1a 05 08 01 10 c8 01 1a 04 08 02 10 00 1a 04 08 03 10 00',
+      ),
+    );
+    expect(lines[0]!.context).toMatchObject({ paddles: ['left:0.00', 'right:1.00'] });
+    expect(lines[0]!.context).not.toHaveProperty('otherPaddles');
+    // Hypothetical: location 2 moves.
+    c.frame(hex('23 08 ff ff ff ff 0f 1a 04 08 00 10 00 1a 04 08 02 10 14'));
+    expect(lines[1]!.context).toMatchObject({ paddles: ['left:0.00'], otherPaddles: ['2:0.10'] });
+  });
+
   it('points out cleared bits that are not in the button table', () => {
     const { lines, log } = recorder();
     const c = new ControllerCapture({ log, now: () => 0 });

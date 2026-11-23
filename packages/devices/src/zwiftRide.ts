@@ -25,10 +25,12 @@ export const ZwiftMessageType = {
   battery: 0x19,
 } as const;
 
-/** Bit positions in the keypad status bitmap. A CLEARED bit means "pressed". */
+/**
+ * Bit positions in the keypad status bitmap. A CLEARED bit means "pressed".
+ * All sixteen confirmed on hardware (captures of 2026-11-22 and 2026-11-23,
+ * docs/protocols/zwift-ride.md).
+ */
 export const RIDE_BUTTON_MASK: Readonly<Record<ControllerButton, number>> = {
-  // Confirmed on hardware (2026-11-22): d-pad, A, B, Y, both shift buttons
-  // on each grip, and the left power button.
   left: 0x00001,
   up: 0x00002,
   right: 0x00004,
@@ -36,17 +38,18 @@ export const RIDE_BUTTON_MASK: Readonly<Record<ControllerButton, number>> = {
   a: 0x00010,
   b: 0x00020,
   y: 0x00040,
-  // Inferred, not yet seen in a capture: Z continues the A/B/Y run.
   z: 0x00080,
   shiftUpLeft: 0x00100, // upper button, left grip
   shiftDownLeft: 0x00200, // lower button, left grip
-  // Unobserved; the bit between the shift buttons and the power button.
+  // Seen only with the left lever at its far end (−100): a click at the end of
+  // the lever's travel, or a side button that also moves it. Physical meaning unconfirmed.
   powerUpLeft: 0x00400,
   onOffLeft: 0x00800, // power button, left grip
   shiftUpRight: 0x01000, // upper button, right grip
   shiftDownRight: 0x02000, // lower button, right grip
-  powerUpRight: 0x04000, // unobserved, by symmetry with the left grip
-  onOffRight: 0x08000, // power button, right grip: inferred by symmetry
+  // Seen only with the right lever near its far end (+87 … +100); see powerUpLeft.
+  powerUpRight: 0x04000,
+  onOffRight: 0x08000, // power button, right grip
 };
 
 const ALL_BUTTONS = Object.keys(RIDE_BUTTON_MASK) as ControllerButton[];
@@ -54,8 +57,19 @@ const ALL_BUTTONS = Object.keys(RIDE_BUTTON_MASK) as ControllerButton[];
 /** OR of every known button mask: bits outside it are not (yet) mapped to a button. */
 export const RIDE_KNOWN_BUTTON_BITS = ALL_BUTTONS.reduce((acc, b) => acc | RIDE_BUTTON_MASK[b], 0);
 
+/**
+ * One analog lever. Each grip has one lever that moves in two directions;
+ * the value is signed, −1 … 1 (raw −100 … +100).
+ */
 export interface RidePaddle {
   side: 'left' | 'right';
+  /** −1 … 1 */
+  value: number;
+}
+
+/** A paddle sub-message at a location other than 0 (left) / 1 (right); always 0 so far. */
+export interface RideExtraPaddle {
+  location: number;
   /** −1 … 1 */
   value: number;
 }
@@ -64,7 +78,10 @@ export type ZwiftRideMessage =
   | {
       type: 'keypad';
       pressed: ReadonlySet<ControllerButton>;
+      /** Locations 0 (left grip) and 1 (right grip). */
       paddles: RidePaddle[];
+      /** Every frame also carries locations 2 and 3 (always 0 in the captures); kept for logging. */
+      otherPaddles: RideExtraPaddle[];
       /** The raw button bitmap (low 32 bits), for protocol captures. */
       bitmap: number;
     }
@@ -100,12 +117,18 @@ export function parseZwiftRideMessage(data: DataView): ZwiftRideMessage | null {
         if ((bits & RIDE_BUTTON_MASK[button]) === 0) pressed.add(button);
       }
       const paddles: RidePaddle[] = [];
+      const otherPaddles: RideExtraPaddle[] = [];
       for (const f of fields) {
         if (f.field !== 3 || f.wire !== 2) continue;
         const paddle = parsePaddle(f.bytes);
-        if (paddle) paddles.push(paddle);
+        if (!paddle) continue;
+        if (paddle.location === 0 || paddle.location === 1) {
+          paddles.push({ side: paddle.location === 0 ? 'left' : 'right', value: paddle.value });
+        } else {
+          otherPaddles.push(paddle);
+        }
       }
-      return { type: 'keypad', pressed, paddles, bitmap: bits >>> 0 };
+      return { type: 'keypad', pressed, paddles, otherPaddles, bitmap: bits >>> 0 };
     }
     case ZwiftMessageType.battery: {
       const fields = decodeProtobuf(body);
@@ -142,16 +165,20 @@ export class RideButtonTracker {
   }
 }
 
-function parsePaddle(bytes: Uint8Array): RidePaddle | null {
+/**
+ * One paddle sub-message: field 1 = location (0 left grip, 1 right grip, 2 and 3
+ * present but always 0 so far), field 2 = sint32 (zigzag) value −100 … +100.
+ */
+function parsePaddle(bytes: Uint8Array): RideExtraPaddle | null {
   const fields = decodeProtobuf(bytes);
   if (!fields) return null;
   // proto3 omits default values: a missing location means 0 (left), a missing value 0.
   const location = fields.find((f) => f.field === 1 && f.wire === 0);
   const value = fields.find((f) => f.field === 2 && f.wire === 0);
   const loc = location && location.wire === 0 ? Number(location.value) : 0;
-  if (loc !== 0 && loc !== 1) return null;
+  if (!Number.isSafeInteger(loc) || loc < 0 || loc > 15) return null;
   const raw = value && value.wire === 0 ? zigzag(value.value) : 0;
-  return { side: loc === 0 ? 'left' : 'right', value: Math.max(-1, Math.min(1, raw / 100)) };
+  return { location: loc, value: Math.max(-1, Math.min(1, raw / 100)) };
 }
 
 function zigzag(n: bigint): number {
@@ -159,8 +186,7 @@ function zigzag(n: bigint): number {
 }
 
 type ProtoField =
-  | { field: number; wire: 0; value: bigint }
-  | { field: number; wire: 2; bytes: Uint8Array };
+  { field: number; wire: 0; value: bigint } | { field: number; wire: 2; bytes: Uint8Array };
 
 /** Minimal protobuf wire-format reader (varint and length-delimited; fixed32/64 skipped). */
 function decodeProtobuf(bytes: Uint8Array): ProtoField[] | null {

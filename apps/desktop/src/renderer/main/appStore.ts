@@ -141,7 +141,23 @@ export interface AppState {
   community: CommunityView;
   /** The controller button pressed last (live indicator in Settings); null until one is. */
   lastButton: LastButton | null;
+  /**
+   * Where the two analog levers are, −1 … 1 (live lever display in Settings).
+   * Null without a controller. Updated at most every LEVER_UPDATE_MS, so it is
+   * safe to select narrowly (`s => s.levers?.left`).
+   */
+  levers: LeverPositionsState | null;
 }
+
+export interface LeverPositionsState {
+  left: number;
+  right: number;
+  /** Local clock time of the last change. */
+  at: number;
+}
+
+/** The lever display in Settings updates at most this often (20 Hz). */
+export const LEVER_UPDATE_MS = 50;
 
 export interface LastButton {
   button: ControllerButton;
@@ -158,6 +174,62 @@ export function watchButtonPresses(
   return controller.onButton((e) => {
     if (e.pressed) onPress({ button: e.button, at: now() });
   });
+}
+
+export interface WatchLeversOptions {
+  now?: () => number;
+  /** Minimum time between two reports; the last position is always reported (trailing). */
+  intervalMs?: number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
+/**
+ * Reports the lever positions, throttled to one report per `intervalMs`
+ * (the final position of a movement is never lost). When the controller is
+ * no longer connected, the levers are reported at rest at once.
+ */
+export function watchLevers(
+  controller: Pick<Controller, 'onPaddle' | 'onState'>,
+  onChange: (levers: LeverPositionsState) => void,
+  options: WatchLeversOptions = {},
+): () => void {
+  const now = options.now ?? Date.now;
+  const interval = options.intervalMs ?? LEVER_UPDATE_MS;
+  const setTimer = options.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    options.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const pos = { left: 0, right: 0 };
+  let reported = { left: 0, right: 0 };
+  let lastReport = -Infinity;
+  let timer: unknown = null;
+  const report = (): void => {
+    timer = null;
+    if (pos.left === reported.left && pos.right === reported.right) return;
+    lastReport = now();
+    reported = { ...pos };
+    onChange({ left: pos.left, right: pos.right, at: lastReport });
+  };
+  const offPaddle = controller.onPaddle(({ side, value }) => {
+    pos[side] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
+    if (timer !== null) return;
+    const wait = lastReport + interval - now();
+    if (wait <= 0) report();
+    else timer = setTimer(report, wait);
+  });
+  const offState = controller.onState((state) => {
+    if (state === 'connected') return;
+    pos.left = 0;
+    pos.right = 0;
+    if (timer !== null) clearTimer(timer);
+    report();
+  });
+  return () => {
+    offPaddle();
+    offState();
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
 }
 
 export interface SharedWorkout {
@@ -272,6 +344,7 @@ export class App {
     groupCountdownS: null,
     community,
     lastButton: null,
+    levers: null,
   });
 
   readonly #api: FreilaufApi;
@@ -298,6 +371,7 @@ export class App {
   readonly #deviceMonitor: DeviceMonitor;
   #capture: ControllerCapture | null = null;
   #buttonWatch: (() => void) | null = null;
+  #leverWatch: (() => void) | null = null;
   #lastCaptureFlush = 0;
   #groupPeers = new Set<string>();
   /** At least one other rider was in the group at some point during the current ride. */
@@ -400,6 +474,7 @@ export class App {
     if (this.#timer) clearInterval(this.#timer);
     for (const off of this.#cleanup) off();
     this.#buttonWatch?.();
+    this.#leverWatch?.();
     this.#community.dispose(); // withdraws its documents and writes pending changes
     this.#group?.leave();
     this.#controller?.dispose();
@@ -545,7 +620,12 @@ export class App {
     if (!device) return;
     delete this.#devices[kind];
     this.#controller?.setDevice(kind, null);
-    if (kind === 'controller') this.#capture?.flush();
+    if (kind === 'controller') {
+      this.#capture?.flush();
+      this.#leverWatch?.();
+      this.#leverWatch = null;
+      this.store.setState({ levers: null });
+    }
     this.#bleLog.info(`${kind} "${device.name}": detaching`);
     await device.disconnect().catch(() => undefined);
     this.#deviceMonitor.unwatch(kind);
@@ -560,6 +640,9 @@ export class App {
       this.#buttonWatch = watchButtonPresses(device, (lastButton) =>
         this.store.setState({ lastButton }),
       );
+      this.#leverWatch?.();
+      this.store.setState({ levers: { left: 0, right: 0, at: Date.now() } });
+      this.#leverWatch = watchLevers(device, (levers) => this.store.setState({ levers }));
     }
   }
 
@@ -583,6 +666,11 @@ export class App {
   setSimEffort(watts: number): void {
     this.store.setState({ simEffortW: watts });
     this.#rig?.trainer.setRiderEffort(watts);
+  }
+
+  /** Sim mode only: move a simulated lever (−1 … 1), as if the rider held it there. */
+  setSimLever(side: 'left' | 'right', value: number): void {
+    this.#rig?.controller.setPaddle(side, value);
   }
 
   /** Sim mode only: drop a simulated device to see the recovery UI. */
@@ -626,6 +714,11 @@ export class App {
 
   setGradient(gradePercent: number): void {
     this.#controller?.setGradient(gradePercent);
+  }
+
+  /** Brake key held (true) or released (false). Slows the virtual bike only. */
+  setBrakeKey(held: boolean): void {
+    this.#controller?.setBrake(held ? 1 : 0, 'keyboard');
   }
 
   // ───────────── workouts ─────────────

@@ -9,7 +9,8 @@ overlay, and find the log when something goes wrong. Freilauf is early — pleas
 - A computer with Bluetooth: Windows, macOS or Linux. (Only Windows 11 has met real hardware
   so far; macOS is untested.)
 - A smart trainer that speaks standard Bluetooth FTMS. Optional: a Bluetooth heart-rate strap,
-  and the handlebar controllers of a smart frame (partly supported; the keyboard always works).
+  and the handlebar controllers of a smart frame (buttons and levers decoded; the keyboard always
+  works).
 - Nothing at all to just look around: simulation mode runs the whole app without hardware.
 
 ## 1. Get the app
@@ -64,15 +65,39 @@ as with real devices.
 3. The same for the heart-rate strap and the controllers.
 
 Paired devices are remembered and reconnect automatically the next time you start the app. If
-one does not: wake it, close other apps, and click **Retry** or **Pair** again. The settings
-for controller buttons are in **Settings → Shifting**, which also shows the last button the app
-received.
+one does not: wake it, close other apps, and click **Retry** or **Pair** again.
+
+### Controllers: buttons and levers
+
+What works with the handlebar controllers of a Zwift Ride smart frame:
+
+- **All sixteen buttons** are decoded (confirmed on real controllers). What each one does is set
+  in **Settings → Shifting → Controller buttons**; the row of the button you press lights up and
+  "Last button: …" names it, so you can check every button at a glance.
+- **The two analog levers** (one per grip) are decoded. Each lever moves both ways, and each
+  way can **steer left**, **steer right**, **brake** or do nothing. Braking slows the virtual
+  bike only (speed and distance); the trainer's resistance does not change.
+
+How to check and reassign the levers: open **Settings → Shifting → Brake and steering levers**.
+Each grip has a bar from −100 to +100 that follows its lever live, with the dead zone around 0
+hatched (rest jitter of ±1–2 % never acts), the raw percentage, and what the app makes of it
+("Steering: 40 % right", "Brake: 70 %"). Under the bar you choose what happens **when the bar
+moves left (−)** and **when it moves right (+)**.
+
+The default assignment is **a best guess from one recording** of the real controllers: on the
+right lever + steers right and − brakes, on the left lever − steers left and + brakes. If
+pulling the brake steers instead (or the other way round), press **Swap brake and steer on this
+lever** for that grip, or pick each direction yourself; **Reset to defaults** goes back.
+
+Without levers: hold <kbd>S</kbd> to brake, <kbd>A</kbd> <kbd>D</kbd> to steer. In simulation
+mode (`pnpm dev:sim`) the Simulation panel on the Ride tab has a slider per lever.
 
 ## 5. Ride
 
 - **Ride** tab: start and pause with the button or <kbd>Space</kbd>; shift with <kbd>↑</kbd>
   <kbd>↓</kbd> (or <kbd>+</kbd> <kbd>−</kbd>); change the gradient with <kbd>[</kbd>
-  <kbd>]</kbd>; steer with <kbd>A</kbd> <kbd>D</kbd>. **Finish** saves the ride.
+  <kbd>]</kbd>; steer with <kbd>A</kbd> <kbd>D</kbd>; hold <kbd>S</kbd> to brake. **Finish**
+  saves the ride.
 - **Workouts** tab: pick a workout from the library, import `.zwo` files (button or drop them on
   the window), or run an FTP test. In a workout the trainer holds the target power (ERG mode).
 - **History** tab: your rides, each with **Export .fit** for the analysis tool you use.

@@ -74,6 +74,7 @@ export function RideScene() {
   const rootRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLCanvasElement>(null);
   const profileRef = useRef<HTMLCanvasElement>(null);
+  const brakeRef = useRef<HTMLSpanElement>(null);
   // Initial attributes only; afterwards the loop owns them (React never re-sets them).
   const [initial] = useState(() => {
     const live = app.store.getState().live;
@@ -89,7 +90,12 @@ export function RideScene() {
     const view = viewRef.current;
     const profile = profileRef.current;
     if (!root || !view || !profile) return;
-    return startScene(app, root, view, profile);
+    const stopBrake = startBrakeCue(app, root, brakeRef.current);
+    const stopScene = startScene(app, root, view, profile);
+    return () => {
+      stopBrake();
+      stopScene();
+    };
   }, [app]);
 
   return (
@@ -104,9 +110,14 @@ export function RideScene() {
       data-distance="0.0"
       data-frames="0"
       data-state={initial.state}
+      data-braking="0"
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
+        <span ref={brakeRef} className="scene-brake" data-testid="scene-brake" hidden>
+          <span className="scene-brake-dot" />
+          <span className="scene-brake-text">Brake</span>
+        </span>
       </div>
       <div className="scene-profile">
         <canvas
@@ -118,6 +129,31 @@ export function RideScene() {
       </div>
     </section>
   );
+}
+
+/** Below this the brake cue stays hidden (rounding noise, the end of a release). */
+const BRAKE_CUE_MIN = 0.03;
+
+/**
+ * Shows "Brake 70 %" on the scene while the brake acts (levers or the brake
+ * key) and mirrors the value in data-braking. Follows the 4 Hz live state;
+ * works without a canvas, so the cue is there even in a headless DOM.
+ */
+function startBrakeCue(app: App, root: HTMLElement, badge: HTMLElement | null): () => void {
+  const text = badge?.querySelector<HTMLElement>('.scene-brake-text') ?? null;
+  let shown = '';
+  const update = (live: LiveState | null): void => {
+    const braking = live?.ride.state === 'riding' ? (live.braking ?? 0) : 0;
+    const label = braking >= BRAKE_CUE_MIN ? `Brake ${Math.round(braking * 100)} %` : '';
+    if (label === shown) return;
+    shown = label;
+    root.dataset.braking = braking.toFixed(2);
+    if (!badge) return;
+    badge.hidden = label === '';
+    if (text && label) text.textContent = label;
+  };
+  update(app.store.getState().live);
+  return app.store.subscribe((s) => update(s.live));
 }
 
 /** Wires the loop, input and observers; returns the teardown. */

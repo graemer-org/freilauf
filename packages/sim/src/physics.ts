@@ -33,6 +33,13 @@ export function resistingForce(speedMps: number, gradePercent: number, bike: Bik
   return gravity + rolling + aero;
 }
 
+/**
+ * Deceleration of the virtual bike at full brake, m/s². About 0.5 g: a firm
+ * stop on a road bike in the dry (the rear wheel starts to lift at roughly
+ * 0.6–0.7 g). From 30 km/h that stops the bike in about 1.6 s over ~7 m.
+ */
+export const MAX_BRAKE_DECEL_MPS2 = 5;
+
 const MAX_SUBSTEP_S = 0.1;
 /** Below this speed the P/v drive force is capped to avoid a singularity at standstill. */
 const MIN_DRIVE_SPEED = 1;
@@ -40,7 +47,10 @@ const MIN_DRIVE_SPEED = 1;
 /**
  * Advances the virtual bike by dt seconds with the rider producing powerW.
  * Returns the new speed and the distance covered. Speed never goes negative
- * (no rolling backwards on a climb).
+ * (no rolling backwards on a climb, and a brake only stops the bike).
+ *
+ * `brake` (0 … 1, default 0) adds a decelerating force proportional to it,
+ * up to MAX_BRAKE_DECEL_MPS2 at 1. It only acts while the bike is moving.
  */
 export function stepBike(
   speedMps: number,
@@ -48,15 +58,21 @@ export function stepBike(
   gradePercent: number,
   bike: BikeParams,
   dtS: number,
+  brake = 0,
 ): { speedMps: number; distanceM: number } {
   let v = Math.max(0, speedMps);
   let distance = 0;
   let remaining = Math.max(0, Math.min(dtS, 5)); // a stalled clock must not teleport the rider
   const power = Number.isFinite(powerW) ? Math.max(0, powerW) : 0;
+  const brakeForce =
+    (Number.isFinite(brake) ? Math.max(0, Math.min(1, brake)) : 0) *
+    MAX_BRAKE_DECEL_MPS2 *
+    bike.totalMassKg;
   while (remaining > 1e-9) {
     const dt = Math.min(remaining, MAX_SUBSTEP_S);
     const drive = power / Math.max(v, MIN_DRIVE_SPEED);
-    const accel = (drive - resistingForce(v, gradePercent, bike)) / bike.totalMassKg;
+    const braking = v > 0 ? brakeForce : 0;
+    const accel = (drive - resistingForce(v, gradePercent, bike) - braking) / bike.totalMassKg;
     const next = Math.max(0, v + accel * dt);
     distance += ((v + next) / 2) * dt;
     v = next;

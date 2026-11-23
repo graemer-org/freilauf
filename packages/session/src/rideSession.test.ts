@@ -49,7 +49,12 @@ describe('RideSession', () => {
     expect(samples[239]!.elapsedS).toBe(240);
     expect(samples[10]!.timestamp - samples[9]!.timestamp).toBe(1000);
     expect(samples[239]!.distanceM).toBeCloseTo(snap.distanceM, 6);
-    expect(samples[100]).toMatchObject({ powerW: 200, cadenceRpm: 90, heartRateBpm: 140, gear: 12 });
+    expect(samples[100]).toMatchObject({
+      powerW: 200,
+      cadenceRpm: 90,
+      heartRateBpm: 140,
+      gear: 12,
+    });
     for (let i = 1; i < samples.length; i++) {
       expect(samples[i]!.distanceM).toBeGreaterThanOrEqual(samples[i - 1]!.distanceM);
     }
@@ -139,5 +144,40 @@ describe('RideSession', () => {
     const snap = session.tick();
     expect(snap.powerW).toBe(200);
     expect(snap.heartRateBpm).toBeNull();
+  });
+
+  it('the brake slows the virtual bike while it is refreshed and lapses when it goes stale', () => {
+    const { session, ride } = setup();
+    session.start();
+    const cruising = ride(120, 200).speedMps;
+    expect(cruising).toBeGreaterThan(8);
+
+    // Held brake (refreshed every tick, like the controller does): stops within a few seconds.
+    let braked = cruising;
+    for (let i = 0; i < 4 * 3; i++) {
+      session.setBrake(1);
+      braked = ride(0.25, 200).speedMps;
+      expect(braked).toBeGreaterThanOrEqual(0);
+    }
+    expect(braked).toBeLessThan(1);
+
+    // Set once and never again: it stops acting after 3 s and the rider speeds up again.
+    session.setBrake(1);
+    ride(4, 200);
+    const later = ride(20, 200).speedMps;
+    expect(later).toBeGreaterThan(5);
+  });
+
+  it('a zero brake changes nothing', () => {
+    const a = setup();
+    const b = setup();
+    a.session.start();
+    b.session.start();
+    for (let i = 0; i < 60; i++) {
+      b.session.setBrake(0);
+      expect(b.ride(1, 220)).toEqual(a.ride(1, 220));
+    }
+    b.session.setBrake(Number.NaN); // ignored like other non-finite inputs
+    expect(b.ride(1, 220)).toEqual(a.ride(1, 220));
   });
 });

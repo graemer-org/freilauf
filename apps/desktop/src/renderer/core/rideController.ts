@@ -28,6 +28,8 @@ import type {
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
+import { combineSteering, leverOutput } from './levers';
+import type { LeverOutput } from './levers';
 import { RateLimiter } from './logFormat';
 import type { ScopedLog } from './logger';
 import { NULL_LOG } from './logger';
@@ -113,10 +115,16 @@ export class RideController {
   #lastAutosaveAt = 0;
   #plan: Plan | null = null;
   #steerButtons = new Set<'steerLeft' | 'steerRight'>();
+  /** Signed lever positions, −1 … 1 per grip (see levers.ts). */
   #paddles = { left: 0, right: 0 };
+  /** Brake from outside the controller (keyboard), 0 … 1. */
+  #manualBrake = 0;
   readonly #log: ScopedLog;
   /** Trainer commands are frequent while shifting: summarise beyond a few per 10 s. */
   readonly #commandLimit: RateLimiter;
+  /** Lever results for the diagnostic log: a few lines per second at most. */
+  readonly #leverLimit: RateLimiter;
+  #lastLeverLog = '';
   #lastSegment = '';
 
   constructor(options: RideControllerOptions) {
@@ -125,6 +133,7 @@ export class RideController {
     this.#now = options.now ?? Date.now;
     this.#log = options.log ?? NULL_LOG;
     this.#commandLimit = new RateLimiter(10, 10_000, this.#now);
+    this.#leverLimit = new RateLimiter(20, 10_000, this.#now);
     this.#session = this.#newSession();
     this.#shifter = this.#newShifter();
   }
@@ -143,6 +152,7 @@ export class RideController {
     for (const off of this.#unsubscribe[kind] ?? []) off();
     const subs: Unsubscribe[] = [];
     this.#unsubscribe[kind] = subs;
+    if (kind === 'controller') this.#releaseController();
     if (!device) {
       delete this.#devices[kind];
       return;
@@ -167,15 +177,12 @@ export class RideController {
       subs.push(
         device.onButton((event) => this.#onButton(event)),
         device.onPaddle(({ side, value }) => {
-          // A paddle reports how far it is pulled; the sign is not needed.
-          this.#paddles[side] = Math.min(1, Math.abs(value));
+          // Signed: each lever moves both ways, each direction has its own function.
+          this.#paddles[side] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
         }),
         // Nothing stays "held" when the controller goes away.
         device.onState((state) => {
-          if (state !== 'connected') {
-            this.#steerButtons.clear();
-            this.#paddles = { left: 0, right: 0 };
-          }
+          if (state !== 'connected') this.#releaseController();
         }),
       );
     }
@@ -252,6 +259,20 @@ export class RideController {
     });
   }
 
+  /**
+   * Brake from outside the controller (the keyboard), 0 … 1. Combined with
+   * the levers: the stronger brake wins. Slows the virtual bike only.
+   */
+  setBrake(fraction: number, source: ShiftSource = 'keyboard'): void {
+    const next = Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
+    if (next === this.#manualBrake) return;
+    this.#manualBrake = next;
+    this.#log.debug(next > 0 ? `brake on (${source})` : `brake off (${source})`, {
+      braking: next,
+      source,
+    });
+  }
+
   setGradient(gradePercent: number): void {
     this.#gradePercent = Math.max(-15, Math.min(20, gradePercent));
     this.#shifter.setGradient(this.#gradePercent);
@@ -322,6 +343,11 @@ export class RideController {
   tick(): LiveState {
     this.#session.setGear(this.#shifter.gear, this.#shifter.gearCount);
     this.#session.setGradient(this.#gradePercent);
+    const levers = leverOutput(this.#paddles, this.#settings.shifting.levers);
+    const steering = combineSteering(levers, this.#buttonSteering());
+    const braking = Math.max(levers.braking, this.#manualBrake);
+    this.#logLevers(levers, steering, braking);
+    this.#session.setBrake(braking);
     const ride = this.#session.tick();
     const now = this.#now();
     const workout = this.#driveWorkout(ride);
@@ -356,7 +382,8 @@ export class RideController {
         : null,
       localName: this.#settings.rider.name,
       workout,
-      steering: this.#steering(),
+      steering,
+      braking,
     };
     this.#options.onLive(live);
     return live;
@@ -407,20 +434,54 @@ export class RideController {
     }
   }
 
-  /** −1 (left) … 1 (right): analog paddles if they are used, otherwise held steer buttons. */
-  #steering(): number {
-    const paddles = this.#paddles.right - this.#paddles.left;
-    const buttons =
-      (this.#steerButtons.has('steerRight') ? 1 : 0) - (this.#steerButtons.has('steerLeft') ? 1 : 0);
-    const value = Math.abs(paddles) > 0.05 ? paddles : buttons;
-    return Math.max(-1, Math.min(1, value));
+  /** −1, 0 or 1 from held steer buttons. */
+  #buttonSteering(): number {
+    return (
+      (this.#steerButtons.has('steerRight') ? 1 : 0) - (this.#steerButtons.has('steerLeft') ? 1 : 0)
+    );
+  }
+
+  /** Releases held steer buttons and returns both levers to rest (disconnect, detach). */
+  #releaseController(): void {
+    this.#steerButtons.clear();
+    this.#paddles = { left: 0, right: 0 };
+  }
+
+  /**
+   * Logs what the app made of the levers (debug, source "ride") whenever the
+   * result changes by a visible step, so a capture shows the interpretation
+   * next to the raw frames. At most 20 lines per 10 s; the rest is counted.
+   */
+  #logLevers(levers: LeverOutput, steering: number, braking: number): void {
+    const step = (v: number): number => Math.round(v * 10) / 10;
+    // Keyed on the levers only: steer buttons and the brake key do not add lines.
+    const key = `${step(this.#paddles.left)}|${step(this.#paddles.right)}|${levers.steerActive}`;
+    if (key === this.#lastLeverLog) return;
+    const first = this.#lastLeverLog === '';
+    this.#lastLeverLog = key;
+    if (first && key === '0|0|false') return; // nothing happened yet
+    const d = this.#leverLimit.take('lever');
+    if (!d.allowed) return;
+    const { left, right } = this.#settings.shifting.levers;
+    this.#log.debug(`levers → steering ${step(levers.steering)}, braking ${step(levers.braking)}`, {
+      left: round(this.#paddles.left, 2),
+      right: round(this.#paddles.right, 2),
+      // After combining with steer buttons and the brake key: what the ride uses.
+      steering: round(steering, 2),
+      braking: round(braking, 2),
+      assignment: `left +${left.positive} −${left.negative}, right +${right.positive} −${right.negative}`,
+      ...(d.suppressed ? { suppressedBefore: d.suppressed } : {}),
+    });
   }
 
   /** Logs a trainer command; beyond 10 per 10 s only a count is kept and reported with the next one. */
   #logCommand(kind: string, context: Record<string, unknown>): void {
     const d = this.#commandLimit.take(kind);
     if (!d.allowed) return;
-    this.#log.debug(`trainer ← ${kind}`, d.suppressed ? { ...context, suppressedBefore: d.suppressed } : context);
+    this.#log.debug(
+      `trainer ← ${kind}`,
+      d.suppressed ? { ...context, suppressedBefore: d.suppressed } : context,
+    );
   }
 
   #bike(): BikeParams {

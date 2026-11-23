@@ -20,10 +20,11 @@ export interface RawFrame {
 }
 
 /**
- * BLE driver for the Zwift Ride handlebar controllers. The protocol is
- * unverified against hardware (docs/protocols/zwift-ride.md), so the driver
- * is deliberately lenient: it does not wait for the handshake answer, and
- * it exposes every raw frame for capture.
+ * BLE driver for the Zwift Ride handlebar controllers. Buttons and the lever
+ * message layout are verified on hardware; the handshake details are not
+ * (docs/protocols/zwift-ride.md), so the driver is deliberately lenient: it
+ * does not wait for the handshake answer, and it exposes every raw frame for
+ * capture.
  */
 export class ZwiftRideController extends ManagedDevice<'controller'> implements Controller {
   readonly kind = 'controller' as const;
@@ -32,6 +33,8 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
   private readonly batteryEmitter = createEmitter<number>();
   private readonly rawEmitter = createEmitter<RawFrame>();
   private readonly tracker = new RideButtonTracker();
+  /** Last lever value per grip, so a drop can return a held lever to rest. */
+  private readonly levers = { left: 0, right: 0 };
 
   constructor(peripheral: BlePeripheral, options: ManagedDeviceOptions = {}) {
     super(peripheral, options);
@@ -73,7 +76,10 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
       const message = parseZwiftRideMessage(view);
       if (message?.type === 'keypad') {
         for (const event of this.tracker.update(message.pressed)) this.buttonEmitter.emit(event);
-        for (const paddle of message.paddles) this.paddleEmitter.emit(paddle);
+        for (const paddle of message.paddles) {
+          this.levers[paddle.side] = paddle.value;
+          this.paddleEmitter.emit(paddle);
+        }
       } else if (message?.type === 'battery') {
         this.batteryEmitter.emit(message.percent);
       }
@@ -100,9 +106,14 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
     this.diag('info', 'handshake', 'wrote "RideOn" to sync RX', { bytes: ZWIFT_HANDSHAKE });
   }
 
-  /** A button held while the link drops must not stay "pressed" forever. */
+  /** A button or lever held while the link drops must not stay "pressed" forever. */
   protected override onLinkDown(): void {
     for (const event of this.tracker.reset()) this.buttonEmitter.emit(event);
+    for (const side of ['left', 'right'] as const) {
+      if (this.levers[side] === 0) continue;
+      this.levers[side] = 0;
+      this.paddleEmitter.emit({ side, value: 0 });
+    }
   }
 }
 

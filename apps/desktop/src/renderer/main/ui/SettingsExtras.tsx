@@ -1,7 +1,24 @@
 import type { ControllerButton } from '@freilauf/devices';
 import { useEffect, useId, useState } from 'react';
-import type { ControllerAction, Settings } from '../../../shared/contract';
-import { CONTROLLER_ACTION_LABELS } from '../../../shared/contract';
+import type {
+  ControllerAction,
+  LeverFunction,
+  LeverSettings,
+  Settings,
+} from '../../../shared/contract';
+import {
+  CONTROLLER_ACTION_LABELS,
+  DEFAULT_LEVERS,
+  LEVER_FUNCTION_LABELS,
+} from '../../../shared/contract';
+import type { LeverSide } from '../../core/levers';
+import {
+  describeGrip,
+  formatLeverPercent,
+  gripOutput,
+  isDefaultLevers,
+  swapGrip,
+} from '../../core/levers';
 import type { Grip } from './buttonMap';
 import {
   ACTION_OPTIONS,
@@ -12,6 +29,7 @@ import {
   defaultButtonsPatch,
   isDefaultMapping,
 } from './buttonMap';
+import { RangeField } from './fields';
 import { useApp, useAppState } from './hooks';
 
 /** How long a row stays lit after its button was pressed. */
@@ -152,8 +170,226 @@ export function ButtonMapping({ buttons }: { buttons: Settings['shifting']['butt
         </div>
       </div>
       <p className="hint section-foot">
-        Handlebar controller support is experimental and not every button is decoded yet. If a
-        button does the wrong thing, change it here; keyboard shifting always works.
+        All sixteen buttons are decoded. If a button does the wrong thing, change it here; keyboard
+        shifting always works.
+      </p>
+    </>
+  );
+}
+
+// ───────────── analog levers ─────────────
+
+const LEVER_FUNCTIONS: readonly LeverFunction[] = ['steerLeft', 'steerRight', 'brake', 'none'];
+const SIDE_LABEL: Record<LeverSide, string> = { left: 'Left lever', right: 'Right lever' };
+
+/** The bar's fill colour follows what the current direction does. */
+const FILL_CLASS: Record<LeverFunction, string> = {
+  steerLeft: 'is-steer',
+  steerRight: 'is-steer',
+  brake: 'is-brake',
+  none: 'is-none',
+};
+
+function LeverDirection({
+  side,
+  direction,
+  value,
+  onChange,
+}: {
+  side: LeverSide;
+  direction: 'positive' | 'negative';
+  value: LeverFunction;
+  onChange: (side: LeverSide, direction: 'positive' | 'negative', fn: LeverFunction) => void;
+}) {
+  const id = useId();
+  return (
+    <div className={`lever-dir lever-dir-${direction}`}>
+      <label htmlFor={id}>
+        {direction === 'negative' ? 'When the bar moves left (−)' : 'When the bar moves right (+)'}
+      </label>
+      <select
+        id={id}
+        data-testid={`lever-${side}-${direction}`}
+        value={value}
+        onChange={(e) => onChange(side, direction, e.currentTarget.value as LeverFunction)}
+      >
+        {LEVER_FUNCTIONS.map((fn) => (
+          <option key={fn} value={fn}>
+            {LEVER_FUNCTION_LABELS[fn]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function LeverGrip({
+  side,
+  levers,
+  connected,
+  onChange,
+  onSwap,
+}: {
+  side: LeverSide;
+  levers: LeverSettings;
+  connected: boolean;
+  onChange: (side: LeverSide, direction: 'positive' | 'negative', fn: LeverFunction) => void;
+  onSwap: (side: LeverSide) => void;
+}) {
+  const headId = useId();
+  // A primitive: only this grip re-renders, and only when its lever moves (≤ 20 Hz).
+  const value = useAppState((s) => s.levers?.[side] ?? 0);
+  const out = gripOutput(side, value, levers);
+  const pct = Math.round(value * 100);
+  const dz = levers.deadzone * 100;
+  const assignment = levers[side];
+  const fill = out.direction ? FILL_CLASS[out.fn] : 'is-rest';
+  return (
+    <div
+      className="lever-grip"
+      role="group"
+      aria-labelledby={headId}
+      data-testid={`lever-${side}`}
+      data-value={pct}
+    >
+      <div className="lever-head">
+        <h4 id={headId} className="map-grip-title lever-title">
+          {SIDE_LABEL[side]}
+        </h4>
+        <output className="lever-value" data-testid={`lever-${side}-value`}>
+          {formatLeverPercent(value)}
+        </output>
+      </div>
+      <div
+        className="lever-bar"
+        role="meter"
+        aria-label={`${SIDE_LABEL[side]} position`}
+        aria-valuemin={-100}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-valuetext={formatLeverPercent(value)}
+      >
+        <span
+          className="lever-dead"
+          style={{ left: `${50 - dz / 2}%`, width: `${dz}%` }}
+          title={`Dead zone ±${Math.round(dz)} %`}
+        />
+        <span
+          className={`lever-fill ${fill}`}
+          style={
+            pct >= 0
+              ? { left: '50%', width: `${pct / 2}%` }
+              : { left: `${50 + pct / 2}%`, width: `${-pct / 2}%` }
+          }
+        />
+        <span className="lever-zero" />
+      </div>
+      <div className="lever-scale" aria-hidden="true">
+        <span>−100</span>
+        <span>0</span>
+        <span>+100</span>
+      </div>
+      <div className="lever-dirs">
+        <LeverDirection
+          side={side}
+          direction="negative"
+          value={assignment.negative}
+          onChange={onChange}
+        />
+        <LeverDirection
+          side={side}
+          direction="positive"
+          value={assignment.positive}
+          onChange={onChange}
+        />
+      </div>
+      <div className="lever-foot">
+        <p className={`lever-result ${fill}`} data-testid={`lever-${side}-result`}>
+          {connected ? describeGrip(out) : 'Not connected'}
+        </p>
+        <button
+          type="button"
+          className="btn btn-small btn-quiet"
+          data-testid={`lever-${side}-swap`}
+          disabled={assignment.positive === assignment.negative}
+          onClick={() => onSwap(side)}
+        >
+          Swap brake and steer on this lever
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Live display and assignment of the two analog levers. Each lever moves both
+ * ways; each direction gets a function. The default assignment is a guess
+ * from one hardware capture, so the display shows exactly what arrives.
+ */
+export function LeverMapping({ levers }: { levers: LeverSettings }) {
+  const app = useApp();
+  const connected = useAppState((s) => s.live?.devices.controller?.state === 'connected');
+  const onChange = (side: LeverSide, direction: 'positive' | 'negative', fn: LeverFunction) => {
+    void app.updateSettings({ shifting: { levers: { [side]: { [direction]: fn } } } });
+  };
+  const onSwap = (side: LeverSide) => {
+    void app.updateSettings({ shifting: { levers: { [side]: swapGrip(levers, side)[side] } } });
+  };
+  return (
+    <>
+      <div className="subhead subhead-row">
+        <h3 className="subhead-title">Brake and steering levers</h3>
+        <button
+          type="button"
+          className="btn btn-small btn-quiet"
+          data-testid="lever-reset"
+          disabled={isDefaultLevers(levers)}
+          onClick={() =>
+            void app.updateSettings({ shifting: { levers: structuredClone(DEFAULT_LEVERS) } })
+          }
+        >
+          Reset to defaults
+        </button>
+      </div>
+      <div className="card" data-testid="lever-mapping">
+        <p className="map-live lever-intro">
+          {connected
+            ? 'Move a lever: its bar follows. Each lever moves both ways, and each way can steer or brake.'
+            : 'Connect the controller to see the levers move here.'}
+        </p>
+        <div className="map-grips">
+          <LeverGrip
+            side="left"
+            levers={levers}
+            connected={connected}
+            onChange={onChange}
+            onSwap={onSwap}
+          />
+          <LeverGrip
+            side="right"
+            levers={levers}
+            connected={connected}
+            onChange={onChange}
+            onSwap={onSwap}
+          />
+        </div>
+        <div className="lever-deadzone">
+          <RangeField
+            label="Dead zone around rest"
+            value={levers.deadzone}
+            min={0}
+            max={0.2}
+            step={0.01}
+            testId="lever-deadzone"
+            format={(v) => `±${Math.round(v * 100)} %`}
+            onCommit={(deadzone) => void app.updateSettings({ shifting: { levers: { deadzone } } })}
+          />
+        </div>
+      </div>
+      <p className="hint section-foot" data-testid="lever-hint">
+        The default assignment is a best guess from one recording of the real controllers. If
+        pulling the brake steers (or the other way round), press “Swap brake and steer on this
+        lever” or pick the right function for each direction.
       </p>
     </>
   );
@@ -212,10 +448,11 @@ export function DiagnosticsCard() {
       <div className="diag-help">
         <h4 className="diag-help-title">Help decode the controllers</h4>
         <p className="hint">
-          Connect the controller, then press each button once, slowly and in order: left grip lower
-          and upper shift button, D-pad up, right, down, left, power-up button; then right grip
-          lower and upper shift button, A, B, Y, Z, power-up button. Leave out the on/off buttons.
-          Then export the log and attach it to a GitHub issue together with the order you used.
+          All buttons are decoded; the levers are what is still being worked out. Connect the
+          controller, open “Brake and steering levers” above, and on each grip, slowly: pull the
+          brake all the way and let go, then push the lever sideways all the way and let go. Note
+          which way the bar moved each time, then export the log and attach it to a GitHub issue
+          together with your notes.
         </p>
       </div>
     </div>
