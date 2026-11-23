@@ -341,3 +341,176 @@ export function routeProgress(totalM: number, distanceM: number, loop: boolean):
   const d = loop ? ((distanceM % totalM) + totalM) % totalM : distanceM;
   return Math.max(0, Math.min(1, d / totalM));
 }
+
+// ───────────── picking a point: start point and jumps (docs/routes.md) ─────────────
+
+/** A place on the route in words: `km 42.3`. */
+export function formatRouteKm(m: number): string {
+  const v = Math.max(0, Number.isFinite(m) ? m : 0);
+  return `km ${(v / 1000).toFixed(1)}`;
+}
+
+/** What the profile or map shows for a point: `km 42.3 · 812 m · +3.1 %`. */
+export function pointLabel(p: {
+  distanceM: number;
+  elevationM: number;
+  gradePercent: number;
+}): string {
+  return `${formatRouteKm(p.distanceM)} · ${Math.round(Number.isFinite(p.elevationM) ? p.elevationM : 0)} m · ${formatGradient(p.gradePercent)}`;
+}
+
+/** 'start' before the ride (choose where it starts), 'jump' during it. */
+export type PickMode = 'start' | 'jump';
+
+/** The question of the confirmation and the word on its button. */
+export function pickPrompt(mode: PickMode, label: string): { text: string; confirm: string } {
+  return mode === 'start'
+    ? { text: `Start at ${label}`, confirm: 'Start here' }
+    : { text: `Jump to ${label}`, confirm: 'Jump' };
+}
+
+/** Distance, elevation and gradient (percent, over the next 10 m) at a route distance. */
+export function trackPointInfo(
+  track: RouteTrack,
+  distanceM: number,
+): { distanceM: number; elevationM: number; gradePercent: number } {
+  const d = routeDistance(track, distanceM);
+  const p = createTrackPoint();
+  const a = sampleTrack(track, d, p).elevationM;
+  // Centred difference over ±10 m, inside the route.
+  const total = (track.count - 1) * track.stepM;
+  const lo = track.loop ? d - 10 : Math.max(0, d - 10);
+  const hi = track.loop ? d + 10 : Math.min(total, d + 10);
+  const g =
+    hi > lo
+      ? ((sampleTrack(track, hi, p).elevationM - sampleTrack(track, lo, p).elevationM) /
+          (hi - lo)) *
+        100
+      : 0;
+  return { distanceM: d, elevationM: a, gradePercent: g };
+}
+
+/** The same from an evenly spaced profile (Routes tab without the track): coarse but honest. */
+export function profilePointInfo(
+  profile: readonly number[],
+  totalM: number,
+  distanceM: number,
+): { distanceM: number; elevationM: number; gradePercent: number } {
+  const d = Math.max(0, Math.min(totalM, Number.isFinite(distanceM) ? distanceM : 0));
+  const spacing = profile.length > 1 && totalM > 0 ? totalM / (profile.length - 1) : 0;
+  const half = Math.max(10, spacing / 2);
+  const lo = Math.max(0, d - half);
+  const hi = Math.min(totalM, d + half);
+  const g =
+    hi > lo
+      ? ((profileElevationAt(profile, totalM, hi) - profileElevationAt(profile, totalM, lo)) /
+          (hi - lo)) *
+        100
+      : 0;
+  return { distanceM: d, elevationM: profileElevationAt(profile, totalM, d), gradePercent: g };
+}
+
+/**
+ * Keyboard steps for a profile showing `spanM` of road: ← → move by `small` (about 1 % of the
+ * span, a round number of metres), Shift by `large` (10 ×). 97.6 km → 1 km / 10 km; the 660 m
+ * "ahead" profile → 10 m / 100 m.
+ */
+export function pickSteps(spanM: number): { small: number; large: number } {
+  const raw = Math.max(10, (Number.isFinite(spanM) ? spanM : 0) / 100);
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const nice = [1, 2, 5, 10].map((k) => k * mag).find((v) => v >= raw * 0.999) ?? 10 * mag;
+  return { small: nice, large: nice * 10 };
+}
+
+export interface MapCandidate {
+  /** Route distance of the nearest point of this pass, metres. */
+  distanceM: number;
+  /** Its distance from the pointer, in box units. */
+  boxDistance: number;
+}
+
+/**
+ * Every pass of the route near a point of the map box (`fit` maps track x/y into the box):
+ * runs of samples within `radius` box units, each reduced to its nearest sample. An
+ * out-and-back route gives two candidates where the legs overlap.
+ */
+export function mapCandidates(
+  track: RouteTrack,
+  fit: Pick<OutlineFit, 'map'>,
+  boxX: number,
+  boxY: number,
+  radius: number,
+): MapCandidate[] {
+  const n = Math.min(track.count, track.x.length, track.y.length);
+  if (n === 0) return [];
+  const stride = Math.max(1, Math.ceil(n / 4000));
+  const out: MapCandidate[] = [];
+  let run: MapCandidate | null = null;
+  let lastIn = -Infinity;
+  for (let i = 0; i < n; i += stride) {
+    const [px, py] = fit.map(track.x[i]!, track.y[i]!);
+    const dist = Math.hypot(px - boxX, py - boxY);
+    if (dist > radius) continue;
+    // A new pass when the previous sample inside the radius is more than a few samples back.
+    if (!run || i - lastIn > 3 * stride) {
+      run = { distanceM: i * track.stepM, boxDistance: dist };
+      out.push(run);
+    } else if (dist < run.boxDistance) {
+      run.distanceM = i * track.stepM;
+      run.boxDistance = dist;
+    }
+    lastIn = i;
+  }
+  // On a loop, a pass across the start/finish line is one pass.
+  if (
+    track.loop &&
+    out.length > 1 &&
+    lastIn >= n - 1 - 3 * stride &&
+    out[0]!.distanceM < 4 * stride * track.stepM
+  ) {
+    const tail = out.pop()!;
+    if (tail.boxDistance < out[0]!.boxDistance) out[0] = tail;
+  }
+  return out;
+}
+
+/**
+ * Which pass a click on the map means. Passes about as close to the pointer as the closest one
+ * (within `tolerance` box units) are ambiguous (overlapping legs); of those, the next one ahead
+ * of `currentM` along the route is taken (wrapping on a loop; on a point-to-point route the
+ * nearest one behind if none is ahead). The kilometre in the confirmation then shows the rider
+ * which leg was picked. Null without candidates.
+ */
+export function chooseMapCandidate(
+  candidates: readonly MapCandidate[],
+  currentM: number,
+  totalM: number,
+  loop: boolean,
+  tolerance = 2,
+): MapCandidate | null {
+  if (candidates.length === 0) return null;
+  const best = Math.min(...candidates.map((c) => c.boxDistance));
+  const near = candidates.filter((c) => c.boxDistance <= best + tolerance);
+  // Distance ahead along the route; passes behind (point-to-point) only after all ahead ones,
+  // nearest first.
+  const ahead = (c: MapCandidate): number => {
+    const g = c.distanceM - currentM;
+    if (loop && totalM > 0) return ((g % totalM) + totalM) % totalM;
+    return g >= 0 ? g : 1e12 - g;
+  };
+  return near.reduce((a, b) => (ahead(b) < ahead(a) ? b : a));
+}
+
+/** Box coordinates (viewBox units) of a pointer over an SVG drawn with `xMidYMid meet`. */
+export function clientToBox(
+  rect: { left: number; top: number; width: number; height: number },
+  clientX: number,
+  clientY: number,
+  boxW: number,
+  boxH: number,
+): [number, number] {
+  const scale = Math.min(rect.width / boxW, rect.height / boxH) || 1;
+  const ox = rect.left + (rect.width - boxW * scale) / 2;
+  const oy = rect.top + (rect.height - boxH * scale) / 2;
+  return [(clientX - ox) / scale, (clientY - oy) / scale];
+}

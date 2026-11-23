@@ -124,6 +124,32 @@ describe('rideFacts', () => {
     expect(f?.elevationGainM).toBe(99);
   });
 
+  it('a jump along the route (position and altitude step, distance continuous) adds no climbing', () => {
+    // A recorded route ride: 200 s at 10 m/s on 3 %; after 100 s the rider jumps 40 km ahead to
+    // a point 500 m higher. The samples carry the new altitude, the ridden distance runs on.
+    const s = samples({ id: 'j', start: T0, seconds: 200, powerW: 200, gradePercent: 3 }).map(
+      (x, i) => ({
+        ...x,
+        altitudeM: i <= 100 ? 300 + i * 0.3 : 800 + (i - 100) * 0.3,
+        lat: i <= 100 ? 47 : 47.4,
+        lon: 11,
+        segment: i <= 100 ? 0 : 1,
+      }),
+    );
+    const f = rideFacts({ rideId: 'j', samples: s, ftpW: 250, utcOffsetMin: CET });
+    expect(f?.distanceM).toBe(2000);
+    // 2000 m ridden × 3 % = 60 m; the 500 m across the jump counts nothing.
+    expect(f?.elevationGainM).toBe(60);
+    expect(f).toEqual(
+      rideFacts({
+        rideId: 'j',
+        samples: samples({ id: 'j', start: T0, seconds: 200, powerW: 200, gradePercent: 3 }),
+        ftpW: 250,
+        utcOffsetMin: CET,
+      }),
+    );
+  });
+
   it('counts stopped samples as not moving and descents as no climbing', () => {
     const s = samples({
       id: 'z',

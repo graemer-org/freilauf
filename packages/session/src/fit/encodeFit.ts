@@ -17,6 +17,7 @@ import {
   FILE_ID,
   FILE_TYPE_ACTIVITY,
   LAP,
+  LAP_TRIGGER_MANUAL,
   LAP_TRIGGER_SESSION_END,
   LAP_WITH_POSITION,
   MANUFACTURER_DEVELOPMENT,
@@ -29,7 +30,14 @@ import {
   SUB_SPORT_VIRTUAL_ACTIVITY,
 } from './messages';
 import type { RideSummary, RouteSummary } from './summary';
-import { rideSummary, routeSummary, usableSamples } from './summary';
+import {
+  lapSummary,
+  rideSummary,
+  routeSummary,
+  sessionRouteSummary,
+  splitAtJumps,
+  usableSamples,
+} from './summary';
 import { ByteWriter, toRaw } from './writer';
 
 /** Seconds between the Unix epoch and the FIT epoch (1989-12-31T00:00:00Z). */
@@ -136,12 +144,17 @@ function hash32(s: string): number {
   return h === 0 ? 1 : h;
 }
 
-function summaryValues(s: RideSummary, start: number | null, end: number | null): Values {
+function summaryValues(
+  s: RideSummary,
+  start: number | null,
+  end: number | null,
+  messageIndex = 0,
+): Values {
   const hasSamples = s.sampleCount > 0;
   const orNull = (v: number): number | null => (hasSamples ? v : null);
   return {
     timestamp: end,
-    messageIndex: 0,
+    messageIndex,
     startTime: start,
     totalElapsedTime: s.elapsedS,
     totalTimerTime: s.durationS,
@@ -225,7 +238,12 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
     softwareVersion: SOFTWARE_VERSION / 100,
   });
 
-  b.write(EVENT, { timestamp: start, event: EVENT_TIMER, eventType: EVENT_TYPE_START, eventGroup: 0 });
+  b.write(EVENT, {
+    timestamp: start,
+    event: EVENT_TIMER,
+    eventType: EVENT_TYPE_START,
+    eventGroup: 0,
+  });
 
   let prev: (typeof samples)[number] | undefined;
   for (const s of samples) {
@@ -267,26 +285,60 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
     prev = s;
   }
 
-  b.write(EVENT, { timestamp: end, event: EVENT_TIMER, eventType: EVENT_TYPE_STOP_ALL, eventGroup: 0 });
-
-  const totals = { ...summaryValues(summary, start, end), ...(route ? positionValues(route) : {}) };
-  b.write(route ? LAP_WITH_POSITION : LAP, {
-    ...totals,
-    event: EVENT_LAP,
-    eventType: EVENT_TYPE_STOP,
-    lapTrigger: LAP_TRIGGER_SESSION_END,
+  b.write(EVENT, {
+    timestamp: end,
+    event: EVENT_TIMER,
+    eventType: EVENT_TYPE_STOP_ALL,
+    eventGroup: 0,
   });
+
+  // One lap per route segment: a jump along the route (RideSample.segment) starts a new lap, so
+  // no lap implies travel across the gap and each lap's start/end position, bounding box and
+  // ascent/descent describe road that was actually ridden (docs/routes.md, "Choosing where to start, and jumping"). Distance,
+  // speed and the timer run on unchanged. A ride without jumps is one lap, as before.
+  const laps = splitAtJumps(samples);
+  const lapRoutes = laps.map((lap) => (route ? routeSummary(lap) : null));
+  const sessionRoute = route ? sessionRouteSummary(samples, lapRoutes) : null;
+  if (laps.length <= 1) {
+    const totals = {
+      ...summaryValues(summary, start, end),
+      ...(route ? positionValues(route) : {}),
+    };
+    b.write(route ? LAP_WITH_POSITION : LAP, {
+      ...totals,
+      event: EVENT_LAP,
+      eventType: EVENT_TYPE_STOP,
+      lapTrigger: LAP_TRIGGER_SESSION_END,
+    });
+  } else {
+    laps.forEach((lap, k) => {
+      const before = k > 0 ? laps[k - 1]!.at(-1) : undefined;
+      const ls = lapSummary(ride, lap, before);
+      const lapStart = k === 0 ? start : toFitTimestamp(ls.startTime);
+      const lapEnd = toFitTimestamp(ls.endTime);
+      const lapRoute = lapRoutes[k];
+      b.write(route ? LAP_WITH_POSITION : LAP, {
+        ...summaryValues(ls, lapStart, lapEnd, k),
+        ...(lapRoute ? positionValues(lapRoute) : {}),
+        event: EVENT_LAP,
+        eventType: EVENT_TYPE_STOP,
+        lapTrigger: k === laps.length - 1 ? LAP_TRIGGER_SESSION_END : LAP_TRIGGER_MANUAL,
+      });
+    });
+  }
   b.write(route ? SESSION_WITH_POSITION : SESSION, {
-    ...totals,
+    ...summaryValues(summary, start, end),
+    ...(sessionRoute ? positionValues(sessionRoute) : {}),
     event: EVENT_SESSION,
     eventType: EVENT_TYPE_STOP,
     firstLapIndex: 0,
-    numLaps: 1,
+    numLaps: Math.max(1, laps.length),
     trigger: SESSION_TRIGGER_ACTIVITY_END,
   });
 
   const offsetMin =
-    options.utcOffsetMinutes ?? (Number.isFinite(summary.endTime) ? -new Date(summary.endTime).getTimezoneOffset() : 0);
+    options.utcOffsetMinutes ??
+    (Number.isFinite(summary.endTime) ? -new Date(summary.endTime).getTimezoneOffset() : 0);
   b.write(ACTIVITY, {
     timestamp: end,
     totalTimerTime: summary.durationS,
@@ -294,7 +346,8 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
     type: ACTIVITY_TYPE_MANUAL,
     event: EVENT_ACTIVITY,
     eventType: EVENT_TYPE_STOP,
-    localTimestamp: end === null ? null : end + Math.round((Number.isFinite(offsetMin) ? offsetMin : 0) * 60),
+    localTimestamp:
+      end === null ? null : end + Math.round((Number.isFinite(offsetMin) ? offsetMin : 0) * 60),
   });
 
   return b.finish();

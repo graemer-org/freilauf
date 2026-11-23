@@ -17,6 +17,13 @@ export interface RideSample {
   lon?: number;
   /** Elevation of the route at this point (m), when the ride followed one. */
   altitudeM?: number;
+  /**
+   * Route segment: 0 (or absent) from the start of the ride, +1 at every jump along the route
+   * (docs/routes.md, "Choosing where to start, and jumping"). Positions within a segment are continuous; between segments
+   * they are not, so the FIT file starts a new lap at each change and position-derived totals
+   * (ascent, descent) never span two segments. Ridden distance stays continuous.
+   */
+  segment?: number;
 }
 
 /** Where on a route a distance is; see RideSession.setPositionSource. */
@@ -24,6 +31,8 @@ export interface RoutePositionFix {
   lat: number;
   lon: number;
   altitudeM: number;
+  /** See RideSample.segment; omitted or 0 before the first jump. */
+  segment?: number;
 }
 
 export interface RecordedRide {

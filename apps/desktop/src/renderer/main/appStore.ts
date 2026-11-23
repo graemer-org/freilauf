@@ -812,12 +812,54 @@ export class App {
   selectRoute(id: string | null): boolean {
     const found = id === null ? null : this.#routes.get(id);
     if (id !== null && !found) return false;
-    if (!this.#controller?.selectRoute(found?.track ?? null)) {
+    const startM = id === null ? 0 : this.#routes.startOf(id);
+    if (!this.#controller?.selectRoute(found?.track ?? null, startM)) {
       this.notify('info', 'Finish the current ride before changing the route.');
       return false;
     }
     this.store.setState({ selectedRouteId: id, routeTrack: found?.track ?? null });
     return true;
+  }
+
+  /**
+   * Where the next ride on route `id` starts (m along it; 0 = from the beginning), remembered
+   * for later rides. Not while riding (use jumpTo then). Returns the start point in effect, or
+   * null when it was not changed.
+   */
+  setRouteStart(id: string, distanceM: number): number | null {
+    if ((this.#controller?.rideState ?? 'idle') !== 'idle') {
+      this.notify('info', 'Finish the current ride before changing where the route starts.');
+      return null;
+    }
+    const startM = this.#routes.setStart(id, distanceM);
+    if (startM === null) return null;
+    if (this.#routes.saveFailed) {
+      this.notify(
+        'error',
+        'The start point could not be saved permanently (storage full or blocked).',
+      );
+    }
+    if (this.store.getState().selectedRouteId === id) this.#controller?.setRouteStart(startM);
+    this.#logger.log('info', 'routes', 'route start point set', {
+      id,
+      startKm: Math.round(startM / 100) / 10,
+    });
+    this.store.setState({ routes: this.#routes.list() });
+    return startM;
+  }
+
+  /**
+   * Moves the rider to another place on the selected route (docs/routes.md, "Choosing where to start, and jumping"). Before
+   * the ride this sets (and remembers) the start point; during the ride only the place on the
+   * route changes. Returns the place in effect, or null without a selected route.
+   */
+  jumpTo(distanceM: number): number | null {
+    const id = this.store.getState().selectedRouteId;
+    if (id === null) return null;
+    if ((this.#controller?.rideState ?? 'idle') === 'idle') {
+      return this.setRouteStart(id, distanceM);
+    }
+    return this.#controller?.jumpTo(distanceM) ?? null;
   }
 
   /** Imports a GPX file (or our own route format). `fileName` names a GPX without a name. */
@@ -862,6 +904,11 @@ export class App {
       this.#logger.log('info', 'routes', 'route deleted', { id });
       this.store.setState({ routes: this.#routes.list() });
     }
+  }
+
+  /** The full track of a library route (exact elevation and gradient for the Routes tab). */
+  routeTrackFor(id: string): RouteTrack | null {
+    return this.#routes.get(id)?.track ?? null;
   }
 
   /** GPX file name and contents of a route (the prepared, smoothed track). */

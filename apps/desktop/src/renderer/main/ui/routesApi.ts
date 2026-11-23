@@ -16,6 +16,7 @@
  *   app.selectRoute(id | null): boolean
  *   app.deleteRoute(id) · app.exportRoute(id) → { fileName, text } | null
  *   app.shareRoute(id) · app.stopSharingRoute() · app.useSharedRoute(peerId)
+ *   app.setRouteStart(id, m) → m | null · app.jumpTo(m) → m | null · app.routeTrackFor(id)
  *
  * Once these are part of `App`'s type this file can read them directly.
  */
@@ -37,6 +38,8 @@ export interface RouteEntry {
   profile: number[];
   /** The route's shape: [x, y] points (east, north), any unit. */
   outline: [number, number][];
+  /** Where the next ride starts (m along the route); absent = from the beginning. */
+  startM?: number;
 }
 
 export interface SharedRoute {
@@ -179,4 +182,29 @@ export function setRouteDifficulty(app: App, value: number): void {
 
 export function useRouteActions(): RouteActions | null {
   return routeActions(useApp());
+}
+
+export interface RouteJumps {
+  /** Before the ride: sets (and remembers) the start point; during it: jumps there. */
+  jumpTo(distanceM: number): void;
+  /** Sets the remembered start point of a route (0 = from the beginning). */
+  setStart(id: string, distanceM: number): void;
+  /** The full track of a library route (for exact elevation and gradient), if available. */
+  trackFor(id: string): RouteTrack | null;
+}
+
+/** Start points and jumps (docs/routes.md, "Choosing where to start, and jumping"), or null when this build cannot. */
+export function routeJumps(app: App): RouteJumps | null {
+  const jump = method(app, 'jumpTo');
+  const start = method(app, 'setRouteStart');
+  const track = method(app, 'routeTrackFor');
+  if (!jump || !start) return null;
+  return {
+    jumpTo: (d) => void fire(app, () => jump(d)),
+    setStart: (id, d) => void fire(app, () => start(id, d)),
+    trackFor: (id) => {
+      const t = track ? (track(id) as RouteTrack | null | undefined) : null;
+      return t && Array.isArray(t.elevationM) && t.count >= 2 ? t : null;
+    },
+  };
 }

@@ -36,7 +36,8 @@ export interface RideSummary {
 /** Longest interval (s) a single sample may contribute to work — guards against gaps. */
 const MAX_SAMPLE_DT_S = 5;
 
-const fin = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
+const fin = (v: number | null | undefined): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
 
 /** Samples usable for encoding: those with a finite timestamp. */
 export function usableSamples(ride: RecordedRide): RideSample[] {
@@ -182,5 +183,73 @@ export function routeSummary(samples: readonly RideSample[]): RouteSummary | nul
     avgAltitudeM: alts.length > 0 ? alts.reduce((x, y) => x + y, 0) / alts.length : null,
     minAltitudeM: alts.length > 0 ? alts.reduce((x, y) => Math.min(x, y)) : null,
     maxAltitudeM: alts.length > 0 ? alts.reduce((x, y) => Math.max(x, y)) : null,
+  };
+}
+
+/** The route segment of a sample (see RideSample.segment): 0 unless a positive integer. */
+export function segmentOf(s: RideSample): number {
+  const v = s.segment;
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Splits samples into laps at every change of route segment (a jump along the route), in
+ * order. A ride without jumps is one lap. Never returns an empty lap; [] for no samples.
+ */
+export function splitAtJumps(samples: readonly RideSample[]): RideSample[][] {
+  const laps: RideSample[][] = [];
+  let current: RideSample[] = [];
+  let seg: number | null = null;
+  for (const s of samples) {
+    const k = segmentOf(s);
+    if (seg !== null && k !== seg && current.length > 0) {
+      laps.push(current);
+      current = [];
+    }
+    seg = k;
+    current.push(s);
+  }
+  if (current.length > 0) laps.push(current);
+  return laps;
+}
+
+/**
+ * Totals of one lap that starts where the previous lap ended (`before` = its last sample):
+ * time, distance and work are counted from there, so the laps add up to the ride.
+ */
+export function lapSummary(
+  ride: RecordedRide,
+  lap: readonly RideSample[],
+  before: RideSample | undefined,
+): RideSummary {
+  if (!before) return rideSummary({ ...ride, samples: [...lap] });
+  const e0 = fin(before.elapsedS) ? before.elapsedS : 0;
+  const d0 = fin(before.distanceM) ? before.distanceM : 0;
+  return rideSummary({
+    ...ride,
+    startedAt: before.timestamp,
+    samples: lap.map((s) => ({
+      ...s,
+      elapsedS: fin(s.elapsedS) ? s.elapsedS - e0 : s.elapsedS,
+      distanceM: fin(s.distanceM) ? Math.max(0, s.distanceM - d0) : s.distanceM,
+    })),
+  });
+}
+
+/**
+ * The whole ride's position summary: start, end, bounding box and altitudes over all samples,
+ * but ascent/descent as the sum over the laps (route segments) — never the elevation difference
+ * across a jump.
+ */
+export function sessionRouteSummary(
+  samples: readonly RideSample[],
+  laps: readonly (RouteSummary | null)[],
+): RouteSummary | null {
+  const whole = routeSummary(samples);
+  if (!whole || laps.length <= 1) return whole;
+  return {
+    ...whole,
+    ascentM: laps.reduce((a, l) => a + (l?.ascentM ?? 0), 0),
+    descentM: laps.reduce((a, l) => a + (l?.descentM ?? 0), 0),
   };
 }

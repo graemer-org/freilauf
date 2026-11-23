@@ -201,6 +201,10 @@ The signalling server and `PeerMesh`, described below, unchanged.
 - **Stale:** no packet for 3 s → `stale: true`. Riders are removed when the peer leaves.
 - `getRiders(now)` returns the remote riders sorted leader-first, with `gapM` = their displayed
   distance minus the local rider's (extrapolated) distance. The local rider is not included.
+  When both riders send the same `route.id`, `gapM` is measured along the route instead
+  (`sameRoute: true`; the shorter way round on a loop), so riders at the same place on the road
+  are side by side whatever distance each has ridden (docs/routes.md, "Choosing where to start, and jumping"). The local
+  route's length and kind are passed to `setLocalState` as `routeShape` (not broadcast).
 
 ## Wire formats
 
@@ -271,6 +275,7 @@ action per peer, `{ "v": 1, "name": "Anna" }`, which never reaches `GroupRide`.
     "cadenceRpm": 88,
     "heartRateBpm": 141, // or null
     "gear": 11,
+    "route": { "id": "a1b2c3d4", "m": 42312.5 }, // optional: route id and position on it (m)
   },
 }
 ```

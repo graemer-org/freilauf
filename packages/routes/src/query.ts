@@ -134,22 +134,60 @@ export function ascentTo(track: RouteTrack, distanceM: number): number {
 }
 
 /**
- * Where a rider who has ridden `riddenDistanceM` is: laps on a loop; on a point-to-point
- * route the position stays at the finish (finished = true, flat road) once it is reached.
+ * A point-to-point route cannot be started (or jumped to) closer to the finish than this: the
+ * rider should land on the road, not on the finish line.
  */
-export function positionAt(track: RouteTrack, riddenDistanceM: number): RoutePosition {
+export const FINISH_MARGIN_M = 100;
+
+/**
+ * Where on the route a chosen start or jump target really is (docs/routes.md, "Choosing where to start, and jumping"): on a
+ * loop it wraps into 0 … length; on a point-to-point route it is clamped to 0 … length −
+ * FINISH_MARGIN_M (or to the middle of a route shorter than twice the margin).
+ */
+export function normalizeRouteStart(
+  track: Pick<RouteTrack, 'totalDistanceM' | 'loop'>,
+  distanceM: number,
+): number {
+  const total = track.totalDistanceM;
+  if (!(total > 0)) return 0;
+  const d = Number.isFinite(distanceM) ? distanceM : 0;
+  if (track.loop) {
+    const w = d - Math.floor(d / total) * total;
+    return w >= total ? 0 : w;
+  }
+  const max = Math.max(0, total - Math.min(FINISH_MARGIN_M, total / 2));
+  return Math.min(max, Math.max(0, d));
+}
+
+/**
+ * Routes shared at a coarser resolution get a derived id (`<id>-20m`, see resampleTrack) but
+ * keep the original's length and shape: both are the same road. Use this id to compare routes
+ * between riders.
+ */
+export function routeBaseId(id: string): string {
+  return id.replace(/-\d+m$/, '');
+}
+
+/**
+ * Where a rider is on the route: at `offsetM + riddenDistanceM` (`offsetM` = where the ride
+ * started on the route, moved by every jump; 0 = from the start). Laps on a loop (a new lap each
+ * time the start/finish line is crossed); on a point-to-point route the position stays at the
+ * finish (finished = true, flat road) once it is reached.
+ */
+export function positionAt(track: RouteTrack, riddenDistanceM: number, offsetM = 0): RoutePosition {
   const total = track.totalDistanceM;
   const ridden = Number.isFinite(riddenDistanceM) ? Math.max(0, riddenDistanceM) : 0;
+  const along = Math.max(0, ridden + (Number.isFinite(offsetM) ? offsetM : 0));
   let distanceM: number;
   let lap = 1;
   let finished = false;
   if (track.loop) {
-    const laps = Math.floor(ridden / total);
+    const laps = Math.floor(along / total);
     lap = laps + 1;
-    distanceM = ridden - laps * total;
+    distanceM = along - laps * total;
   } else {
-    distanceM = Math.min(ridden, total);
-    finished = ridden >= total;
+    distanceM = Math.min(along, total);
+    finished = along >= total;
   }
   const remainingM = finished ? 0 : Math.max(0, total - distanceM);
   return {

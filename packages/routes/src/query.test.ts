@@ -3,15 +3,18 @@ import { buildRoute } from './build';
 import { unproject } from './geo';
 import type { RawPoint } from './gpx';
 import {
+  FINISH_MARGIN_M,
   curvatureAt,
   elevationAt,
   gradeAt,
   headingAt,
   lookahead,
+  normalizeRouteStart,
   outline,
   pointAt,
   positionAt,
   profile,
+  routeBaseId,
 } from './query';
 
 const O = { lat0: 46.5, lon0: 8 };
@@ -134,5 +137,67 @@ describe('profile and outline', () => {
     // A straight line needs only its two ends.
     expect(outline(climb, 200).length).toBeLessThanOrEqual(200);
     expect(outline(climb, 5)).toHaveLength(2);
+  });
+});
+
+describe('start point and jumps (route offset)', () => {
+  it('the position is offset + ridden; remaining distance and ascent follow it', () => {
+    const p = positionAt(climb, 200, 1000);
+    expect(p.distanceM).toBeCloseTo(1200, 6);
+    expect(p.remainingM).toBeCloseTo(800, 6);
+    // 5 % over the 800 m left (smoothing rounds the top a little).
+    expect(p.ascentRemainingM).toBeCloseTo(40, -1);
+    expect(p.gradePercent).toBeCloseTo(5, 1);
+    expect(p.elevationM).toBeCloseTo(160, 0);
+    // Without an offset it is the plain ridden distance, as before.
+    expect(positionAt(climb, 200, 0).distanceM).toBeCloseTo(200, 6);
+    expect(positionAt(climb, 200).distanceM).toBeCloseTo(200, 6);
+    // Non-finite offsets count as 0; the position never goes below the start.
+    expect(positionAt(climb, 200, Number.NaN).distanceM).toBeCloseTo(200, 6);
+    expect(positionAt(climb, 100, -500).distanceM).toBe(0);
+  });
+
+  it('a point-to-point route finishes after the rest of the road, not its whole length', () => {
+    const p = positionAt(climb, 900, 1500);
+    expect(p).toMatchObject({ finished: true, remainingM: 0, gradePercent: 0 });
+    expect(positionAt(climb, 499, 1500).finished).toBe(false);
+  });
+
+  it('on a loop laps count from the start/finish line, whatever the start point', () => {
+    const T = ring.totalDistanceM;
+    const start = T - 400;
+    const a = positionAt(ring, 300, start);
+    expect(a.lap).toBe(1);
+    expect(a.distanceM).toBeCloseTo(T - 100, 6);
+    const b = positionAt(ring, 500, start); // crossed the line
+    expect(b.lap).toBe(2);
+    expect(b.distanceM).toBeCloseTo(100, 6);
+    expect(b.remainingM).toBeCloseTo(T - 100, 6);
+    expect(positionAt(ring, 400 + T, start).lap).toBe(3);
+  });
+
+  it('normalizeRouteStart wraps on a loop and stops short of the finish otherwise', () => {
+    const T = ring.totalDistanceM;
+    expect(normalizeRouteStart(ring, T + 250)).toBeCloseTo(250, 6);
+    expect(normalizeRouteStart(ring, -250)).toBeCloseTo(T - 250, 6);
+    expect(normalizeRouteStart(ring, T)).toBe(0);
+    expect(normalizeRouteStart(climb, 1234)).toBe(1234);
+    expect(normalizeRouteStart(climb, climb.totalDistanceM)).toBeCloseTo(
+      climb.totalDistanceM - FINISH_MARGIN_M,
+      6,
+    );
+    expect(normalizeRouteStart(climb, 1e9)).toBeCloseTo(climb.totalDistanceM - FINISH_MARGIN_M, 6);
+    expect(normalizeRouteStart(climb, -5)).toBe(0);
+    expect(normalizeRouteStart(climb, Number.NaN)).toBe(0);
+    // A jump to the very end lands on the road: not finished, some road left.
+    const end = positionAt(climb, 0, normalizeRouteStart(climb, climb.totalDistanceM));
+    expect(end.finished).toBe(false);
+    expect(end.remainingM).toBeCloseTo(FINISH_MARGIN_M, 6);
+  });
+
+  it('routeBaseId ignores the resolution suffix of a route shared at a coarser step', () => {
+    expect(routeBaseId('a1b2c3d4-20m')).toBe('a1b2c3d4');
+    expect(routeBaseId('a1b2c3d4')).toBe('a1b2c3d4');
+    expect(routeBaseId('builtin-steady-climb')).toBe('builtin-steady-climb');
   });
 });

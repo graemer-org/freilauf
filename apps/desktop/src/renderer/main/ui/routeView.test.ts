@@ -1,6 +1,18 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { parseGpx, prepareRoute } from '@freilauf/routes';
 import { describe, expect, it } from 'vitest';
 import {
   aheadGeometry,
+  chooseMapCandidate,
+  clientToBox,
+  formatRouteKm,
+  mapCandidates,
+  pickPrompt,
+  pickSteps,
+  pointLabel,
+  profilePointInfo,
+  trackPointInfo,
   fitOutline,
   formatClimb,
   formatGradient,
@@ -144,5 +156,121 @@ describe('outline and map', () => {
     expect(routeProgress(1000, 1250, true)).toBe(0.25);
     expect(routeProgress(1000, 1250, false)).toBe(1);
     expect(routeProgress(0, 10, false)).toBe(0);
+  });
+});
+
+describe('picking a point on the route (start point, jumps)', () => {
+  it('words: the label and the confirmation for both modes', () => {
+    expect(formatRouteKm(42_312)).toBe('km 42.3');
+    expect(formatRouteKm(-3)).toBe('km 0.0');
+    const label = pointLabel({ distanceM: 42_312, elevationM: 811.6, gradePercent: 3.06 });
+    expect(label).toBe('km 42.3 · 812 m · +3.1 %');
+    expect(pickPrompt('jump', label)).toEqual({
+      text: 'Jump to km 42.3 · 812 m · +3.1 %',
+      confirm: 'Jump',
+    });
+    expect(pickPrompt('start', label)).toEqual({
+      text: 'Start at km 42.3 · 812 m · +3.1 %',
+      confirm: 'Start here',
+    });
+  });
+
+  it('keyboard steps are round and scale with what the profile shows', () => {
+    expect(pickSteps(97_600)).toEqual({ small: 1000, large: 10_000 });
+    expect(pickSteps(660)).toEqual({ small: 10, large: 100 });
+    expect(pickSteps(12_000)).toEqual({ small: 200, large: 2000 });
+    expect(pickSteps(0)).toEqual({ small: 10, large: 100 });
+  });
+
+  it('point info from the track and from a coarse profile', () => {
+    const t = syntheticTrack([{ lengthM: 500 }, { lengthM: 500, gradePercent: 6 }], {});
+    const flat = trackPointInfo(t, 200);
+    expect(flat.gradePercent).toBeCloseTo(0, 1);
+    const up = trackPointInfo(t, 800);
+    expect(up.gradePercent).toBeCloseTo(6, 0);
+    expect(up.elevationM).toBeGreaterThan(flat.elevationM);
+    const coarse = profilePointInfo([100, 100, 130], 1000, 750);
+    expect(coarse).toMatchObject({ distanceM: 750, elevationM: 115 });
+    expect(coarse.gradePercent).toBeCloseTo(6, 6);
+    expect(profilePointInfo([100, 100], 1000, 5000).distanceM).toBe(1000);
+  });
+
+  it('clientToBox undoes xMidYMid meet letterboxing', () => {
+    const rect = { left: 10, top: 20, width: 200, height: 100 };
+    expect(clientToBox(rect, 110, 70, 100, 100)).toEqual([50, 50]);
+    expect(clientToBox(rect, 60, 20, 100, 100)).toEqual([0, 0]);
+  });
+
+  describe('on the real out-and-back fixture (isar-ursprung.gpx)', () => {
+    const file = path.resolve(
+      import.meta.dirname,
+      '../../../../../../packages/routes/fixtures/isar-ursprung.gpx',
+    );
+    const parsed = parseGpx(readFileSync(file, 'utf8'));
+    if (!parsed.ok) throw new Error('fixture did not parse');
+    const prepared = prepareRoute(parsed.track);
+    if (!prepared.ok) throw new Error('fixture did not prepare');
+    const track = prepared.track;
+    const total = track.totalDistanceM;
+    const outline = trackOutline(track, 400);
+    const fit = fitOutline(outline, { width: 100, height: 100, pad: 9 });
+    const boxAt = (d: number): [number, number] => {
+      const p = trackPosition(track, d);
+      return fit.map(p.x, p.y);
+    };
+
+    it('is the 97.6 km out-and-back the maintainer rides', () => {
+      expect(total / 1000).toBeCloseTo(97.6, 0);
+      expect(track.loop).toBe(true); // ends where it started
+    });
+
+    it('a point on the shared road has one candidate per leg; the next one ahead is chosen', () => {
+      const [x, y] = boxAt(20_000);
+      const cands = mapCandidates(track, fit, x, y, 4);
+      expect(cands.length).toBe(2);
+      const legs = cands.map((c) => c.distanceM).sort((a, b) => a - b);
+      expect(legs[0]).toBeGreaterThan(19_000);
+      expect(legs[0]).toBeLessThan(21_000);
+      // The return leg passes the same place at about 97.6 − 20 km.
+      expect(legs[1]).toBeGreaterThan(total - 21_500);
+      expect(legs[1]).toBeLessThan(total - 18_500);
+      // Riding at km 10: the outbound leg is next. At km 30: the return leg is.
+      expect(chooseMapCandidate(cands, 10_000, total, true)!.distanceM).toBe(legs[0]);
+      expect(chooseMapCandidate(cands, 30_000, total, true)!.distanceM).toBe(legs[1]);
+      // Past the return pass (km 85): on a loop the outbound leg of the next lap comes first.
+      expect(chooseMapCandidate(cands, 85_000, total, true)!.distanceM).toBe(legs[0]);
+      // Ridden as point to point from km 85: none ahead, the nearest behind.
+      expect(chooseMapCandidate(cands, 85_000, total, false)!.distanceM).toBe(legs[1]);
+    });
+
+    it('the turnaround and a clear miss', () => {
+      const far = trackPosition(track, total / 2);
+      const [x, y] = fit.map(far.x, far.y);
+      const turn = chooseMapCandidate(mapCandidates(track, fit, x, y, 4), 0, total, true);
+      expect(Math.abs(turn!.distanceM - total / 2)).toBeLessThan(1500);
+      expect(mapCandidates(track, fit, -50, -50, 4)).toEqual([]);
+      expect(chooseMapCandidate([], 0, total, true)).toBeNull();
+    });
+
+    it('a pick on the profile maps the fraction to route distance and back to a label', () => {
+      const d = 0.433 * total;
+      const info = trackPointInfo(track, d);
+      expect(info.distanceM).toBeCloseTo(d, 6);
+      expect(pointLabel(info)).toMatch(/^km 42\.3 · \d+ m · [+−]?\d\.\d %$/);
+    });
+  });
+
+  it('a single pass is the only candidate, and a closer pass beats a farther one', () => {
+    expect(
+      chooseMapCandidate(
+        [
+          { distanceM: 100, boxDistance: 0.5 },
+          { distanceM: 900, boxDistance: 3.6 },
+        ],
+        500,
+        1000,
+        false,
+      )!.distanceM,
+    ).toBe(100);
   });
 });

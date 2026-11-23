@@ -136,6 +136,35 @@ bounding box (`nec`/`swc`), total ascent/descent and enhanced min/avg/max altitu
 session — through separate message definitions, so rides without positions are byte-identical
 to before. Sub-sport stays `virtual_activity`.
 
+### 7. Start point and jumps (added 2026-11-23)
+
+The position on the route is `offsetM + ridden distance`: `offsetM` is the chosen start point
+when the ride starts and changes with every jump (`RideController.jumpTo`, `positionAt(track,
+ridden, offset)`). Ridden distance, time, energy and points are untouched, so everything that
+counts effort stays true; only the place on the route moves. Starts and jumps wrap on a loop
+and stop `FINISH_MARGIN_M` (100 m) before the finish of a point-to-point route
+(`normalizeRouteStart`). On a loop a jump keeps the current lap. The start point is stored per
+route id under its own localStorage key (`freilauf.routeStarts.v1`), next to the library.
+
+- **Trainer**: the next tick sends the new gradient without waiting for the rate limit, then
+  eases it in through the normal path by at most `JUMP_RAMP_STEP` = 3 percentage points per write,
+  one write per second (−5 % → +7 %: −2, +1, +4, +7 % over 3 s). A 12-point step in one write
+  would slam the resistance; KICKR-class trainers already ramp over ~1 s, so 3 points per second
+  is a firm but not violent change. The rider's virtual speed is kept (no physics reset).
+- **Recording**: samples carry a `segment` number (+1 per jump). The FIT encoder writes one lap
+  per segment (`lap_trigger` manual, the last one `session_end`) with its own start/end
+  position, bounding box and ascent/descent; the session's ascent/descent is the sum over the
+  laps. Records keep a continuous `distance`. No timer stop/start events: the timer did not stop,
+  and those events would mark a pause that did not happen (and do not stop upload sites from
+  drawing a line between records anyway). Verified with the Garmin FIT SDK decoder for one and
+  several jumps. Community scoring already derives climbing from gradient × ridden distance
+  increments, so it never counted the elevation step; `rideSummary` uses only distance and time.
+- **Group rides**: the broadcast rider state gains an optional `route: { id, m }` (route id
+  without a coarser copy's `-<step>m` suffix, position in metres), validated like the other
+  fields. When both riders have the same id, `gapM` is measured along the route (the shorter way
+  round on a loop) instead of by ridden distance; the route position is extrapolated and smoothed
+  with the distance. Old clients ignore the field and keep placing by distance.
+
 ## Consequences
 
 - Elevation detail shorter than ~100 m is smoothed away by design.

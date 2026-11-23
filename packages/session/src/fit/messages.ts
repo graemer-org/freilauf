@@ -288,6 +288,7 @@ export const EVENT_ACTIVITY = 26;
 export const EVENT_TYPE_START = 0;
 export const EVENT_TYPE_STOP = 1;
 export const EVENT_TYPE_STOP_ALL = 4;
+export const LAP_TRIGGER_MANUAL = 0;
 export const LAP_TRIGGER_SESSION_END = 7;
 export const SESSION_TRIGGER_ACTIVITY_END = 0;
 export const ACTIVITY_TYPE_MANUAL = 0;

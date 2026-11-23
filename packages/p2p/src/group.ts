@@ -11,7 +11,9 @@ import {
   decodeStateMessage,
   encodeStateMessage,
   extrapolateDistance,
+  type LocalRoutePlacement,
   RemoteRiders,
+  routeAhead,
   sanitizeRiderState,
 } from './riderState';
 import type { IceServerConfig } from './ice';
@@ -68,7 +70,13 @@ export interface RelayDeps {
 }
 
 /** What the app feeds in; name and timestamp are added by GroupRide. */
-export type LocalRiderState = Omit<RiderState, 'name' | 'sentAt'>;
+export type LocalRiderState = Omit<RiderState, 'name' | 'sentAt'> & {
+  /**
+   * Length and kind of the local rider's route (with `route`): needed to measure the others'
+   * gaps along it. Not broadcast.
+   */
+  routeShape?: { lengthM: number; loop: boolean };
+};
 
 export const BROADCAST_INTERVAL_MS = 250; // 4 Hz
 
@@ -129,7 +137,11 @@ export class GroupRide {
   #timers: Timers;
   #interval: unknown;
   #signallingUrl: string | undefined;
-  #local: { state: LocalRiderState; at: number } | null = null;
+  #local: {
+    state: Omit<RiderState, 'name' | 'sentAt'>;
+    at: number;
+    shape: { lengthM: number; loop: boolean } | null;
+  } | null = null;
   #problems: TransportProblem[] = [];
   #failure: TransportFailure | null = null;
   #left = false;
@@ -304,16 +316,21 @@ export class GroupRide {
    */
   setLocalState(state: LocalRiderState): boolean {
     const now = this.#now();
-    const checked = sanitizeRiderState({ ...state, name: this.name, sentAt: Math.max(1, now) });
+    const { routeShape, ...broadcast } = state;
+    const checked = sanitizeRiderState({ ...broadcast, name: this.name, sentAt: Math.max(1, now) });
     if (!checked) return false;
     const { name: _n, sentAt: _s, ...local } = checked;
-    this.#local = { state: local, at: now };
+    const shape =
+      routeShape && Number.isFinite(routeShape.lengthM) && routeShape.lengthM > 0
+        ? { lengthM: routeShape.lengthM, loop: routeShape.loop === true }
+        : null;
+    this.#local = { state: local, at: now, shape };
     return true;
   }
 
   /** Remote riders at local time `now` (default: the clock), leader first, `gapM` vs. local. */
   getRiders(now: number = this.#now()): GroupRider[] {
-    return this.#riders.getRiders(now, this.#localDistance(now));
+    return this.#riders.getRiders(now, this.#localDistance(now), this.#localRoute(now));
   }
 
   /**
@@ -438,12 +455,36 @@ export class GroupRide {
     return extrapolateDistance(state.distanceM, state.speedMps, now - at);
   }
 
+  /** The local rider's place on their route at `now` (extrapolated like the distance). */
+  #localRoute(now: number): LocalRoutePlacement | null {
+    const local = this.#local;
+    const route = local?.state.route;
+    if (!local || !route || !local.shape) return null;
+    return {
+      ...route,
+      m: route.m + (this.#localDistance(now) - local.state.distanceM),
+      ...local.shape,
+    };
+  }
+
   #message(): string | null {
     if (!this.#local) return null;
     const now = this.#now();
+    const distanceM = this.#localDistance(now);
+    const route = this.#local.state.route;
+    const shape = this.#local.shape;
     return encodeStateMessage({
       ...this.#local.state,
-      distanceM: this.#localDistance(now),
+      distanceM,
+      // Extrapolated with the distance, kept on the route (wrapped on a loop).
+      ...(route
+        ? {
+            route: {
+              id: route.id,
+              m: routeAhead(route.m + distanceM - this.#local.state.distanceM, shape),
+            },
+          }
+        : {}),
       name: this.name,
       sentAt: now,
     });

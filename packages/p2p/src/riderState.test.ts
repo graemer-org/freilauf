@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gapAlongRoute,
+  routeAhead,
   decodeStateMessage,
   encodeStateMessage,
   extrapolateDistance,
@@ -59,12 +61,92 @@ describe('state validation', () => {
     for (const o of badStates) expect(sanitizeRiderState({ ...state(), ...o })).toBeNull();
   });
 
+  it('accepts an optional route (id + position) and validates it like the other fields', () => {
+    const withRoute = state({ route: { id: 'a1b2-c3', m: 42_300 } });
+    expect(decodeStateMessage(encodeStateMessage(withRoute))).toEqual(withRoute);
+    // Old senders: no route field, nothing added.
+    expect(sanitizeRiderState(state())).not.toHaveProperty('route');
+    // Unknown extra fields inside route are dropped.
+    expect(
+      sanitizeRiderState({ ...state(), route: { id: 'abc', m: 5, extra: 'x' } })?.route,
+    ).toEqual({ id: 'abc', m: 5 });
+    const bad: unknown[] = [
+      null,
+      'abc',
+      [],
+      { id: 'abc' },
+      { m: 5 },
+      { id: '', m: 5 },
+      { id: 'ABC', m: 5 },
+      { id: 'a'.repeat(65), m: 5 },
+      { id: 'abc', m: -1 },
+      { id: 'abc', m: Number.NaN },
+      { id: 'abc', m: 2_000_000 },
+      { id: 'abc', m: '5' },
+      { id: '<script>', m: 5 },
+    ];
+    for (const route of bad) expect(sanitizeRiderState({ ...state(), route })).toBeNull();
+  });
+
   it('sanitises names', () => {
     expect(sanitizeRiderState(state({ name: '  Ann\u0000a‮  ' }))?.name).toBe('Anna');
     expect(sanitizeRiderState(state({ name: 'x'.repeat(40) }))?.name).toHaveLength(24);
     expect(sanitizeRiderState(state({ name: '🚴'.repeat(30) }))?.name).toBe('🚴'.repeat(24));
     expect(sanitizeRiderState(state({ name: '   ' }))?.name).toBe('Rider');
     expect(sanitizeRiderState(state({ gear: 10.6 }))?.gear).toBe(11);
+  });
+});
+
+describe('placement along a shared route', () => {
+  const loop = { id: 'r', m: 0, lengthM: 10_000, loop: true };
+  const p2p = { id: 'r', m: 0, lengthM: 10_000, loop: false };
+
+  it('gapAlongRoute: the shorter way round on a loop, along the road otherwise', () => {
+    expect(gapAlongRoute(9_900, { ...loop, m: 100 })).toBeCloseTo(-200, 9);
+    expect(gapAlongRoute(100, { ...loop, m: 9_900 })).toBeCloseTo(200, 9);
+    expect(gapAlongRoute(5_100, { ...loop, m: 100 })).toBeCloseTo(-5_000, 9);
+    expect(gapAlongRoute(10_050, { ...loop, m: 9_950 })).toBeCloseTo(100, 9);
+    expect(gapAlongRoute(9_900, { ...p2p, m: 100 })).toBe(9_800);
+    expect(gapAlongRoute(10_400, { ...p2p, m: 10_000 })).toBe(0); // both at the finish
+  });
+
+  it('routeAhead keeps extrapolated positions on the route', () => {
+    expect(routeAhead(10_050, loop)).toBeCloseTo(50, 9);
+    expect(routeAhead(10_050, p2p)).toBe(10_000);
+    expect(routeAhead(-3, p2p)).toBe(0);
+    expect(routeAhead(5e6, null)).toBe(1_000_000);
+    expect(routeAhead(Number.NaN, null)).toBe(0);
+  });
+
+  it('getRiders uses the route gap for riders on the local route, distance for the rest', () => {
+    const T0 = 5_000;
+    const r = new RemoteRiders();
+    r.ingest('same', state({ distanceM: 200, speedMps: 0, route: { id: 'r', m: 9_950 } }), T0);
+    r.ingest('other', state({ distanceM: 900, speedMps: 0, route: { id: 'x', m: 9_950 } }), T0);
+    r.ingest('none', state({ distanceM: 1500, speedMps: 0 }), T0);
+    const riders = r.getRiders(T0, 1000, { ...loop, m: 50 });
+    expect(riders.map((x) => [x.peerId, x.gapM, x.sameRoute ?? false])).toEqual([
+      ['none', 500, false],
+      ['other', -100, false],
+      ['same', -100, true],
+    ]);
+    // Without a local route everything is by distance, as before.
+    expect(r.getRiders(T0, 1000).map((x) => x.gapM)).toEqual([500, -100, -800]);
+  });
+
+  it('the route position is extrapolated and smoothed with the distance', () => {
+    const T0 = 5_000;
+    const r = new RemoteRiders();
+    r.ingest('a', state({ distanceM: 1000, speedMps: 10, route: { id: 'r', m: 3000 } }), T0);
+    const at = r.getRiders(T0 + 1000, 0, { ...p2p, m: 3000 })[0]!;
+    expect(at.gapM).toBeCloseTo(10, 6);
+    // A jump (route position changes, distance continuous) moves the rider at once.
+    r.ingest(
+      'a',
+      state({ sentAt: 1_001_000, distanceM: 1010, speedMps: 10, route: { id: 'r', m: 8000 } }),
+      T0 + 1000,
+    );
+    expect(r.getRiders(T0 + 1000, 0, { ...p2p, m: 3000 })[0]!.gapM).toBeCloseTo(5000, 6);
   });
 });
 

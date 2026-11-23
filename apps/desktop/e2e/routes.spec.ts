@@ -155,3 +155,121 @@ test('routes: import a GPX, ride it in the road view', async () => {
     fs.rmSync(gpxDir, { recursive: true, force: true });
   }
 });
+
+/**
+ * Choose a start point on the profile before the ride, then jump during it: the place on the
+ * route (position, gradient, "to go", the road scene) changes; the ride distance does not.
+ */
+test('routes: start part-way along, then jump back during the ride', async () => {
+  test.setTimeout(150_000);
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-jump-'));
+  const gpxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-gpx-'));
+  const gpxFile = path.join(gpxDir, 'test-road.gpx');
+  fs.writeFileSync(gpxFile, syntheticGpx());
+  const app = await launch(userData);
+  try {
+    const { main } = await windows(app);
+    const errors: string[] = [];
+    main.on('pageerror', (e) => errors.push(e.message));
+    main.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+
+    await main.getByTestId('tab-routes').click();
+    await main.getByTestId('route-import').setInputFiles(gpxFile);
+    const row = main.getByTestId('route-row').filter({ hasText: 'E2E test road' });
+    await row.getByTestId('route-select').click();
+    await row.getByTestId('route-go-ride').click();
+
+    const scene = main.getByTestId('ride-scene');
+    const pick = main.getByTestId('route-profile-pick');
+    const confirm = main.getByTestId('route-jump-confirm');
+    await expect(pick).toHaveAttribute('data-mode', 'start');
+    const clickAt = async (fraction: number) => {
+      const box = (await pick.boundingBox())!;
+      await pick.click({ position: { x: box.width * fraction, y: box.height / 2 } });
+    };
+
+    // Before the ride: hover shows the point; a click asks; "Start here" sets the start.
+    const box0 = (await pick.boundingBox())!;
+    await pick.hover({ position: { x: box0.width * 0.6, y: box0.height / 2 } });
+    await expect(main.getByTestId('route-pick-tip').first()).toContainText(/km 0\.\d · \d+ m · /);
+    await clickAt(0.6); // ≈ 500 m: on the 6 % climb, heading east
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toHaveAttribute('data-mode', 'start');
+    await expect(main.getByTestId('route-jump-text')).toContainText(/^Start at km 0\.5 /);
+    await main.getByTestId('route-jump-ok').click();
+    await expect(confirm).toHaveCount(0);
+    await expect(main.getByTestId('route-start-note')).toHaveText('Starts at km 0.5');
+    await expect(main.getByTestId('route-start-marker')).toHaveCount(1);
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-distance')), { timeout: 10_000 })
+      .toBeGreaterThan(450);
+    expect(num(await scene.getAttribute('data-heading'))).toBeGreaterThan(80); // east, not north
+
+    // Ride: it starts there, on the climb (the start of the file is flat).
+    await main.getByTestId('sim-effort').fill('450');
+    await main.getByTestId('ride-start').click();
+    await expect(scene).toHaveAttribute('data-state', 'riding');
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-grade')), { timeout: 15_000 })
+      .toBeGreaterThan(4);
+    await expect(main.getByTestId('route-start-note')).toHaveText('Started at km 0.5');
+    expect(
+      num(await main.getByTestId('route-profile').getAttribute('data-position')),
+    ).toBeGreaterThan(0.55);
+    await expect(pick).toHaveAttribute('data-mode', 'jump');
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-distance')), { timeout: 20_000 })
+      .toBeGreaterThan(520);
+
+    // Cancel does nothing.
+    await clickAt(0.05);
+    await expect(main.getByTestId('route-jump-text')).toContainText(/^Jump to km 0\.0 /);
+    await main.getByTestId('route-jump-cancel').click();
+    await expect(confirm).toHaveCount(0);
+    await main.waitForTimeout(600);
+    expect(num(await scene.getAttribute('data-distance'))).toBeGreaterThan(500);
+    await expect(main.getByTestId('route-start-note')).toHaveText('Started at km 0.5');
+
+    // Jump back to the flat start (heading north): place changes, ride distance does not.
+    const remainingBefore = await main.getByTestId('route-remaining').textContent();
+    const ridden = async () => {
+      const t = (await main.getByTestId('stat-distance').textContent()) ?? '';
+      return Number(t.replace(/[^\d.]/g, ''));
+    };
+    const riddenBefore = await ridden();
+    await clickAt(0.05);
+    await main.getByTestId('route-jump-ok').click();
+    await expect(main.getByTestId('route-start-note')).toHaveText(/^Jumped to km 0\.0$/);
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-distance')), { timeout: 5_000 })
+      .toBeLessThan(150);
+    await expect(scene).toHaveAttribute('data-jumps', '1');
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-heading')), { timeout: 5_000 })
+      .toBeLessThan(20);
+    await expect
+      .poll(async () => num(await scene.getAttribute('data-grade')), { timeout: 10_000 })
+      .toBeLessThan(1);
+    await expect(main.getByTestId('route-remaining')).not.toHaveText(remainingBefore ?? '');
+    await expect(main.getByTestId('route-remaining')).toContainText(/[78]\d0 m/);
+    const riddenAfter = await ridden();
+    expect(riddenAfter).toBeGreaterThanOrEqual(riddenBefore);
+    expect(riddenAfter - riddenBefore).toBeLessThan(0.2); // km: no 500 m step
+
+    // Keyboard: focus the profile, move the cursor, Enter asks, Escape cancels.
+    await pick.focus();
+    await main.keyboard.press('ArrowRight');
+    await expect(pick).toHaveAttribute('aria-valuetext', /^km 0\.\d · /);
+    await main.keyboard.press('Enter');
+    await expect(confirm).toBeVisible();
+    await main.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+
+    expect(errors).toEqual([]);
+  } finally {
+    await app.close();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(gpxDir, { recursive: true, force: true });
+  }
+});
