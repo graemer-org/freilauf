@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BIKE, resistingForce, steadyStateSpeed, stepBike } from './physics';
+import {
+  DEFAULT_BIKE,
+  MAX_BRAKE_DECEL_MPS2,
+  resistingForce,
+  steadyStateSpeed,
+  stepBike,
+} from './physics';
 
 describe('physics', () => {
   it('gives a plausible flat speed for 200 W', () => {
@@ -46,5 +52,71 @@ describe('physics', () => {
     expect(stepBike(5, 200, 0, DEFAULT_BIKE, -1)).toEqual({ speedMps: 5, distanceM: 0 });
     expect(stepBike(5, 200, 0, DEFAULT_BIKE, 3600).distanceM).toBeLessThan(100);
     expect(resistingForce(0, 0, DEFAULT_BIKE)).toBe(0);
+  });
+
+  describe('braking', () => {
+    /** Rides from `kph` with `brake` applied until stopped (or 60 s), in 0.25 s steps. */
+    const stop = (kph: number, brake: number, powerW = 0, grade = 0) => {
+      let v = kph / 3.6;
+      let d = 0;
+      let t = 0;
+      let minV = v;
+      while (v > 0 && t < 60) {
+        const s = stepBike(v, powerW, grade, DEFAULT_BIKE, 0.25, brake);
+        v = s.speedMps;
+        d += s.distanceM;
+        t += 0.25;
+        minV = Math.min(minV, v);
+      }
+      return { v, d, t, minV };
+    };
+
+    it('full brake stops from 30 km/h within a plausible distance and time', () => {
+      const r = stop(30, 1);
+      expect(r.v).toBe(0);
+      // Pure braking alone would need v²/2a = 6.9 m; rolling and air drag shorten that a little.
+      expect(r.d).toBeGreaterThan(5);
+      expect(r.d).toBeLessThan(8);
+      expect(r.t).toBeLessThanOrEqual(2);
+      expect(MAX_BRAKE_DECEL_MPS2).toBe(5);
+    });
+
+    it('is proportional: half the brake takes about twice the distance', () => {
+      const full = stop(30, 1).d;
+      const half = stop(30, 0.5).d;
+      expect(half / full).toBeGreaterThan(1.7);
+      expect(half / full).toBeLessThan(2.1);
+      // Much shorter than coasting, which takes far longer than 60 s from 30 km/h on the flat.
+      expect(stop(30, 0).t).toBe(60);
+    });
+
+    it('never makes the speed negative, also while pedalling or on a climb', () => {
+      expect(stop(30, 1, 0, 8).minV).toBe(0);
+      expect(stepBike(0, 0, 0, DEFAULT_BIKE, 1, 1)).toEqual({ speedMps: 0, distanceM: 0 });
+      // Pedalling hard against a full brake: the bike stays (nearly) still.
+      let v = 8;
+      for (let i = 0; i < 40; i++) {
+        v = stepBike(v, 300, 0, DEFAULT_BIKE, 0.25, 1).speedMps;
+        expect(v).toBeGreaterThanOrEqual(0);
+      }
+      expect(v).toBeLessThan(1);
+    });
+
+    it('zero (or missing, or invalid) brake gives exactly the results from before', () => {
+      for (const [v, p, g] of [
+        [8, 200, 0],
+        [3, 0, 5],
+        [12, 350, -4],
+      ] as const) {
+        const before = stepBike(v, p, g, DEFAULT_BIKE, 0.25);
+        expect(stepBike(v, p, g, DEFAULT_BIKE, 0.25, 0)).toEqual(before);
+        expect(stepBike(v, p, g, DEFAULT_BIKE, 0.25, Number.NaN)).toEqual(before);
+        expect(stepBike(v, p, g, DEFAULT_BIKE, 0.25, -1)).toEqual(before);
+      }
+      // Values above 1 are clamped to a full brake.
+      expect(stepBike(8, 0, 0, DEFAULT_BIKE, 0.25, 5)).toEqual(
+        stepBike(8, 0, 0, DEFAULT_BIKE, 0.25, 1),
+      );
+    });
   });
 });

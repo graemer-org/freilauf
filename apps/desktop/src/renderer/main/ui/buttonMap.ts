@@ -2,8 +2,9 @@
  * The handlebar controller's sixteen buttons in human terms, grouped by grip, plus the reset
  * patch for the mapping editor. Pure; unit-tested.
  *
- * Which physical button sends which bit is only partly verified (docs/protocols/zwift-ride.md);
- * the names follow that table. The live indicator in Settings shows what actually arrives.
+ * Every bit is confirmed on hardware (docs/protocols/zwift-ride.md). The "lever click / side
+ * button" bits were only seen with the lever at the end of its travel, so what exactly is
+ * pressed there is not known yet. The live indicator in Settings shows what actually arrives.
  */
 import type { ControllerButton } from '@freilauf/devices';
 import type { ControllerAction, Settings } from '../../../shared/contract';
@@ -28,7 +29,7 @@ export const CONTROLLER_BUTTONS: readonly ButtonInfo[] = [
   { button: 'right', grip: 'left', name: 'D-pad right' },
   { button: 'down', grip: 'left', name: 'D-pad down' },
   { button: 'left', grip: 'left', name: 'D-pad left' },
-  { button: 'powerUpLeft', grip: 'left', name: 'Side button (unconfirmed)' },
+  { button: 'powerUpLeft', grip: 'left', name: 'Lever click / side button' },
   { button: 'onOffLeft', grip: 'left', name: 'Power button' },
   { button: 'shiftDownRight', grip: 'right', name: 'Lower shift button' },
   { button: 'shiftUpRight', grip: 'right', name: 'Upper shift button' },
@@ -36,7 +37,7 @@ export const CONTROLLER_BUTTONS: readonly ButtonInfo[] = [
   { button: 'b', grip: 'right', name: 'B' },
   { button: 'y', grip: 'right', name: 'Y' },
   { button: 'z', grip: 'right', name: 'Z' },
-  { button: 'powerUpRight', grip: 'right', name: 'Side button (unconfirmed)' },
+  { button: 'powerUpRight', grip: 'right', name: 'Lever click / side button' },
   { button: 'onOffRight', grip: 'right', name: 'Power button' },
 ];
 

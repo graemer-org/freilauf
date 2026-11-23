@@ -72,17 +72,19 @@ drive the desktop app and the browser build — but very little has met real har
 frame, a Bluetooth heart-rate strap:**
 
 - Pairing worked for all three kinds of device.
-- A second pass pressed every controller button: the d-pad, A, B, Y, both shift buttons on each
-  grip and the left power button are **decoded correctly** after correcting the button table.
-- **Z and the right power button** were not recognised in that pass; their codes are now
-  inferred from the pattern and still need confirming. The **brake/steering paddles are not
-  decoded** at all. Keyboard shifting and steering work regardless
+- **All controller buttons are confirmed on hardware** (second and third pass, 22–23 November):
+  every one of the sixteen decodes correctly, including Z and the right power button.
+- The **brake/steering levers are decoded**: each grip has one lever that moves both ways
+  (−100 … +100). Which direction brakes and which steers is still **a hypothesis** from one
+  capture, awaiting the tester's confirmation; Settings → Shifting shows each lever live and
+  lets you swap or reassign the directions. Braking slows the virtual bike only. Keyboard
+  shifting, steering and braking (<kbd>S</kbd>) work regardless
   ([protocol notes](docs/protocols/zwift-ride.md)).
 - How the overlay behaves over fullscreen video on Windows and macOS has **not been confirmed**
   yet.
 
 **Not tried on real hardware at all yet:** ERG workouts on a real trainer, the FTP tests,
-steering with the controllers, group rides between different machines and networks (so far
+steering and braking with the controller levers in a ride, group rides between different machines and networks (so far
 only on one machine; the new zero-setup path over public relay servers has **not been verified
 on real networks** at all), building the Docker image, and macOS in general.
 

@@ -240,17 +240,118 @@ describe('RideController with the simulated rig', () => {
     rig.controller.release('left');
     expect((await run(1)).steering).toBe(0);
 
-    // Analog paddles win over buttons and give partial steering.
+    // Analog levers win over buttons and give partial steering (5 % dead zone, rescaled).
     rig.controller.setPaddle('right', 0.6);
-    expect((await run(1)).steering).toBeCloseTo(0.6, 6);
+    expect((await run(1)).steering).toBeCloseTo(0.55 / 0.95, 6);
     rig.controller.press('left');
-    expect((await run(1)).steering).toBeCloseTo(0.6, 6);
+    expect((await run(1)).steering).toBeCloseTo(0.55 / 0.95, 6);
     rig.controller.setPaddle('right', 0);
     expect((await run(1)).steering).toBe(-1);
 
     // A held button does not stay held when the controller drops.
     rig.controller.simulateDrop();
     expect((await run(1)).steering).toBe(0);
+    await rig.dispose();
+  });
+
+  it('levers: default directions steer and brake; braking slows the virtual bike', async () => {
+    const { rig, controller, run } = await setup();
+    controller.start();
+    const cruising = await run(60);
+    expect(cruising.braking).toBe(0);
+    expect(cruising.ride.speedMps).toBeGreaterThan(7);
+
+    // Rest jitter does nothing.
+    rig.controller.setPaddle('left', 0.02);
+    rig.controller.setPaddle('right', -0.01);
+    expect(await run(1)).toMatchObject({ steering: 0, braking: 0 });
+
+    // Left lever −: steer left. Left lever +: brake (proportional).
+    rig.controller.setPaddle('left', -1);
+    expect(await run(0.5)).toMatchObject({ steering: -1, braking: 0 });
+    rig.controller.setPaddle('left', 0.525);
+    expect((await run(0.5)).braking).toBeCloseTo(0.5, 6);
+    // Right lever −: brake, the stronger brake wins.
+    rig.controller.setPaddle('right', -1);
+    const braking = await run(2);
+    expect(braking.braking).toBe(1);
+    expect(braking.steering).toBe(0);
+    expect(braking.ride.speedMps).toBeLessThan(1);
+    // The trainer's resistance is not touched by braking.
+    const commands = rig.trainer.commands.length;
+
+    // Let go: the rider speeds up again.
+    rig.controller.setPaddle('left', 0);
+    rig.controller.setPaddle('right', 0);
+    const released = await run(20);
+    expect(released.braking).toBe(0);
+    expect(released.ride.speedMps).toBeGreaterThan(4);
+    expect(rig.trainer.commands.length).toBe(commands);
+
+    // A held lever is released when the controller drops.
+    rig.controller.setPaddle('right', -1);
+    expect((await run(0.5)).braking).toBe(1);
+    rig.controller.simulateDrop();
+    expect(await run(0.5)).toMatchObject({ steering: 0, braking: 0 });
+    await rig.dispose();
+  });
+
+  it('levers follow the assignment in the settings; the brake key adds to them', async () => {
+    const { rig, controller, run } = await setup();
+    const swapped = structuredClone(DEFAULT_SETTINGS);
+    swapped.shifting.levers.right = { positive: 'brake', negative: 'steerRight' };
+    controller.updateSettings(swapped);
+    rig.controller.setPaddle('right', 1);
+    expect(await run(0.5)).toMatchObject({ steering: 0, braking: 1 });
+    rig.controller.setPaddle('right', -1);
+    expect(await run(0.5)).toMatchObject({ steering: 1, braking: 0 });
+    rig.controller.setPaddle('right', 0);
+
+    controller.setBrake(1, 'keyboard');
+    expect((await run(0.5)).braking).toBe(1);
+    controller.setBrake(0, 'keyboard');
+    expect((await run(0.5)).braking).toBe(0);
+
+    // Detaching the controller returns a held lever to rest.
+    rig.controller.setPaddle('left', 1);
+    expect((await run(0.5)).braking).toBe(1);
+    controller.setDevice('controller', null);
+    expect((await run(0.5)).braking).toBe(0);
+    await rig.dispose();
+  });
+
+  it('logs what the levers did (debug, rate-limited), not every tick', async () => {
+    const rig = createSimulatedRig({ seed: 5 });
+    const lines: { level: string; message: string; context?: Record<string, unknown> }[] = [];
+    const log = {
+      debug: (message: string, context?: Record<string, unknown>) =>
+        lines.push({ level: 'debug', message, context }),
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+    };
+    const controller = new RideController({
+      settings: DEFAULT_SETTINGS,
+      onLive: () => undefined,
+      saveRide: async () => undefined,
+      log,
+    });
+    controller.setDevice('controller', rig.controller);
+    const connecting = rig.controller.connect();
+    await vi.advanceTimersByTimeAsync(1000);
+    await connecting;
+    for (let i = 0; i < 8; i++) controller.tick();
+    expect(lines.filter((l) => l.message.startsWith('levers'))).toEqual([]);
+    rig.controller.setPaddle('right', -0.715);
+    for (let i = 0; i < 8; i++) controller.tick();
+    rig.controller.setPaddle('right', 0);
+    controller.tick();
+    const levers = lines.filter((l) => l.message.startsWith('levers'));
+    expect(levers.map((l) => l.message)).toEqual([
+      'levers → steering 0, braking 0.7',
+      'levers → steering 0, braking 0',
+    ]);
+    expect(levers[0]!.context).toMatchObject({ right: -0.71, braking: 0.7, steering: 0 });
     await rig.dispose();
   });
 

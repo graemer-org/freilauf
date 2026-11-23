@@ -46,6 +46,8 @@ The card also repeats the short "Help decode the controllers" recipe from
 While you press buttons, **Settings → Shifting → Controller buttons** shows
 "Last button: <grip> · <button>" and lights up that button's row for a moment,
 so you can see at once which button the app decoded (or that nothing arrived).
+**Settings → Shifting → Brake and steering levers** shows each lever as a live
+bar from −100 to +100 and what the app makes of it (steering or brake).
 
 For developers, the same is available on `window.freilauf.diagnostics`
 (`getLogInfo()`, `exportLog()`, `readRecent(maxBytes)`, `openLogFolder()`,
@@ -117,11 +119,18 @@ automatic retries after a lost link.
 
 ### Controller capture
 
-The handlebar controller protocol is only partly verified
-([protocols/zwift-ride.md](protocols/zwift-ride.md)), so its capture is
-always on: every change of the raw keypad frame (hex, decoded buttons, raw
-bitmap, unmapped bits, paddles), identical frames collapsed into a count,
-the first frame of every unknown message type, the handshake and battery.
+The handlebar controller protocol is reverse-engineered: the buttons and the
+lever message layout are verified, the meaning of the two lever directions is
+not yet ([protocols/zwift-ride.md](protocols/zwift-ride.md)), so its capture
+is always on: every change of the raw keypad frame (hex, decoded buttons, raw
+bitmap, unmapped bits, the signed lever values `paddles`, and `otherPaddles`
+if the always-zero locations 2 and 3 ever move), identical frames collapsed
+into a count, the first frame of every unknown message type, the handshake
+and battery. What the app made of the levers is logged next to it as a
+`ride` debug line, `levers → steering S, braking B` with the raw positions
+and the assignment, whenever a lever moves by a visible step (at most 20
+lines per 10 s); `brake on (keyboard)` / `brake off (keyboard)` record the
+brake key.
 How to make a useful capture and how to read these lines is described in
 [protocols/zwift-ride.md → How to capture](protocols/zwift-ride.md#how-to-capture).
 With `FREILAUF_BLE_LOG=1` every raw frame is logged as well, uncollapsed.

@@ -1623,6 +1623,56 @@ td.actions .button-row {
   justify-content: start;
 }
 
+.sim-levers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-6);
+}
+
+.sim-lever {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 14rem);
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.sim-lever output {
+  display: inline-block;
+  min-width: 3.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Brake cue on the ride scene: a small pill while the brake acts. */
+.scene-brake {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.scene-brake[hidden] {
+  display: none;
+}
+
+.scene-brake-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--rec);
+}
+
 /* ───────── devices ───────── */
 
 .device-row {
@@ -2132,6 +2182,138 @@ div.server-note {
   .map-grip + .map-grip {
     box-shadow: inset 0 1px 0 var(--separator);
   }
+}
+
+/* Analog levers: a signed bar per grip, the dead zone marked around 0. */
+.lever-grip {
+  display: grid;
+  align-content: start;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-4) var(--s-4);
+  min-width: 0;
+}
+
+.lever-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.lever-title {
+  padding: var(--s-3) 0 0;
+}
+
+.lever-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: var(--text-md);
+}
+
+.lever-bar {
+  position: relative;
+  height: 0.875rem;
+  border-radius: var(--r-pill);
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.lever-dead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(-45deg, var(--fill-strong) 0 2px, transparent 2px 5px);
+}
+
+.lever-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--text-3);
+}
+
+.lever-fill.is-steer {
+  background: var(--accent);
+}
+
+.lever-fill.is-brake {
+  background: var(--rec);
+}
+
+.lever-zero {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: calc(50% - 1px);
+  width: 2px;
+  background: var(--text-2);
+}
+
+.lever-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: calc(-1 * var(--s-1));
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.lever-dirs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-3);
+}
+
+.lever-dir {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.lever-dir > label {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.lever-dir select {
+  width: 100%;
+}
+
+.lever-foot {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+}
+
+/* Aligned with the text above it; the quiet button keeps its hit area. */
+.lever-foot > .btn {
+  margin-left: calc(-1 * var(--s-3));
+}
+
+.lever-result {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lever-result.is-rest,
+.lever-result.is-none {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.lever-result.is-steer {
+  color: var(--accent);
+}
+
+.lever-result.is-brake {
+  color: var(--rec);
+}
+
+.lever-deadzone {
+  padding: 0;
+  box-shadow: inset 0 1px 0 var(--separator);
 }
 
 /* Diagnostics. */

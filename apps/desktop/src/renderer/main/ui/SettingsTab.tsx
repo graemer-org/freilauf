@@ -4,7 +4,7 @@ import { ALL_STATS } from '../../../shared/contract';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
-import { ButtonMapping, DiagnosticsCard } from './SettingsExtras';
+import { ButtonMapping, DiagnosticsCard, LeverMapping } from './SettingsExtras';
 
 export const MAX_NAME_LENGTH = 24;
 const MAX_TILES = 12;
@@ -288,6 +288,7 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
           />
         </div>
         <ButtonMapping buttons={shifting.buttons} />
+        <LeverMapping levers={shifting.levers} />
       </section>
 
       <section className="settings-section" aria-labelledby="set-overlay">

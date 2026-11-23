@@ -145,6 +145,65 @@ describe('group.signallingUrl', () => {
   });
 });
 
+describe('shifting.levers (analog lever directions)', () => {
+  it('defaults follow the mirror-symmetric hypothesis with a 5 % dead zone', () => {
+    expect(DEFAULT_SETTINGS.shifting.levers).toEqual({
+      left: { positive: 'brake', negative: 'steerLeft' },
+      right: { positive: 'steerRight', negative: 'brake' },
+      deadzone: 0.05,
+    });
+  });
+
+  it('a file from before the levers existed loads with the default levers and keeps its buttons', () => {
+    const old = { shifting: { physicalRatio: 3, buttons: { a: 'startPause', left: 'shiftUp' } } };
+    const s = sanitizeSettings(migrateSettings(old));
+    expect(s.shifting.levers).toEqual(DEFAULT_SETTINGS.shifting.levers);
+    expect(s.shifting.buttons).toEqual({ a: 'startPause', left: 'shiftUp' });
+    expect(s.shifting.physicalRatio).toBe(3);
+  });
+
+  it('keeps valid directions, replaces invalid ones and reports them', () => {
+    const problems: string[] = [];
+    const s = sanitizeSettings(
+      {
+        shifting: {
+          levers: {
+            left: { positive: 'steerRight', negative: 'launch' },
+            right: 'both',
+            deadzone: 0.9,
+          },
+        },
+      },
+      DEFAULT_SETTINGS,
+      problems,
+    );
+    expect(s.shifting.levers).toEqual({
+      left: { positive: 'steerRight', negative: 'steerLeft' },
+      right: { positive: 'steerRight', negative: 'brake' },
+      deadzone: 0.05,
+    });
+    expect(problems).toEqual([
+      'shifting.levers.left.negative: unknown lever function',
+      'shifting.levers.right: expected an object',
+      'shifting.levers.deadzone: expected a number in [0, 0.5]',
+    ]);
+  });
+
+  it('a patch changes one direction and leaves the rest alone', () => {
+    const next = applySettingsPatch(DEFAULT_SETTINGS, {
+      shifting: { levers: { right: { negative: 'none' }, deadzone: 0.1 } },
+    });
+    expect(next.shifting.levers).toEqual({
+      left: { positive: 'brake', negative: 'steerLeft' },
+      right: { positive: 'steerRight', negative: 'none' },
+      deadzone: 0.1,
+    });
+    // An invalid patch field is a no-op.
+    const same = applySettingsPatch(next, { shifting: { levers: { left: { positive: 7 } } } });
+    expect(same.shifting.levers).toEqual(next.shifting.levers);
+  });
+});
+
 describe('group: relays by default, own server and relay list as advanced options', () => {
   it('defaults to the public relays; a stored address alone does not switch to it', () => {
     expect(DEFAULT_SETTINGS.group).toEqual({

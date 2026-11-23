@@ -97,6 +97,47 @@ export const CONTROLLER_ACTION_LABELS: Record<ControllerAction, string> = {
   steerRight: 'Steer right (hold)',
 };
 
+/**
+ * What one direction of a handlebar lever does. Each grip has one analog
+ * lever that moves both ways (−100 … +100); each direction gets a function.
+ */
+export type LeverFunction = 'steerLeft' | 'steerRight' | 'brake' | 'none';
+
+export const LEVER_FUNCTION_LABELS: Record<LeverFunction, string> = {
+  none: 'Nothing',
+  steerLeft: 'Steer left',
+  steerRight: 'Steer right',
+  brake: 'Brake',
+};
+
+/** The two directions of one grip's lever: towards + and towards −. */
+export interface LeverAssignment {
+  positive: LeverFunction;
+  negative: LeverFunction;
+}
+
+export interface LeverSettings {
+  left: LeverAssignment;
+  right: LeverAssignment;
+  /**
+   * Fraction of full travel around rest that does nothing (0 … 0.5). The
+   * levers jitter by ±1–2 % at rest; above the dead zone the output rises
+   * proportionally to 100 % at full travel.
+   */
+  deadzone: number;
+}
+
+/**
+ * Default lever meaning: a best guess from one hardware capture
+ * (docs/protocols/zwift-ride.md), mirror-symmetric between the grips —
+ * right lever + = steer right, − = brake; left lever − = steer left, + = brake.
+ */
+export const DEFAULT_LEVERS: LeverSettings = {
+  left: { positive: 'brake', negative: 'steerLeft' },
+  right: { positive: 'steerRight', negative: 'brake' },
+  deadzone: 0.05,
+};
+
 export interface Settings {
   rider: {
     name: string;
@@ -114,6 +155,8 @@ export interface Settings {
     trainerMassKg: number | null;
     /** Controller button → action. Configurable because the bit table is unverified. */
     buttons: Partial<Record<ControllerButton, ShiftAction>>;
+    /** What the two analog levers do, per direction. */
+    levers: LeverSettings;
   };
   overlay: OverlaySettings;
   /**
@@ -144,6 +187,7 @@ export const DEFAULT_SETTINGS: Settings = {
       left: 'steerLeft',
       right: 'steerRight',
     },
+    levers: DEFAULT_LEVERS,
   },
   overlay: {
     visible: true,
@@ -190,8 +234,13 @@ export interface LiveState {
   localName: string;
   /** Present while a structured workout is loaded for the current ride. */
   workout?: WorkoutLive | null;
-  /** Steering from the controller paddles, −1 (full left) … 1 (full right); 0 without paddles. */
+  /**
+   * Steering from the controller levers or held steer buttons, −1 (full left)
+   * … 1 (full right); 0 without either.
+   */
   steering?: number;
+  /** Brake from the controller levers or the brake key, 0 (none) … 1 (full). */
+  braking?: number;
 }
 
 /** The running workout as shown in the main window and overlay. */

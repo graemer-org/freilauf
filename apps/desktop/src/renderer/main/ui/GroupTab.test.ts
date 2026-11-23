@@ -38,6 +38,7 @@ function state(
     groupCountdownS: null,
     community: new CommunityService({ storage: null }).view,
     lastButton: null,
+    levers: null,
   };
 }
 
