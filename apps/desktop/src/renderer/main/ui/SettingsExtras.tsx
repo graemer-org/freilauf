@@ -373,18 +373,23 @@ export function LeverMapping({ levers }: { levers: LeverSettings }) {
             onSwap={onSwap}
           />
         </div>
-        <div className="lever-deadzone">
-          <RangeField
-            label="Dead zone around rest"
-            value={levers.deadzone}
-            min={0}
-            max={0.2}
-            step={0.01}
-            testId="lever-deadzone"
-            format={(v) => `±${Math.round(v * 100)} %`}
-            onCommit={(deadzone) => void app.updateSettings({ shifting: { levers: { deadzone } } })}
-          />
-        </div>
+        <details className="disclosure lever-advanced" data-testid="lever-advanced">
+          <summary>Advanced: dead zone around rest</summary>
+          <div className="lever-deadzone">
+            <RangeField
+              label="Dead zone around rest"
+              value={levers.deadzone}
+              min={0}
+              max={0.2}
+              step={0.01}
+              testId="lever-deadzone"
+              format={(v) => `±${Math.round(v * 100)} %`}
+              onCommit={(deadzone) =>
+                void app.updateSettings({ shifting: { levers: { deadzone } } })
+              }
+            />
+          </div>
+        </details>
       </div>
       <p className="hint section-foot" data-testid="lever-hint">
         The default assignment was confirmed on the real controllers. If pulling the brake steers on
@@ -449,10 +454,10 @@ export function DiagnosticsCard() {
         <h4 className="diag-help-title">Help decode the controllers</h4>
         <p className="hint">
           All buttons are decoded; the levers are what is still being worked out. Connect the
-          controller, open “Brake and steering levers” above, and on each grip, slowly: pull the
-          brake all the way and let go, then push the lever sideways all the way and let go. Note
-          which way the bar moved each time, then export the log and attach it to a GitHub issue
-          together with your notes.
+          controller, open “Brake and steering levers” on the Devices screen, and on each grip,
+          slowly: pull the brake all the way and let go, then push the lever sideways all the way
+          and let go. Note which way the bar moved each time, then export the log and attach it to a
+          GitHub issue together with your notes.
         </p>
       </div>
     </div>

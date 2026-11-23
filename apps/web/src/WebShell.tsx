@@ -64,7 +64,7 @@ function PipButton({ app, pip }: { app: App; pip: StatsPipWindow }) {
   return (
     <button
       type="button"
-      className="web-pip-button"
+      className="btn btn-small btn-quiet web-pip-button"
       data-testid="pip-toggle"
       aria-pressed={open}
       title="Small always-on-top window with your stats (not click-through)"
@@ -101,8 +101,7 @@ export function WebShell({
   return (
     <>
       <BluetoothNotice availability={availability} simMode={simMode} />
-      <MainApp app={app} />
-      <PipButton app={app} pip={pip} />
+      <MainApp app={app} extras={<PipButton app={app} pip={pip} />} />
     </>
   );
 }

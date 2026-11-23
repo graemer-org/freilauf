@@ -2,6 +2,7 @@ import type { DeviceKind } from '@freilauf/devices';
 import { useEffect, useRef } from 'react';
 import { DEVICE_KINDS, describeDevice } from './deviceStatus';
 import { useApp, useAppState } from './hooks';
+import { ButtonMapping, LeverMapping } from './SettingsExtras';
 
 const ROW_LABEL: Record<DeviceKind, string> = {
   trainer: 'Trainer',
@@ -83,14 +84,33 @@ function DeviceRow({ kind }: { kind: DeviceKind }) {
   );
 }
 
+/** Button mapping and the live lever display (they used to live in Settings → Shifting). */
+function Controllers() {
+  const shifting = useAppState((s) => s.settings?.shifting ?? null);
+  if (!shifting) return null;
+  return (
+    <section
+      className="settings-section"
+      aria-labelledby="dev-controllers"
+      data-testid="devices-controllers"
+    >
+      <h2 id="dev-controllers" className="section-title section-head">
+        Controllers
+      </h2>
+      <ButtonMapping buttons={shifting.buttons} />
+      <LeverMapping levers={shifting.levers} />
+    </section>
+  );
+}
+
 export function DevicesTab() {
   const simMode = useAppState((s) => s.simMode);
   return (
     <div className="page devices">
       {simMode && (
         <p className="banner banner-info" data-testid="devices-sim-note">
-          Simulation mode: simulated trainer, heart rate and controller are in use. Use the
-          Simulation panel on the Ride tab to change effort or drop a device.
+          Simulation mode: simulated trainer, heart rate and controller are in use. The Simulation
+          panel under the ride view changes the effort or drops a device.
         </p>
       )}
       <ul className="list card device-list">
@@ -102,6 +122,7 @@ export function DevicesTab() {
         Remembered devices reconnect automatically on start. Make sure a device is awake and not
         connected to another app.
       </p>
+      <Controllers />
     </div>
   );
 }

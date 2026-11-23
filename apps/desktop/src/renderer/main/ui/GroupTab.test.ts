@@ -44,6 +44,7 @@ function state(
     routeTrack: null,
     sharedRoutes: [],
     sharingRouteId: null,
+    lastRide: null,
   };
 }
 

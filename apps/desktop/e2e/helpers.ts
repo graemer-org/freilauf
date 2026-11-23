@@ -46,3 +46,25 @@ export async function windows(app: ElectronApplication): Promise<{ main: Page; o
   if (!found.main || !found.overlay) throw new Error('expected a main and an overlay window');
   return { main: found.main, overlay: found.overlay };
 }
+
+/** The start screen is shown and the simulated trainer is connected. */
+export async function atStart(main: Page): Promise<void> {
+  await expect(main.getByTestId('start-screen')).toBeVisible({ timeout: 20_000 });
+  await expect(main.getByTestId('chip-trainer')).toHaveAttribute('data-state', 'connected', {
+    timeout: 15_000,
+  });
+}
+
+/** Start screen → the ride view without recording (its own Start button starts the ride). */
+export async function openRideView(main: Page): Promise<void> {
+  await main.getByTestId('start-open-ride').click();
+  await expect(main.getByTestId('panel-ride')).toBeVisible();
+  await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+}
+
+/** Finish (with the confirmation) and land on the post-ride summary. */
+export async function finishRide(main: Page): Promise<void> {
+  await main.getByTestId('ride-finish').click();
+  await main.getByTestId('ride-finish-confirm').click();
+  await expect(main.getByTestId('summary-screen')).toBeVisible();
+}

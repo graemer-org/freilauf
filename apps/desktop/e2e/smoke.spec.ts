@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { RecordedRide } from '@freilauf/session';
 import type { LiveState } from '../src/shared/contract';
-import { launch, mainEntry, windows } from './helpers';
+import { atStart, launch, mainEntry, windows } from './helpers';
 
 function liveState(powerW: number): LiveState {
   return {
@@ -73,7 +73,7 @@ test.describe('desktop smoke', () => {
       expect(await main.evaluate(() => window.freilauf.simMode)).toBe(true);
       expect(await main.evaluate(() => window.freilauf.window)).toBe('main');
       expect(await overlay.evaluate(() => window.freilauf.window)).toBe('overlay');
-      await expect(main.getByTestId('tab-ride')).toBeVisible();
+      await expect(main.getByTestId('start-riding')).toBeVisible();
       await expect(overlay.getByTestId('overlay-root')).toBeVisible();
 
       // Node is not reachable from the renderer.
@@ -192,9 +192,9 @@ test('writes an always-on diagnostic log during a short simulated ride', async (
         (name) => window.freilauf.settings.update({ rider: { name } }),
         riderName,
       );
+      await atStart(main);
+      await main.getByTestId('start-riding').click();
       await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
-
-      await main.getByTestId('ride-start').click();
       await main.getByTestId('gear-up').click();
       await main.waitForTimeout(1500);
       await main.getByTestId('ride-pause').click();

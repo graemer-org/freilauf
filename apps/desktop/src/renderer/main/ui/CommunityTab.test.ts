@@ -9,7 +9,7 @@ import type { ChallengeView, CommunityView, ContactView } from '../../core/commu
 import { CommunityService } from '../../core/communityService';
 import { DEFAULT_SETTINGS } from '../../../shared/contract';
 import type { LiveState } from '../../../shared/contract';
-import type { TabId } from './MainApp';
+import type { InitialScreen } from './MainApp';
 import { MainApp } from './index';
 
 const NOW = Date.now();
@@ -75,13 +75,14 @@ function state(community: CommunityView, extra: Partial<AppState> = {}): AppStat
     routeTrack: null,
     sharedRoutes: [],
     sharingRouteId: null,
+    lastRide: null,
     ...extra,
   };
 }
 
-function render(s: AppState, tab: TabId = 'community'): string {
+function render(s: AppState, tab: InitialScreen = 'community'): string {
   const app = { store: createStore<AppState>(() => s) } as unknown as App;
-  return renderToString(createElement(MainApp, { app, initialTab: tab }));
+  return renderToString(createElement(MainApp, { app, initialScreen: tab }));
 }
 
 /** The HTML from `marker` to the next occurrence of `next` (or the end). */
@@ -184,13 +185,10 @@ function challenge(
 }
 
 describe('Community tab (SSR)', () => {
-  it('sits after Group and shows an empty week, an empty leaderboard and no challenges', () => {
+  it('sits under Activity next to the rides and shows an empty week, an empty leaderboard and no challenges', () => {
     const html = render(state(emptyView()));
-    expect(html.indexOf('data-testid="tab-group"')).toBeLessThan(
+    expect(html.indexOf('data-testid="tab-history"')).toBeLessThan(
       html.indexOf('data-testid="tab-community"'),
-    );
-    expect(html.indexOf('data-testid="tab-community"')).toBeLessThan(
-      html.indexOf('data-testid="tab-history"'),
     );
     expect(html).toContain('data-testid="panel-community"');
     expect(html).toMatch(/data-testid="community-week-points">0</);
@@ -603,9 +601,9 @@ describe('Community tab (SSR)', () => {
   });
 });
 
-describe('Settings: controller buttons and diagnostics (SSR)', () => {
+describe('Devices: controller buttons; Settings: diagnostics (SSR)', () => {
   it('lists all sixteen buttons by grip with a reset and the live indicator', () => {
-    const idle = render(state(emptyView()), 'settings');
+    const idle = render(state(emptyView()), 'devices');
     expect(idle.match(/data-testid="button-row-[a-zA-Z]+"/g)?.length).toBe(16);
     const left = slice(idle, '>Left grip<', '>Right grip<');
     expect(left.match(/data-testid="button-map-/g)).toHaveLength(8);
@@ -619,7 +617,7 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
     settings.shifting.buttons.a = 'startPause';
     const pressed = render(
       state(emptyView(), { settings, lastButton: { button: 'shiftUpRight', at: Date.now() } }),
-      'settings',
+      'devices',
     );
     expect(pressed).not.toMatch(/data-testid="button-map-reset"[^>]*disabled/);
     expect(text(pressed)).toContain('Last button: Right grip · Upper shift button');
@@ -630,7 +628,7 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
     // An old press only names the button, no row is lit.
     const old = render(
       state(emptyView(), { lastButton: { button: 'b', at: Date.now() - 60_000 } }),
-      'settings',
+      'devices',
     );
     expect(text(old)).toContain('Last button: Right grip · B');
     expect(old).not.toContain('data-pressed');
@@ -654,7 +652,7 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
   it('shows a live bar per lever with the dead zone, the raw value and the result', () => {
     const html = render(
       state(emptyView(), { levers: { left: -0.43, right: -0.715, at: Date.now() } }),
-      'settings',
+      'devices',
     );
     const card = slice(html, 'data-testid="lever-mapping"', 'data-testid="lever-hint"');
     const left = slice(card, 'data-testid="lever-left"', 'data-testid="lever-right"');
@@ -690,7 +688,7 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
     settings.shifting.levers.right = { positive: 'brake', negative: 'steerRight' };
     const swapped = render(
       state(emptyView(), { settings, levers: { left: 0.01, right: 0.9, at: Date.now() } }),
-      'settings',
+      'devices',
     );
     expect(text(slice(swapped, 'data-testid="lever-left-result"', '</p>'))).toContain('At rest');
     expect(text(slice(swapped, 'data-testid="lever-right-result"', '</p>'))).toContain(
@@ -700,14 +698,14 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
 
     const offline = live();
     offline.devices.controller = null;
-    const html = render(state(emptyView(), { live: offline }), 'settings');
+    const html = render(state(emptyView(), { live: offline }), 'devices');
     expect(text(html)).toContain('Connect the controller to see the levers move here.');
     expect(text(slice(html, 'data-testid="lever-left-result"', '</p>'))).toContain('Not connected');
     expect(html).toContain('aria-valuenow="0"');
   });
 });
 
-describe('Ride tab: brake key, brake cue and simulated levers (SSR)', () => {
+describe('Ride view: brake key, brake cue and simulated levers (SSR)', () => {
   it('lists the brake key, has a hidden brake cue and two lever sliders in sim mode', () => {
     const html = render(
       state(emptyView(), { levers: { left: 0, right: -0.5, at: Date.now() } }),

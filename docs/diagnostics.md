@@ -29,7 +29,8 @@ browser console, and in the console `freilaufDiagnostics()` prints the lines.
 
 ## Getting it out
 
-All three are buttons on the **Diagnostics** card at the bottom of the **Settings** tab:
+All three are buttons on the **Diagnostics** card in **Settings** (linked at the top of the
+start screen):
 
 - **Export log…**: saves one text file that contains
   all log files, oldest first and the current one last, each preceded by a
@@ -43,10 +44,11 @@ All three are buttons on the **Diagnostics** card at the bottom of the **Setting
 
 The card also repeats the short "Help decode the controllers" recipe from
 [protocols/zwift-ride.md → How to capture](protocols/zwift-ride.md#how-to-capture).
-While you press buttons, **Settings → Shifting → Controller buttons** shows
+While you press buttons, **Devices → Controllers → Controller buttons** (click the
+device line on the start screen) shows
 "Last button: <grip> · <button>" and lights up that button's row for a moment,
 so you can see at once which button the app decoded (or that nothing arrived).
-**Settings → Shifting → Brake and steering levers** shows each lever as a live
+**Devices → Controllers → Brake and steering levers** shows each lever as a live
 bar from −100 to +100 and what the app makes of it (steering or brake).
 
 For developers, the same is available on `window.freilauf.diagnostics`

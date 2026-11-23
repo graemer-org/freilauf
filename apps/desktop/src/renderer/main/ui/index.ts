@@ -1,3 +1,3 @@
-export { MainApp, defaultTab } from './MainApp';
-export type { MainAppProps, TabId } from './MainApp';
+export { MainApp } from './MainApp';
+export type { InitialScreen, MainAppProps, ScreenId } from './MainApp';
 export * from './format';

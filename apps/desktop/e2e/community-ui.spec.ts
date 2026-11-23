@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { launch, windows } from './helpers';
+import { atStart, finishRide, launch, openRideView, windows } from './helpers';
 
 /**
- * The Community tab after a real (simulated) ride, a personal challenge created through the UI,
+ * Activity → Community after a real (simulated) ride, a personal challenge created through the UI,
  * and Settings → Diagnostics → Copy recent log.
  */
-test('community tab: own week, a new challenge and the diagnostics card', async () => {
+test('community (Activity): own week, a new challenge and the diagnostics card', async () => {
   test.setTimeout(120_000);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-community-ui-'));
   const app = await launch(userData);
@@ -18,15 +18,20 @@ test('community tab: own week, a new challenge and the diagnostics card', async 
     main.on('pageerror', (e) => errors.push(e.message));
     main.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 
-    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+    await atStart(main);
+    await openRideView(main);
     // Hard effort: a 25 s ride at the default FTP scores a couple of points.
     await main.getByTestId('sim-effort').fill('400');
     await main.getByTestId('ride-start').click();
     await expect(main.getByTestId('stat-time')).toContainText(/0:2[5-9]/, { timeout: 40_000 });
-    await main.getByTestId('ride-finish').click();
-    await main.getByTestId('ride-finish-confirm').click();
-    await expect(main.getByTestId('ride-start')).toBeVisible();
+    await finishRide(main);
+    // The summary names the points of this ride and the week so far.
+    await expect(main.getByTestId('summary-points')).toContainText(/\+[1-9]/);
+    await expect(main.getByTestId('summary-week-points')).toContainText(/[1-9]\d* this week/);
+    await main.getByTestId('summary-done').click();
+    await expect(main.getByTestId('start-screen')).toBeVisible();
 
+    await main.getByTestId('nav-activity').click();
     await main.getByTestId('tab-community').click();
     await expect(main.getByTestId('panel-community')).toBeVisible();
     await expect(main.getByTestId('community-week-rides')).toHaveText('1');
@@ -59,8 +64,9 @@ test('community tab: own week, a new challenge and the diagnostics card', async 
       String(Math.round(Math.min(1, points / 50) * 100)),
     );
 
-    // Diagnostics: copy the recent log.
-    await main.getByTestId('tab-settings').click();
+    // Diagnostics: copy the recent log (Activity → back to start → Settings).
+    await main.getByTestId('screen-back').click();
+    await main.getByTestId('nav-settings').click();
     const diag = main.getByTestId('settings-diagnostics');
     await diag.scrollIntoViewIfNeeded();
     await diag.getByTestId('log-copy').click();

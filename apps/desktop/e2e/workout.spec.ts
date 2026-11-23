@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { launch, windows } from './helpers';
+import { atStart, finishRide, launch, windows } from './helpers';
 
 const SMALL_ZWO = `<?xml version="1.0" encoding="UTF-8"?>
 <workout_file>
@@ -19,7 +19,7 @@ const SMALL_ZWO = `<?xml version="1.0" encoding="UTF-8"?>
 const num = (text: string | null): number => Number((text ?? '').replace(/[^\d.]/g, ''));
 
 /** A structured workout on simulated devices, driven through the real UI. */
-test('structured workout in sim mode: select, ride in ERG, skip, intensity, import', async () => {
+test('structured workout in sim mode: choose on the start screen, ride in ERG, skip, intensity, import', async () => {
   test.setTimeout(120_000);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-workout-'));
   const app = await launch(userData);
@@ -30,10 +30,10 @@ test('structured workout in sim mode: select, ride in ERG, skip, intensity, impo
       page.on('pageerror', (e) => errors.push(e.message));
       page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
     }
-    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+    await atStart(main);
 
-    // Choose a built-in workout.
-    await main.getByTestId('tab-workouts').click();
+    // Choose a built-in workout: the Workout card opens the library as a picker.
+    await main.getByTestId('ride-kind-workout').click();
     await expect(main.getByTestId('panel-workouts')).toBeVisible();
     const row = main.locator(
       '[data-testid="workout-row"][data-workout-id="builtin-sweet-spot-3x12"]',
@@ -42,7 +42,16 @@ test('structured workout in sim mode: select, ride in ERG, skip, intensity, impo
     await expect(row.getByTestId('workout-selected')).toBeVisible();
     await row.getByTestId('workout-go-ride').click();
 
-    // Before the start: a banner names the next ride.
+    // Back on the start screen: the choice as a summary, the Workout card on.
+    await expect(main.getByTestId('start-screen')).toBeVisible();
+    await expect(main.getByTestId('start-workout-summary')).toContainText(
+      'Sweet spot 3×12 · 1 h 7 min',
+    );
+    await expect(main.getByTestId('ride-kind-workout')).toHaveAttribute('aria-pressed', 'true');
+    await expect(main.getByTestId('ride-kind-free')).toHaveAttribute('aria-pressed', 'false');
+
+    // In the ride view before the start: a banner names the next ride.
+    await main.getByTestId('start-open-ride').click();
     await expect(main.getByTestId('panel-ride')).toBeVisible();
     await expect(main.getByTestId('workout-banner')).toContainText('Sweet spot 3×12');
     await main.getByTestId('ride-start').click();
@@ -90,15 +99,20 @@ test('structured workout in sim mode: select, ride in ERG, skip, intensity, impo
     await expect(main.getByTestId('stat-time')).toContainText(/0:1[1-9]|0:[2-5]\d/, {
       timeout: 30_000,
     });
-    await main.getByTestId('ride-finish').click();
-    await main.getByTestId('ride-finish-confirm').click();
-    await expect(main.getByTestId('ride-start')).toBeVisible();
+    await finishRide(main);
+    await expect(main.getByTestId('summary-what')).toContainText('Sweet spot 3×12');
     await expect(main.getByTestId('workout-panel')).toHaveCount(0);
     await expect(main.getByTestId('workout-banner')).toHaveCount(0);
     await expect(strip).toHaveCount(0);
 
+    // Done: the start screen offers the last choice again.
+    await main.getByTestId('summary-done').click();
+    await expect(main.getByTestId('start-workout-summary')).toContainText('Sweet spot 3×12');
+    await main.getByTestId('start-workout-clear').click();
+    await expect(main.getByTestId('ride-kind-free')).toHaveAttribute('aria-pressed', 'true');
+
     // Import a .zwo file through the file input.
-    await main.getByTestId('tab-workouts').click();
+    await main.getByTestId('ride-kind-workout').click();
     await main.getByTestId('workout-import').setInputFiles({
       name: 'e2e-tempo.zwo',
       mimeType: 'application/xml',
