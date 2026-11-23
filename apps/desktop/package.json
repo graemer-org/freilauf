@@ -29,6 +29,7 @@
     "@freilauf/community": "workspace:*",
     "@freilauf/devices": "workspace:*",
     "@freilauf/p2p": "workspace:*",
+    "@freilauf/routes": "workspace:*",
     "@freilauf/session": "workspace:*",
     "@freilauf/sim": "workspace:*",
     "@freilauf/workouts": "workspace:*",

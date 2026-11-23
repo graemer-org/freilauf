@@ -4,6 +4,7 @@
  */
 import type { ConnectionState, ControllerButton, DeviceKind } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
+import type { RoutePosition } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
 
 export type StatId =
@@ -239,6 +240,8 @@ export interface LiveState {
    * … 1 (full right); 0 without either.
    */
   steering?: number;
+  /** Present while a route is loaded for the current ride. */
+  route?: RoutePosition | null;
   /** Brake from the controller levers or the brake key, 0 (none) … 1 (full). */
   braking?: number;
 }
