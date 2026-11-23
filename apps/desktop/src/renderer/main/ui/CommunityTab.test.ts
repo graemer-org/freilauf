@@ -676,7 +676,7 @@ describe('Settings: controller buttons and diagnostics (SSR)', () => {
       /data-testid="lever-right-positive"[\s\S]*?value="steerRight" selected=""/,
     );
     expect(html).toMatch(/data-testid="lever-reset"[^>]*disabled/);
-    expect(text(html)).toContain('best guess from one recording');
+    expect(text(html)).toContain('confirmed on the real controllers');
     expect(text(card)).toContain('±5 %');
   });
 

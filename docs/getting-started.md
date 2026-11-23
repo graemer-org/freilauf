@@ -84,7 +84,8 @@ hatched (rest jitter of ±1–2 % never acts), the raw percentage, and what the 
 ("Steering: 40 % right", "Brake: 70 %"). Under the bar you choose what happens **when the bar
 moves left (−)** and **when it moves right (+)**.
 
-The default assignment is **a best guess from one recording** of the real controllers: on the
+The default assignment was worked out from a recording of the real controllers and **confirmed
+on that hardware**: on the
 right lever + steers right and − brakes, on the left lever − steers left and + brakes. If
 pulling the brake steers instead (or the other way round), press **Swap brake and steer on this
 lever** for that grip, or pick each direction yourself; **Reset to defaults** goes back.
