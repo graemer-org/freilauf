@@ -10,16 +10,18 @@ import { CommunityTab } from './CommunityTab';
 import { AppContext, useAppState } from './hooks';
 import { Notices } from './Notices';
 import { RideTab } from './RideTab';
+import { RoutesTab } from './RoutesTab';
 import { SettingsTab } from './SettingsTab';
 import { WorkoutsTab } from './WorkoutsTab';
 import './main.css';
 
 export type TabId =
-  'ride' | 'workouts' | 'devices' | 'group' | 'community' | 'history' | 'settings';
+  'ride' | 'workouts' | 'routes' | 'devices' | 'group' | 'community' | 'history' | 'settings';
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: 'ride', label: 'Ride' },
   { id: 'workouts', label: 'Workouts' },
+  { id: 'routes', label: 'Routes' },
   { id: 'devices', label: 'Devices' },
   { id: 'group', label: 'Group' },
   { id: 'community', label: 'Community' },
@@ -141,6 +143,7 @@ function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined })
             focusFtpTests={ftpFocus}
           />
         )}
+        {tab === 'routes' && <RoutesTab onGoToRide={() => setTab('ride')} />}
         {tab === 'devices' && <DevicesTab />}
         {tab === 'group' && <GroupTab onOpenSettings={() => setTab('settings')} />}
         {tab === 'community' && (

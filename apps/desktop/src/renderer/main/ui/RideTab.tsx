@@ -1,12 +1,14 @@
 import type { DeviceKind } from '@freilauf/devices';
 import { useEffect, useState } from 'react';
-import type { App } from '../appStore';
+import type { App, AppState } from '../appStore';
 import type { StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from './format';
 import { rangeFill } from './fields';
 import { isEditableTarget, useApp, useAppState } from './hooks';
 import { GroupCountdown, WorkoutBanner, WorkoutPanel } from './WorkoutPanel';
-import { RideScene } from './scene/RideScene';
+import { RideScene } from './scene/SceneView';
+import { RideRoute } from './RideRoute';
+import { routeTrackOf } from './routesApi';
 
 export const GRADIENT_MIN = -10;
 export const GRADIENT_MAX = 15;
@@ -15,7 +17,14 @@ export const GRADIENT_STEP = 0.5;
 const clampGradient = (g: number): number =>
   Math.max(GRADIENT_MIN, Math.min(GRADIENT_MAX, Math.round(g / GRADIENT_STEP) * GRADIENT_STEP));
 
+/** A route drives the gradient: the manual controls are locked. */
+function onRouteOrLocked(s: AppState): boolean {
+  return routeTrackOf(s) !== null || s.live?.routeControl?.gradientLocked === true;
+}
+
 function nudgeGradient(app: App, delta: number): void {
+  // A route sets the gradient; the keys would only fight it.
+  if (onRouteOrLocked(app.store.getState())) return;
   const current = app.store.getState().live?.ride.gradePercent ?? 0;
   app.setGradient(clampGradient(current + delta));
 }
@@ -114,7 +123,9 @@ const STAT_CLASS: Record<StatVariant, string> = {
 };
 
 function StatTile({ stat, variant = 'tile' }: { stat: StatId; variant?: StatVariant }) {
-  const value = useAppState((s) => (s.live ? statValue(stat, s.live.ride) : '–'));
+  const value = useAppState((s) =>
+    s.live ? statValue(stat, s.live.ride, s.live.workout, s.live.route) : '–',
+  );
   const unit = statUnit(stat);
   return (
     <div className={`${STAT_CLASS[variant]} tile-${stat}`} data-testid={`stat-${stat}`}>
@@ -289,7 +300,7 @@ function GearControls() {
   );
 }
 
-function GradientControls() {
+function GradientControls({ byRoute = false }: { byRoute?: boolean }) {
   const app = useApp();
   const live = useAppState((s) => s.live?.ride.gradePercent ?? 0);
   // Local draft so the slider does not jump back between 4 Hz updates.
@@ -302,16 +313,31 @@ function GradientControls() {
   };
   const shown = `${draft > 0 ? '+' : draft < 0 ? '−' : ''}${Math.abs(draft).toFixed(1)} %`;
   return (
-    <div className="control control-gradient" role="group" aria-label="Gradient">
+    <div
+      className={`control control-gradient${byRoute ? ' is-route' : ''}`}
+      role="group"
+      aria-label="Gradient"
+      aria-describedby={byRoute ? 'gradient-route-note' : undefined}
+    >
       <label className="control-label" htmlFor="gradient-slider">
         Gradient <output data-testid="gradient-value">{shown}</output>
       </label>
+      {byRoute && (
+        <span
+          className="hint gradient-route-note"
+          id="gradient-route-note"
+          data-testid="gradient-route-note"
+        >
+          The route sets the gradient
+        </span>
+      )}
       <div className="control-row">
         <button
           type="button"
           className="btn btn-icon"
           data-testid="gradient-down"
           aria-label="Gradient down 0.5 %"
+          disabled={byRoute}
           onClick={() => set(draft - GRADIENT_STEP)}
         >
           −
@@ -323,6 +349,7 @@ function GradientControls() {
           max={GRADIENT_MAX}
           step={GRADIENT_STEP}
           value={draft}
+          disabled={byRoute}
           style={rangeFill(draft, GRADIENT_MIN, GRADIENT_MAX)}
           onChange={(e) => set(Number(e.currentTarget.value))}
         />
@@ -331,6 +358,7 @@ function GradientControls() {
           className="btn btn-icon"
           data-testid="gradient-up"
           aria-label="Gradient up 0.5 %"
+          disabled={byRoute}
           onClick={() => set(draft + GRADIENT_STEP)}
         >
           +
@@ -472,6 +500,8 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
   useBrakeKey(app);
   const phase = useWorkoutPhase();
   const erg = phase === 'erg';
+  const onRoute = useAppState((s) => routeTrackOf(s) !== null);
+  const gradientLocked = useAppState((s) => onRouteOrLocked(s));
   return (
     <>
       <div
@@ -488,9 +518,10 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
           under the scene. Placement is pure CSS grid (see .ride-grid).
         */}
         <div className="ride-stats">
-          <div className="ride-grid">
+          <div className={`ride-grid${onRoute ? ' has-route' : ''}`}>
             <PowerHero />
             <RideScene />
+            {onRoute && <RideRoute />}
             <StatTile stat="cadence" />
             <StatTile stat="speed" />
             <StatTile stat="heartRate" />
@@ -509,13 +540,18 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
               </p>
             )}
             <GearControls />
-            <GradientControls />
+            <GradientControls byRoute={gradientLocked} />
           </div>
         </section>
         <p className="hint shortcuts">
-          <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>+</kbd> <kbd>−</kbd> shift · <kbd>[</kbd> <kbd>]</kbd>{' '}
-          gradient ∓0.5 % · <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) ·{' '}
-          <kbd>Space</kbd> start / pause
+          <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>+</kbd> <kbd>−</kbd> shift ·{' '}
+          {!gradientLocked && (
+            <>
+              <kbd>[</kbd> <kbd>]</kbd> gradient ∓0.5 % ·{' '}
+            </>
+          )}
+          <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) · <kbd>Space</kbd> start /
+          pause
         </p>
       </div>
       <SimulationPanel />

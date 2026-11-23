@@ -6,8 +6,10 @@ import {
   PLACEHOLDER_LIVE,
   deviceWarnings,
   groupRows,
+  routeStrip,
   workoutStrip,
   type GroupRow,
+  type RouteStrip,
   type WorkoutStrip,
 } from './logic';
 
@@ -29,7 +31,7 @@ export interface OverlayViewProps {
 function safeValue(stat: StatId, live: LiveState | null): string {
   if (!live) return PLACEHOLDER;
   try {
-    return statValue(stat, live.ride, live.workout);
+    return statValue(stat, live.ride, live.workout, live.route);
   } catch {
     return PLACEHOLDER;
   }
@@ -117,6 +119,24 @@ function WorkoutStripView({ strip }: { strip: WorkoutStrip }) {
   );
 }
 
+/** Route progress in one slim line: what is left, the climbing to come, the gradient. */
+function RouteStripView({ strip }: { strip: RouteStrip }) {
+  return (
+    <div
+      className={'ov-route' + (strip.finished ? ' ov-route--done' : '')}
+      data-testid="overlay-route"
+    >
+      <div className="ov-backdrop" aria-hidden="true" />
+      <span className="ov-rt-name ov-text">
+        {strip.lap ? `${strip.name} · ${strip.lap}` : strip.name}
+      </span>
+      <span className="ov-rt-left ov-text">{strip.left}</span>
+      {strip.climb ? <span className="ov-rt-climb ov-text">{strip.climb}</span> : null}
+      {strip.grade ? <span className="ov-rt-grade ov-text">{strip.grade}</span> : null}
+    </div>
+  );
+}
+
 /** Presentational overlay: pure function of its props, no api access. */
 export function OverlayView({
   live: liveProp,
@@ -136,6 +156,7 @@ export function OverlayView({
       ? groupRows(live)
       : null;
   const strip = workoutStrip(live?.workout);
+  const route = routeStrip(live?.route);
   const opacity = Number.isFinite(settings.backdropOpacity)
     ? Math.min(1, Math.max(0, settings.backdropOpacity))
     : 0.55;
@@ -190,6 +211,8 @@ export function OverlayView({
         ) : null}
 
         {strip ? <WorkoutStripView strip={strip} /> : null}
+
+        {route ? <RouteStripView strip={route} /> : null}
 
         {settings.tiles.length > 0 ? (
           <div className="ov-tiles">

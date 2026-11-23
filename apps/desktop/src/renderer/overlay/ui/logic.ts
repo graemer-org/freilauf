@@ -212,3 +212,50 @@ export function workoutStrip(workout: LiveState['workout']): WorkoutStrip | null
     finished: false,
   };
 }
+
+export interface RouteStrip {
+  name: string;
+  /** "12.4 km to go", or "Route complete". */
+  left: string;
+  /** Climbing still to come, e.g. "↑ 320 m"; empty once done. */
+  climb: string;
+  /** The gradient under the rider, e.g. "+4.5 %". */
+  grade: string;
+  /** "Lap 2" on a loop after the first lap; empty otherwise. */
+  lap: string;
+  finished: boolean;
+}
+
+function km(m: number): string {
+  const v = Math.max(0, Number.isFinite(m) ? m : 0);
+  return v < 1000 ? `${Math.round(v / 10) * 10} m` : `${(v / 1000).toFixed(1)} km`;
+}
+
+function gradeText(g: number): string {
+  if (!Number.isFinite(g)) return '–';
+  const r = Math.round(g * 10) / 10;
+  return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r).toFixed(1)} %`;
+}
+
+/** What the overlay's route strip shows; null without a route. */
+export function routeStrip(route: LiveState['route']): RouteStrip | null {
+  if (!route) return null;
+  if (route.finished) {
+    return {
+      name: route.name,
+      left: 'Route complete',
+      climb: '',
+      grade: '',
+      lap: '',
+      finished: true,
+    };
+  }
+  return {
+    name: route.name,
+    left: `${km(route.remainingM)} to go`,
+    climb: `↑ ${Math.round(Math.max(0, route.ascentRemainingM))} m`,
+    grade: gradeText(route.gradePercent),
+    lap: route.lap > 1 ? `Lap ${route.lap}` : '',
+    finished: false,
+  };
+}
