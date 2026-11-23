@@ -83,6 +83,8 @@ export const COMMUNITY_CORRUPT_KEY = 'freilauf.community.v1.corrupt';
 
 /** The transport's per-rider budget (docs/p2p.md). */
 const TRANSPORT_TOTAL_BYTES = 32_768;
+/** The transport's per-rider document count (docs/p2p.md); the app's workout/route take slots too. */
+const TRANSPORT_MAX_DOCUMENTS = 4;
 const DEFAULT_SAVE_DELAY_MS = 2_000;
 /** Re-publish (standing refresh, relays) and refresh contacts' last-seen this often in a session. */
 const RESYNC_INTERVAL_MS = 5 * 60_000;
@@ -789,11 +791,12 @@ export class CommunityService {
   }
 
   /**
-   * Re-publishes with `reserveBytes` kept free of the transport budget, e.g. right before the
-   * app shares a workout of that size (the workout takes precedence over relays/challenges).
+   * Re-publishes with `reserveBytes` and `reserveSlots` documents kept free of the transport
+   * budget, e.g. right before the app shares a workout or route of that size (the app's
+   * documents take precedence over relays/challenges; the standing goes last).
    */
-  makeRoom(reserveBytes: number): void {
-    this.#guard(() => this.#sync([], Math.max(0, reserveBytes)));
+  makeRoom(reserveBytes: number, reserveSlots = 0): void {
+    this.#guard(() => this.#sync([], Math.max(0, reserveBytes), Math.max(0, reserveSlots)));
   }
 
   /** Re-evaluates what to publish (after the app's own documents changed). */
@@ -1068,7 +1071,7 @@ export class CommunityService {
    * the link does not list them yet). Fails closed: a document that cannot be shared is
    * withdrawn rather than left at an older (possibly richer) version.
    */
-  #sync(alsoPresent: readonly string[] = [], reserveBytes = 0): void {
+  #sync(alsoPresent: readonly string[] = [], reserveBytes = 0, reserveSlots = 0): void {
     const group = this.#group;
     if (!group || this.#syncing) return;
     this.#syncing = true;
@@ -1079,8 +1082,12 @@ export class CommunityService {
       this.#membershipKey = [...ids].sort().join(' ');
 
       let other = 0;
+      let otherCount = 0;
       for (const d of group.getLocalDocuments()) {
-        if (!isCommunityKind(d.kind)) other += utf8Length(d.text);
+        if (!isCommunityKind(d.kind)) {
+          other += utf8Length(d.text);
+          otherCount++;
+        }
       }
       const maxTotalBytes = Math.min(
         DEFAULT_TOTAL_BYTES,
@@ -1092,7 +1099,9 @@ export class CommunityService {
         this.#state = result.state;
         this.#scheduleSave();
       }
-      const wanted = new Map(result.documents.map((d) => [d.kind, d.text]));
+      // documentsToShare orders by importance (standing, challenges, relays): keep the first.
+      const slots = Math.max(0, TRANSPORT_MAX_DOCUMENTS - otherCount - reserveSlots);
+      const wanted = new Map(result.documents.slice(0, slots).map((d) => [d.kind, d.text]));
       // Withdraw first (narrows at once and frees budget), then share the rest.
       for (const kind of COMMUNITY_KINDS) if (!wanted.has(kind)) group.unshareDocument(kind);
       for (const [kind, text] of wanted) {

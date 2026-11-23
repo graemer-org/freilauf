@@ -1,6 +1,6 @@
 import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
-import type { RecordedRide, RideSample, RideSnapshot } from './types';
+import type { RecordedRide, RideSample, RideSnapshot, RoutePositionFix } from './types';
 
 export interface RideSessionOptions {
   bike: BikeParams;
@@ -56,6 +56,7 @@ export class RideSession {
   #sampleEnergyJ = 0;
   #sampleTimeS = 0;
   #samples: RideSample[] = [];
+  #positionAt: ((distanceM: number) => RoutePositionFix | null) | null = null;
 
   constructor(options: RideSessionOptions) {
     this.#bike = options.bike;
@@ -96,6 +97,14 @@ export class RideSession {
 
   setGradient(gradePercent: number): void {
     if (Number.isFinite(gradePercent)) this.#gradePercent = gradePercent;
+  }
+
+  /**
+   * Gives every recorded sample a position: `positionAt(distance)` is asked for the ridden
+   * distance at the moment the sample is taken (null = none). Used when riding a route.
+   */
+  setPositionSource(positionAt: ((distanceM: number) => RoutePositionFix | null) | null): void {
+    this.#positionAt = positionAt;
   }
 
   get state(): RideSnapshot['state'] {
@@ -186,11 +195,22 @@ export class RideSession {
           distanceM: this.#distanceM,
           gradePercent: this.#gradePercent,
           gear: this.#gear,
+          ...this.#position(),
         });
         this.#sampleEnergyJ = 0;
         this.#sampleTimeS = 0;
       }
     }
+  }
+
+  #position(): Partial<Pick<RideSample, 'lat' | 'lon' | 'altitudeM'>> {
+    const fix = this.#positionAt?.(this.#distanceM);
+    if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return {};
+    return {
+      lat: fix.lat,
+      lon: fix.lon,
+      ...(Number.isFinite(fix.altitudeM) ? { altitudeM: fix.altitudeM } : {}),
+    };
   }
 
   #snapshot(now: number, powerW: number): RideSnapshot {

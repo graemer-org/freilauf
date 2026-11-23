@@ -163,6 +163,33 @@
 
           <div class="feature">
             <div class="feature-text">
+              <h3>Real routes from GPX</h3>
+              <p>
+                Import a GPX file — from a ride you recorded or a route planner — or pick a built-in
+                route. Its gradient drives the trainer, and the scene shows the road from behind
+                you, bending and climbing as the route does, with a mini map and the profile of what
+                lies ahead. Tested with simulated devices only so far.
+              </p>
+            </div>
+            <picture>
+              <source
+                media="(prefers-color-scheme: dark)"
+                srcset="assets/site/ride-route-dark.webp"
+              />
+              <img
+                class="shot"
+                src="assets/site/ride-route-light.webp"
+                width="1280"
+                height="720"
+                loading="lazy"
+                decoding="async"
+                alt="Riding a route: the road seen from behind the rider, bending right and climbing at 5 %, with a map of the winding climb and elevation profiles of the whole route and of the next few hundred metres, coloured by steepness."
+              />
+            </picture>
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
               <h3>Ride together, directly</h3>
               <p>
                 Up to eight friends in a room, connected peer-to-peer. Share a workout with the
@@ -369,6 +396,11 @@
             image build, and macOS in general.
           </p>
           <p>
+            <strong>Routes</strong> — GPX import, the road view, the route's gradient on the
+            trainer, sharing routes in a group — are tested with simulated devices only; no route
+            has been ridden on real hardware yet.
+          </p>
+          <p>
             <strong>Community features</strong> — points, weekly and monthly totals, friends,
             challenges and leaderboards synced peer-to-peer — are in the app's Community tab, tested
             against simulated riders; not yet between real machines.
@@ -467,9 +499,8 @@
           </div>
           <h3 class="roadmap-title">Next on the roadmap</h3>
           <p class="small">
-            GPX routes with a map · drafting in group rides · Strava upload · a Wi-Fi connection to
-            the trainer · signed installers · an optional always-on relay peer for leaderboards.
-            None of it is built yet.
+            Drafting in group rides · Strava upload · a Wi-Fi connection to the trainer · signed
+            installers · an optional always-on relay peer for leaderboards. None of it is built yet.
           </p>
         </div>
       </section>
@@ -487,6 +518,12 @@
                     >Getting started</a
                   >
                   — build or install, first start, pairing, the overlay, simulation mode
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/routes.md"
+                    >Riding real routes</a
+                  >
+                  — GPX files, the road view, climb difficulty
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"

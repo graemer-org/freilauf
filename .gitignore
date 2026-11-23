@@ -7,3 +7,6 @@ release/
 test-results/
 playwright-report/
 *.log
+
+# Real GPX files used locally as test input; not published without their owner's consent
+packages/routes/fixtures/local/

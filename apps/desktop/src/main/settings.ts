@@ -78,6 +78,9 @@ const STAT_IDS: Record<StatId, true> = {
   gradient: true,
   targetPower: true,
   intervalRemaining: true,
+  routeRemaining: true,
+  ascentRemaining: true,
+  elevation: true,
 };
 const TILE_SIZES: Record<OverlayTile['size'], true> = { s: true, m: true, l: true };
 
@@ -356,6 +359,7 @@ export function sanitizeSettings(
   const shifting = obj(root.shifting, 'shifting', problems);
   const overlay = obj(root.overlay, 'overlay', problems);
   const group = obj(root.group, 'group', problems);
+  const route = obj(root.route, 'route', problems);
 
   let trainerMassKg = fallback.shifting.trainerMassKg;
   if (shifting.trainerMassKg === null) trainerMassKg = null;
@@ -453,6 +457,16 @@ export function sanitizeSettings(
         problems,
       ),
       relayUrls: sanitizeRelayUrls(group.relayUrls, fallback.group.relayUrls, problems),
+    },
+    route: {
+      difficulty: num(
+        route.difficulty,
+        fallback.route.difficulty,
+        'route.difficulty',
+        problems,
+        0,
+        100,
+      ),
     },
   };
 }

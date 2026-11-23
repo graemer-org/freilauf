@@ -4,6 +4,7 @@ import type { Workout } from '@freilauf/workouts';
 import { workoutStats } from '@freilauf/workouts';
 import type { SharedWorkout } from '../appStore';
 import type { WorkoutEntry } from '../../core/workoutLibrary';
+import { downloadText } from './download';
 import { workoutSharing } from './groupShare';
 import { useApp, useAppState } from './hooks';
 import { WorkoutChart } from './WorkoutChart';
@@ -31,20 +32,6 @@ const FTP_TEST_TEXT: Record<'twentyMinute' | 'ramp', { how: string; result: stri
       'Your FTP is 75 % of your best one-minute power. Usually about 20 minutes; the ramp adapts to your current FTP.',
   },
 };
-
-/** Saves text as a file through a temporary download link (Electron and browsers). */
-function downloadText(fileName: string, text: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.rel = 'noopener';
-  a.style.display = 'none';
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
 
 interface ImportOutcome {
   key: number;

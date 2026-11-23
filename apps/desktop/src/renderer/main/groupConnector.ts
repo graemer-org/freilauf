@@ -1,5 +1,6 @@
 import { GroupRide, contentHash, type GroupRideDeps } from '@freilauf/p2p';
 import type { HostTarget } from '../core/groupConnection';
+import { ROUTE_KIND } from '../core/routeSharing';
 import type { GroupConnector, JoinedGroup } from './appStore';
 
 const WORKOUT_KIND = 'workout';
@@ -34,6 +35,20 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
     onSharedWorkoutsChange: (listener) =>
       ride.onDocument((e) => {
         if ((e.type === 'available' ? e.document.kind : e.kind) === WORKOUT_KIND) listener();
+      }),
+    shareRoute: (text) => {
+      const result = ride.shareDocument(ROUTE_KIND, text);
+      return result.ok ? null : result.reason;
+    },
+    stopSharingRoute: () => void ride.unshareDocument(ROUTE_KIND),
+    getSharedRoutes: () =>
+      ride
+        .getSharedDocuments()
+        .filter((d) => d.kind === ROUTE_KIND)
+        .map((d) => ({ peerId: d.peerId, peerName: d.peerName, text: d.text })),
+    onSharedRoutesChange: (listener) =>
+      ride.onDocument((e) => {
+        if ((e.type === 'available' ? e.document.kind : e.kind) === ROUTE_KIND) listener();
       }),
     announceStart: (inMs) => {
       // The start refers to whatever each rider has selected; the id only labels it.

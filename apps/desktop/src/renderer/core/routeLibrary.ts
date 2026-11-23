@@ -1,0 +1,236 @@
+import type { BuildStats, RouteTrack } from '@freilauf/routes';
+import {
+  builtinRoutes,
+  decodeRoute,
+  encodeRoute,
+  outline,
+  parseGpx,
+  prepareRoute,
+  profile,
+  routeToGpx,
+} from '@freilauf/routes';
+import type { KeyValueStorage } from './workoutLibrary';
+
+/** One route in the library, as the Routes tab lists it. */
+export interface RouteEntry {
+  id: string;
+  name: string;
+  description?: string;
+  source: 'builtin' | 'imported';
+  totalDistanceM: number;
+  ascentM: number;
+  descentM: number;
+  loop: boolean;
+  /** ≤ 200 elevations (m), evenly spaced from start to finish, for a thumbnail. */
+  profile: number[];
+  /** ≤ 200 x/y points (m east/north of the start) for a mini map. */
+  outline: [number, number][];
+}
+
+export type RouteImportResult =
+  | { ok: true; entry: RouteEntry; warnings: string[]; stats?: BuildStats }
+  | { ok: false; errors: string[] };
+
+/** Index of imported routes (JSON array of ids); each route under `${PREFIX}<id>`. */
+export const ROUTE_INDEX_KEY = 'freilauf.routes.v1';
+export const ROUTE_KEY_PREFIX = 'freilauf.routes.v1.';
+export const MAX_IMPORTED_ROUTES = 100;
+/**
+ * Characters all imported routes may take in localStorage (shared with the workout library
+ * and the community state, ~5 M characters per origin in Chromium). At full resolution a
+ * route takes ~4.7 characters per 10 m: a 30 km route ≈ 14 k, a 100 km route ≈ 47 k, the
+ * largest possible (20 000 samples) ≈ 95 k. 2 M holds ~40 long or ~140 typical routes.
+ */
+export const ROUTE_STORAGE_BUDGET_CHARS = 2_000_000;
+
+const ENTRY_POINTS = 200;
+
+function entryFor(track: RouteTrack, source: RouteEntry['source']): RouteEntry {
+  return {
+    id: track.id,
+    name: track.name,
+    ...(track.description ? { description: track.description } : {}),
+    source,
+    totalDistanceM: track.totalDistanceM,
+    ascentM: track.ascentM,
+    descentM: track.descentM,
+    loop: track.loop,
+    profile: profile(track, ENTRY_POINTS),
+    outline: outline(track, ENTRY_POINTS),
+  };
+}
+
+interface Stored {
+  track: RouteTrack;
+  entry: RouteEntry;
+  /** Encoded size (characters) in storage. */
+  chars: number;
+}
+
+/** Built-in routes and the rider's imported ones, kept in localStorage (one key per route). */
+export class RouteLibrary {
+  readonly #storage: KeyValueStorage | null;
+  readonly #builtin: { track: RouteTrack; entry: RouteEntry }[];
+  #imported: Stored[] = [];
+  /** Set when the last write to storage failed (quota or blocked). */
+  saveFailed = false;
+
+  constructor(storage: KeyValueStorage | null) {
+    this.#storage = storage;
+    this.#builtin = builtinRoutes().map((track) => ({ track, entry: entryFor(track, 'builtin') }));
+    this.#load();
+  }
+
+  list(): RouteEntry[] {
+    return [...this.#builtin.map((b) => b.entry), ...this.#imported.map((i) => i.entry)];
+  }
+
+  get(id: string): { entry: RouteEntry; track: RouteTrack } | null {
+    return (
+      this.#builtin.find((b) => b.track.id === id) ??
+      this.#imported.find((i) => i.track.id === id) ??
+      null
+    );
+  }
+
+  /** Characters the imported routes take in storage. */
+  get storedChars(): number {
+    return this.#imported.reduce((n, i) => n + i.chars, 0);
+  }
+
+  /** Summary for a route that is not (yet) in the library, e.g. one offered by the group. */
+  describe(track: RouteTrack): RouteEntry {
+    return entryFor(track, 'imported');
+  }
+
+  /** GPX, or our own format (decided by content). `fileName` names a nameless GPX. */
+  importText(text: string, fileName?: string): RouteImportResult {
+    const trimmed = typeof text === 'string' ? text.replace(/^﻿/, '').trimStart() : '';
+    if (trimmed.startsWith('{')) {
+      const decoded = decodeRoute(trimmed);
+      if (!decoded.ok) return decoded;
+      return this.add(decoded.track);
+    }
+    const parsed = parseGpx(text);
+    if (!parsed.ok) return parsed;
+    const fallbackName = fileName
+      ?.replace(/^.*[\\/]/, '')
+      .replace(/\.gpx$/i, '')
+      .trim();
+    const name =
+      parsed.track.name === 'Imported route' && fallbackName ? fallbackName : parsed.track.name;
+    const prepared = prepareRoute({ ...parsed.track, name });
+    if (!prepared.ok) return prepared;
+    const added = this.add(prepared.track);
+    if (!added.ok) return added;
+    return {
+      ok: true,
+      entry: added.entry,
+      warnings: [...parsed.warnings, ...prepared.warnings, ...added.warnings],
+      stats: prepared.stats,
+    };
+  }
+
+  /** Adds (or replaces, by id) an imported route. Never shadows a built-in. */
+  add(track: RouteTrack): RouteImportResult {
+    const builtin = this.#builtin.find((b) => b.track.id === track.id);
+    if (builtin) return { ok: true, entry: builtin.entry, warnings: [] };
+    const text = encodeRoute(track);
+    const others = this.#imported.filter((i) => i.track.id !== track.id);
+    if (others.length >= MAX_IMPORTED_ROUTES) {
+      return {
+        ok: false,
+        errors: [
+          `The route library is full (${MAX_IMPORTED_ROUTES} routes). Delete a route first.`,
+        ],
+      };
+    }
+    const used = others.reduce((n, i) => n + i.chars, 0);
+    if (used + text.length > ROUTE_STORAGE_BUDGET_CHARS) {
+      return {
+        ok: false,
+        errors: [
+          `Not enough room for this route (it needs ${Math.ceil(text.length / 1000)} k of ${Math.round((ROUTE_STORAGE_BUDGET_CHARS - used) / 1000)} k characters left). Delete a route first.`,
+        ],
+      };
+    }
+    const stored: Stored = { track, entry: entryFor(track, 'imported'), chars: text.length };
+    this.#imported = [...others, stored];
+    const saved = this.#write(ROUTE_KEY_PREFIX + track.id, text) && this.#saveIndex();
+    return {
+      ok: true,
+      entry: stored.entry,
+      warnings: saved
+        ? []
+        : [
+            'The route could not be saved permanently (storage full or blocked); it is available until the app closes.',
+          ],
+    };
+  }
+
+  remove(id: string): boolean {
+    const before = this.#imported.length;
+    this.#imported = this.#imported.filter((i) => i.track.id !== id);
+    if (this.#imported.length === before) return false;
+    this.#saveIndex();
+    try {
+      if (this.#storage?.removeItem) this.#storage.removeItem(ROUTE_KEY_PREFIX + id);
+      else this.#storage?.setItem(ROUTE_KEY_PREFIX + id, '');
+    } catch {
+      // the index no longer lists it; a leftover value is harmless
+    }
+    return true;
+  }
+
+  /** GPX of the prepared route, for saving or sending. */
+  export(id: string): { fileName: string; text: string } | null {
+    const found = this.get(id);
+    if (!found) return null;
+    const base = found.track.name.replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'route';
+    return { fileName: `${base}.gpx`, text: routeToGpx(found.track) };
+  }
+
+  #write(key: string, value: string): boolean {
+    try {
+      this.#storage?.setItem(key, value);
+      this.saveFailed = false;
+      return true;
+    } catch {
+      this.saveFailed = true;
+      return false;
+    }
+  }
+
+  #saveIndex(): boolean {
+    return this.#write(ROUTE_INDEX_KEY, JSON.stringify(this.#imported.map((i) => i.track.id)));
+  }
+
+  #load(): void {
+    let ids: unknown;
+    try {
+      const raw = this.#storage?.getItem(ROUTE_INDEX_KEY) ?? null;
+      if (!raw) return;
+      ids = JSON.parse(raw);
+    } catch {
+      return; // blocked or corrupt index: start empty for this session
+    }
+    if (!Array.isArray(ids)) return;
+    for (const id of ids.slice(0, MAX_IMPORTED_ROUTES)) {
+      if (typeof id !== 'string' || this.#imported.some((i) => i.track.id === id)) continue;
+      let text: string | null = null;
+      try {
+        text = this.#storage?.getItem(ROUTE_KEY_PREFIX + id) ?? null;
+      } catch {
+        continue;
+      }
+      if (!text) continue;
+      const decoded = decodeRoute(text);
+      if (!decoded.ok || decoded.track.id !== id) continue;
+      this.#imported.push({
+        track: decoded.track,
+        entry: entryFor(decoded.track, 'imported'),
+        chars: text.length,
+      });
+    }
+  }
+}

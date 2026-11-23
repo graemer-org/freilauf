@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { isEditableTarget, useApp } from '../hooks';
@@ -38,7 +38,7 @@ function ariaFor(live: LiveState | null): string {
   return describeScene(r.state, r.gradePercent, r.speedMps, r.cadenceRpm);
 }
 
-function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) {
+export function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) {
   const cs = getComputedStyle(el);
   const v = (name: string): string => cs.getPropertyValue(name).trim();
   const normalise = (c: string): string => {
@@ -69,7 +69,10 @@ function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) {
  * between the 4 Hz live samples. Test hooks: data-grade, data-lateral,
  * data-distance (scene odometer), data-frames, data-frame-ms.
  */
-export function RideScene() {
+export function SideScene({
+  toolbar,
+  profile = true,
+}: { toolbar?: ReactNode; profile?: boolean } = {}) {
   const app = useApp();
   const rootRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLCanvasElement>(null);
@@ -111,15 +114,17 @@ export function RideScene() {
       data-frames="0"
       data-state={initial.state}
       data-braking="0"
+      data-view="side"
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
+        {toolbar}
         <span ref={brakeRef} className="scene-brake" data-testid="scene-brake" hidden>
           <span className="scene-brake-dot" />
           <span className="scene-brake-text">Brake</span>
         </span>
       </div>
-      <div className="scene-profile">
+      <div className="scene-profile" hidden={!profile}>
         <canvas
           ref={profileRef}
           className="scene-canvas"
@@ -139,7 +144,7 @@ const BRAKE_CUE_MIN = 0.03;
  * key) and mirrors the value in data-braking. Follows the 4 Hz live state;
  * works without a canvas, so the cue is there even in a headless DOM.
  */
-function startBrakeCue(app: App, root: HTMLElement, badge: HTMLElement | null): () => void {
+export function startBrakeCue(app: App, root: HTMLElement, badge: HTMLElement | null): () => void {
   const text = badge?.querySelector<HTMLElement>('.scene-brake-text') ?? null;
   let shown = '';
   const update = (live: LiveState | null): void => {
@@ -154,6 +159,51 @@ function startBrakeCue(app: App, root: HTMLElement, badge: HTMLElement | null): 
   };
   update(app.store.getState().live);
   return app.store.subscribe((s) => update(s.live));
+}
+
+/** Held steering keys (A/D), ignored while typing or while a modal is open. */
+export interface SteerKeys {
+  readonly left: boolean;
+  readonly right: boolean;
+  stop(): void;
+}
+
+export function steerKeyboard(app: App, onPress: () => void): SteerKeys {
+  const state = { left: false, right: false };
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.ctrlKey || e.metaKey || e.altKey || isEditableTarget(e.target)) return;
+    const { picker, ftpOutcome } = app.store.getState();
+    if (picker || ftpOutcome) return;
+    if (STEER_LEFT_KEYS.includes(e.key)) state.left = true;
+    else if (STEER_RIGHT_KEYS.includes(e.key)) state.right = true;
+    else return;
+    e.preventDefault();
+    onPress();
+  };
+  const onKeyUp = (e: KeyboardEvent): void => {
+    if (STEER_LEFT_KEYS.includes(e.key)) state.left = false;
+    else if (STEER_RIGHT_KEYS.includes(e.key)) state.right = false;
+  };
+  const onBlur = (): void => {
+    state.left = false;
+    state.right = false;
+  };
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
+  return {
+    get left() {
+      return state.left;
+    },
+    get right() {
+      return state.right;
+    },
+    stop() {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    },
+  };
 }
 
 /** Wires the loop, input and observers; returns the teardown. */
@@ -193,29 +243,7 @@ function startScene(
   const unsubscribe = app.store.subscribe((s) => onLive(s.live));
 
   // ── keyboard steering ──
-  let keyLeft = false;
-  let keyRight = false;
-  const onKeyDown = (e: KeyboardEvent): void => {
-    if (e.ctrlKey || e.metaKey || e.altKey || isEditableTarget(e.target)) return;
-    const { picker, ftpOutcome } = app.store.getState();
-    if (picker || ftpOutcome) return;
-    if (STEER_LEFT_KEYS.includes(e.key)) keyLeft = true;
-    else if (STEER_RIGHT_KEYS.includes(e.key)) keyRight = true;
-    else return;
-    e.preventDefault();
-    wake();
-  };
-  const onKeyUp = (e: KeyboardEvent): void => {
-    if (STEER_LEFT_KEYS.includes(e.key)) keyLeft = false;
-    else if (STEER_RIGHT_KEYS.includes(e.key)) keyRight = false;
-  };
-  const onBlur = (): void => {
-    keyLeft = false;
-    keyRight = false;
-  };
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
+  const keys = steerKeyboard(app, () => wake());
 
   // ── theme, motion preference, size ──
   const darkMq = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -334,7 +362,13 @@ function startScene(
         a.crank = integrateAngle(a.crank, -crankRate(o.cadenceRpm), dt);
       }
     }
-    stepLateral(lat, steeringInput(live?.steering, keyLeft, keyRight), dt, speed, reducedMotion);
+    stepLateral(
+      lat,
+      steeringInput(live?.steering, keys.left, keys.right),
+      dt,
+      speed,
+      reducedMotion,
+    );
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
 
@@ -423,9 +457,7 @@ function startScene(
   return () => {
     sleep();
     unsubscribe();
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    window.removeEventListener('blur', onBlur);
+    keys.stop();
     document.removeEventListener('visibilitychange', onVisibility);
     darkMq?.removeEventListener?.('change', onTheme);
     motionMq?.removeEventListener?.('change', onMotion);

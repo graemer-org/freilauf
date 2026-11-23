@@ -101,6 +101,11 @@ mode (`pnpm dev:sim`) the Simulation panel on the Ride tab has a slider per leve
   saves the ride.
 - **Workouts** tab: pick a workout from the library, import `.zwo` files (button or drop them on
   the window), or run an FTP test. In a workout the trainer holds the target power (ERG mode).
+- **Routes** tab: import a GPX file (from a ride you recorded or a route planner) or pick a
+  built-in route, and **Select** it. On the Ride tab the route then sets the gradient, the scene
+  shows the road from behind the rider with its bends and hills, and a card shows the map, the
+  whole profile and the next few hundred metres. Settings → Routes sets how much of each climb
+  the trainer passes on. Tested with simulated devices only so far ([routes](routes.md)).
 - **History** tab: your rides, each with **Export .fit** for the analysis tool you use.
 
 ## 6. The overlay

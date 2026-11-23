@@ -5,10 +5,24 @@ import type { DeviceKind } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
 import { DEFAULT_SETTINGS, type LiveState, type OverlaySettings } from '../../../shared/contract';
 import { OverlayView, type OverlayViewProps } from './OverlayView';
-import { MIN_HEIGHT, MIN_WIDTH, computeResizeBounds, deviceWarnings, groupRows, workoutStrip } from './logic';
+import {
+  MIN_HEIGHT,
+  MIN_WIDTH,
+  PLACEHOLDER_LIVE,
+  computeResizeBounds,
+  deviceWarnings,
+  groupRows,
+  routeStrip,
+  workoutStrip,
+} from './logic';
 import type { WorkoutLive } from '../../../shared/contract';
 
-function rider(peerId: string, name: string, gapM: number, extra: Partial<GroupRider> = {}): GroupRider {
+function rider(
+  peerId: string,
+  name: string,
+  gapM: number,
+  extra: Partial<GroupRider> = {},
+): GroupRider {
   return {
     peerId,
     name,
@@ -101,7 +115,11 @@ describe('OverlayView', () => {
     const live = makeLive({
       group: {
         roomCode: 'ABC',
-        riders: [rider('b', 'Behind', -40), rider('a', 'Ahead', 120), rider('s', 'Sleepy', -300, { stale: true })],
+        riders: [
+          rider('b', 'Behind', -40),
+          rider('a', 'Ahead', 120),
+          rider('s', 'Sleepy', -300, { stale: true }),
+        ],
       },
     });
     const html = render({ live });
@@ -116,8 +134,12 @@ describe('OverlayView', () => {
 
   it('hides the group panel when showGroup is false or there are no riders', () => {
     const live = makeLive({ group: { roomCode: 'ABC', riders: [rider('a', 'Ahead', 5)] } });
-    expect(render({ live, settings: { ...settings, showGroup: false } })).not.toContain('overlay-group');
-    expect(render({ live: makeLive({ group: { roomCode: 'ABC', riders: [] } }) })).not.toContain('overlay-group');
+    expect(render({ live, settings: { ...settings, showGroup: false } })).not.toContain(
+      'overlay-group',
+    );
+    expect(render({ live: makeLive({ group: { roomCode: 'ABC', riders: [] } }) })).not.toContain(
+      'overlay-group',
+    );
   });
 
   it('shows a warning when the trainer is reconnecting', () => {
@@ -253,13 +275,20 @@ describe('workout strip', () => {
   it('is absent without a running workout', () => {
     expect(render()).not.toContain('overlay-workout');
     expect(render({ live: makeLive({ workout: null }) })).not.toContain('overlay-workout');
-    expect(render({ live: makeLive({ workout: workout({ started: false }) }) })).not.toContain('overlay-workout');
+    expect(render({ live: makeLive({ workout: workout({ started: false }) }) })).not.toContain(
+      'overlay-workout',
+    );
   });
 
   it('says free ride / done in plain words', () => {
     expect(workoutStrip(workout({ mode: 'free', targetPowerW: null }))?.target).toBe('Free ride');
     const done = workoutStrip(workout({ finished: true }));
-    expect(done).toMatchObject({ label: 'Workout complete', target: 'Done', countdown: '', progress: 1 });
+    expect(done).toMatchObject({
+      label: 'Workout complete',
+      target: 'Done',
+      countdown: '',
+      progress: 1,
+    });
     expect(workoutStrip(workout({ segmentElapsedS: 0, segmentRemainingS: 0 }))?.progress).toBe(0);
     expect(workoutStrip(workout({ segmentRemainingS: 3725 }))?.countdown).toBe('1:02:05');
   });
@@ -276,5 +305,60 @@ describe('workout strip', () => {
     expect(tileHtml(html, 'targetPower')).toContain('>180<');
     expect(tileHtml(html, 'intervalRemaining')).toContain('9:00');
     expect(tileHtml(html, 'targetPower')).toContain('Target power');
+  });
+});
+
+describe('routeStrip', () => {
+  const pos = {
+    routeId: 'r',
+    name: 'Hill loop',
+    totalDistanceM: 12_000,
+    distanceM: 3000,
+    lap: 1,
+    gradePercent: 4.46,
+    elevationM: 300,
+    remainingM: 9_000,
+    ascentRemainingM: 212.4,
+    finished: false,
+  };
+
+  it('shows what is left, the climbing to come and the gradient', () => {
+    expect(routeStrip(null)).toBeNull();
+    expect(routeStrip(undefined)).toBeNull();
+    expect(routeStrip(pos)).toEqual({
+      name: 'Hill loop',
+      left: '9.0 km to go',
+      climb: '↑ 212 m',
+      grade: '+4.5 %',
+      lap: '',
+      finished: false,
+    });
+    expect(routeStrip({ ...pos, remainingM: 340, gradePercent: -3, lap: 2 })).toMatchObject({
+      left: '340 m to go',
+      grade: '−3.0 %',
+      lap: 'Lap 2',
+    });
+  });
+
+  it('says when the route is complete', () => {
+    expect(routeStrip({ ...pos, finished: true })).toMatchObject({
+      left: 'Route complete',
+      finished: true,
+      grade: '',
+    });
+  });
+
+  it('renders as a strip in the overlay', () => {
+    const html = renderToString(
+      createElement(OverlayView, {
+        live: { ...PLACEHOLDER_LIVE, route: pos },
+        settings: { ...DEFAULT_SETTINGS.overlay, tiles: [{ stat: 'routeRemaining', size: 'm' }] },
+        editMode: false,
+      }),
+    );
+    expect(html).toContain('data-testid="overlay-route"');
+    expect(html).toContain('9.0 km to go');
+    expect(html).toContain('data-testid="overlay-tile-routeRemaining"');
+    expect(html).toMatch(/overlay-tile-routeRemaining[\s\S]*9\.0/);
   });
 });

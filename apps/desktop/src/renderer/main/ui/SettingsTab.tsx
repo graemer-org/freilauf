@@ -4,6 +4,7 @@ import { ALL_STATS } from '../../../shared/contract';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
+import { routeDifficultyOf, setRouteDifficulty } from './routesApi';
 import { ButtonMapping, DiagnosticsCard, LeverMapping } from './SettingsExtras';
 
 export const MAX_NAME_LENGTH = 24;
@@ -291,6 +292,8 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
         <LeverMapping levers={shifting.levers} />
       </section>
 
+      <RouteSettings />
+
       <section className="settings-section" aria-labelledby="set-overlay">
         <h2 id="set-overlay" className="section-title section-head">
           Overlay
@@ -390,5 +393,39 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
         <DiagnosticsCard />
       </section>
     </div>
+  );
+}
+
+/** Route difficulty; shown only when the settings carry it. */
+function RouteSettings() {
+  const app = useApp();
+  const difficulty = useAppState(routeDifficultyOf);
+  if (difficulty === null) return null;
+  return (
+    <section
+      className="settings-section"
+      aria-labelledby="set-routes"
+      data-testid="settings-routes"
+    >
+      <h2 id="set-routes" className="section-title section-head">
+        Routes
+      </h2>
+      <div className="card rows">
+        <RangeField
+          label="Climb difficulty"
+          testId="settings-route-difficulty"
+          value={difficulty}
+          min={0}
+          max={100}
+          step={5}
+          format={(v) => `${Math.round(v)} %`}
+          onCommit={(v) => setRouteDifficulty(app, v)}
+        />
+      </div>
+      <p className="hint section-foot">
+        How much of each route gradient the trainer makes you feel. 100 % is the real road; at 50 %
+        an 8 % climb feels like 4 %. Speed, distance and the recording always use the real gradient.
+      </p>
+    </section>
   );
 }

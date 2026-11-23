@@ -32,6 +32,9 @@ importers:
       '@freilauf/p2p':
         specifier: workspace:*
         version: link:../../packages/p2p
+      '@freilauf/routes':
+        specifier: workspace:*
+        version: link:../../packages/routes
       '@freilauf/session':
         specifier: workspace:*
         version: link:../../packages/session
@@ -103,6 +106,9 @@ importers:
       '@freilauf/p2p':
         specifier: workspace:*
         version: link:../../packages/p2p
+      '@freilauf/routes':
+        specifier: workspace:*
+        version: link:../../packages/routes
       '@freilauf/session':
         specifier: workspace:*
         version: link:../../packages/session
@@ -157,6 +163,8 @@ importers:
       ws:
         specifier: ^8.23.0
         version: 8.23.0
+
+  packages/routes: {}
 
   packages/session:
     dependencies:

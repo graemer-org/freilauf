@@ -20,11 +20,12 @@ export interface WorkoutEntry {
 export interface KeyValueStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  /** Optional (localStorage has it); without it a removed key is overwritten with ''. */
+  removeItem?(key: string): void;
 }
 
 export type ImportResult =
-  | { ok: true; workout: Workout; warnings: string[] }
-  | { ok: false; errors: string[] };
+  { ok: true; workout: Workout; warnings: string[] } | { ok: false; errors: string[] };
 
 const STORAGE_KEY = 'freilauf.workouts.v1';
 const MAX_IMPORTED = 200;
@@ -41,7 +42,11 @@ export class WorkoutLibrary {
 
   list(): WorkoutEntry[] {
     return [
-      ...FTP_TESTS.map((p): WorkoutEntry => ({ workout: p.workout, source: 'ftpTest', ftpTest: p })),
+      ...FTP_TESTS.map((p): WorkoutEntry => ({
+        workout: p.workout,
+        source: 'ftpTest',
+        ftpTest: p,
+      })),
       ...BUILTIN_WORKOUTS.map((workout): WorkoutEntry => ({ workout, source: 'builtin' })),
       ...this.#imported.map((workout): WorkoutEntry => ({ workout, source: 'imported' })),
     ];

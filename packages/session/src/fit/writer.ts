@@ -13,6 +13,13 @@ export const ENUM: BaseType = { id: 0x00, size: 1, invalid: 0xff, min: 0, max: 0
 export const UINT8: BaseType = { id: 0x02, size: 1, invalid: 0xff, min: 0, max: 0xfe };
 export const UINT16: BaseType = { id: 0x84, size: 2, invalid: 0xffff, min: 0, max: 0xfffe };
 export const UINT32: BaseType = { id: 0x86, size: 4, invalid: 0xffffffff, min: 0, max: 0xfffffffe };
+export const SINT32: BaseType = {
+  id: 0x85,
+  size: 4,
+  invalid: 0x7fffffff,
+  min: -0x7fffffff,
+  max: 0x7ffffffe,
+};
 /** "z" types use 0 as invalid. */
 export const UINT32Z: BaseType = { id: 0x8c, size: 4, invalid: 0, min: 1, max: 0xffffffff };
 
