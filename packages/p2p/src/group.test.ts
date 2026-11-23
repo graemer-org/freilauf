@@ -80,6 +80,49 @@ describe.each(TEST_TRANSPORTS)('GroupRide (%s, fake clock)', (kind) => {
     expect(anna.hasLeft).toBe(true);
   });
 
+  it('riders on the same route are placed by route position, not by ridden distance', async () => {
+    const { clock, anna, ben } = await setup();
+    const shape = { lengthM: 97_600, loop: true };
+    // Anna rode 1 km from km 40 (she started there); Ben rode 40 km from the start.
+    anna.setLocalState({
+      ...local(1000, 10),
+      route: { id: 'isar-ursprung', m: 41_000 },
+      routeShape: shape,
+    });
+    ben.setLocalState({
+      ...local(40_000, 10),
+      route: { id: 'isar-ursprung', m: 40_000 },
+      routeShape: shape,
+    });
+    await clock.advanceAsync(1000);
+    const [annaSeenByBen] = ben.getRiders();
+    // 1 km ahead on the road, although she has ridden 39 km less.
+    expect(annaSeenByBen?.sameRoute).toBe(true);
+    expect(annaSeenByBen?.gapM).toBeCloseTo(1000, 0);
+    expect(annaSeenByBen?.distanceM).toBeCloseTo(1010, 0); // ridden distance is still reported
+    expect(anna.getRiders()[0]?.gapM).toBeCloseTo(-1000, 0);
+
+    // Anna jumps to km 40.0: now they ride side by side.
+    anna.setLocalState({
+      ...local(1010, 10),
+      route: { id: 'isar-ursprung', m: 40_010 },
+      routeShape: shape,
+    });
+    await clock.advanceAsync(500);
+    expect(Math.abs(ben.getRiders()[0]!.gapM)).toBeLessThan(3);
+
+    // A rider on another route (or without one) falls back to ridden distance.
+    ben.setLocalState({
+      ...local(40_015, 10),
+      route: { id: 'other-route', m: 5 },
+      routeShape: shape,
+    });
+    await clock.advanceAsync(500);
+    const [byDistance] = ben.getRiders();
+    expect(byDistance?.sameRoute).toBeUndefined();
+    expect(byDistance!.gapM).toBeLessThan(-38_000); // ~39 km behind by ridden distance
+  });
+
   it('rejects invalid local state and invalid room codes', async () => {
     const { anna } = await setup();
     expect(anna.setLocalState({ ...local(1), powerW: Number.NaN })).toBe(false);

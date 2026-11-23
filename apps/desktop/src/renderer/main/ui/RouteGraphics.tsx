@@ -20,6 +20,8 @@ export interface RouteProfileProps {
   progress?: number | undefined;
   /** Other riders, as 0…1 along the route. */
   riders?: readonly { id: string; at: number; stale: boolean }[];
+  /** 0…1: where the ride starts (a chosen start point); not drawn at 0. */
+  startAt?: number | undefined;
   testId?: string;
 }
 
@@ -33,6 +35,7 @@ export const RouteProfile = memo(function RouteProfile({
   size = 'sm',
   progress,
   riders,
+  startAt,
   testId,
 }: RouteProfileProps) {
   const clipId = `rp-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -80,6 +83,18 @@ export const RouteProfile = memo(function RouteProfile({
           vectorEffect="non-scaling-stroke"
         />
       ))}
+      {startAt !== undefined && startAt > 0 && (
+        <g data-testid="route-start-marker" data-at={startAt.toFixed(4)}>
+          <line
+            className="rt-profile-start"
+            x1={startAt * PROFILE_W}
+            x2={startAt * PROFILE_W}
+            y1={elevAt(startAt) - 22}
+            y2={PROFILE_H}
+            vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      )}
       {at !== null && (
         <line
           className="rt-profile-marker"
@@ -95,6 +110,8 @@ export const RouteProfile = memo(function RouteProfile({
 });
 
 export const OUTLINE_BOX = 100;
+/** Padding of the outline in its box, by size (the map picker fits the track the same way). */
+export const outlinePad = (size: 'sm' | 'md' | 'lg'): number => (size === 'sm' ? 6 : 9);
 
 export interface RouteOutlineProps {
   outline: readonly (readonly [number, number])[];
@@ -108,6 +125,8 @@ export interface RouteOutlineProps {
   riders?: readonly { id: string; x: number; y: number; stale: boolean; name: string }[];
   /** Mark the start (and finish of a point-to-point route). */
   loop?: boolean;
+  /** A chosen start point (outline coordinates), marked with a ring. */
+  startPoint?: { x: number; y: number } | undefined;
   testId?: string;
 }
 
@@ -120,11 +139,11 @@ export const RouteOutline = memo(function RouteOutline({
   progress,
   riders,
   loop,
+  startPoint,
   testId,
 }: RouteOutlineProps) {
   const fit = useMemo(
-    () =>
-      fitOutline(outline, { width: OUTLINE_BOX, height: OUTLINE_BOX, pad: size === 'sm' ? 6 : 9 }),
+    () => fitOutline(outline, { width: OUTLINE_BOX, height: OUTLINE_BOX, pad: outlinePad(size) }),
     [outline, size],
   );
   const start = outline[0];
@@ -152,6 +171,19 @@ export const RouteOutline = memo(function RouteOutline({
         />
       )}
       {s && <circle className="rt-map-start" cx={s[0]} cy={s[1]} r={size === 'sm' ? 3.2 : 2.6} />}
+      {startPoint &&
+        (() => {
+          const [x, y] = fit.map(startPoint.x, startPoint.y);
+          return (
+            <circle
+              className="rt-map-startpoint"
+              data-testid="route-map-start-marker"
+              cx={x}
+              cy={y}
+              r={size === 'sm' ? 3.4 : 3}
+            />
+          );
+        })()}
       {e && <rect className="rt-map-end" x={e[0] - 2.4} y={e[1] - 2.4} width="4.8" height="4.8" />}
       {riders?.map((r) => {
         const [x, y] = fit.map(r.x, r.y);
@@ -181,6 +213,8 @@ export const RouteOutline = memo(function RouteOutline({
 });
 
 export const AHEAD_W = 600;
+/** The "ahead" profile also shows this share of its length behind the rider. */
+export const AHEAD_BEHIND_SHARE = 0.1;
 export const AHEAD_H = 100;
 
 /**
@@ -203,7 +237,7 @@ export function AheadProfile({
         track,
         distanceM,
         { width: AHEAD_W, height: AHEAD_H },
-        { aheadM, behindM: aheadM * 0.1 },
+        { aheadM, behindM: aheadM * AHEAD_BEHIND_SHARE },
       ),
     [track, distanceM, aheadM],
   );

@@ -20,6 +20,7 @@ export {
 
 export type { Lookahead, RoutePoint } from './query';
 export {
+  FINISH_MARGIN_M,
   MAX_CURVATURE,
   ascentTo,
   curvatureAt,
@@ -27,10 +28,12 @@ export {
   gradeAt,
   headingAt,
   lookahead,
+  normalizeRouteStart,
   outline,
   pointAt,
   positionAt,
   profile,
+  routeBaseId,
 } from './query';
 
 export type { DecodeRouteResult, EncodeOptions, ShareRouteResult } from './codec';

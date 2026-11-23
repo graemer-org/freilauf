@@ -3,6 +3,7 @@ import {
   builtinRoutes,
   decodeRoute,
   encodeRoute,
+  normalizeRouteStart,
   outline,
   parseGpx,
   prepareRoute,
@@ -25,6 +26,11 @@ export interface RouteEntry {
   profile: number[];
   /** ≤ 200 x/y points (m east/north of the start) for a mini map. */
   outline: [number, number][];
+  /**
+   * Where the next ride on this route starts (m along it); absent = from the beginning. Chosen
+   * on a profile or the map and remembered (docs/routes.md, "Choosing where to start, and jumping").
+   */
+  startM?: number;
 }
 
 export type RouteImportResult =
@@ -42,6 +48,10 @@ export const MAX_IMPORTED_ROUTES = 100;
  * largest possible (20 000 samples) ≈ 95 k. 2 M holds ~40 long or ~140 typical routes.
  */
 export const ROUTE_STORAGE_BUDGET_CHARS = 2_000_000;
+/** Start points per route id (JSON object id → metres); a separate, small key. */
+export const ROUTE_STARTS_KEY = 'freilauf.routeStarts.v1';
+/** Start points remembered at most (oldest dropped first). */
+export const MAX_ROUTE_STARTS = 200;
 
 const ENTRY_POINTS = 200;
 
@@ -72,6 +82,8 @@ export class RouteLibrary {
   readonly #storage: KeyValueStorage | null;
   readonly #builtin: { track: RouteTrack; entry: RouteEntry }[];
   #imported: Stored[] = [];
+  /** Start points by route id (metres > 0), in insertion order. */
+  #starts = new Map<string, number>();
   /** Set when the last write to storage failed (quota or blocked). */
   saveFailed = false;
 
@@ -79,10 +91,43 @@ export class RouteLibrary {
     this.#storage = storage;
     this.#builtin = builtinRoutes().map((track) => ({ track, entry: entryFor(track, 'builtin') }));
     this.#load();
+    this.#loadStarts();
   }
 
   list(): RouteEntry[] {
-    return [...this.#builtin.map((b) => b.entry), ...this.#imported.map((i) => i.entry)];
+    return [...this.#builtin.map((b) => b.entry), ...this.#imported.map((i) => i.entry)].map(
+      (e) => {
+        const startM = this.#starts.get(e.id);
+        return startM === undefined ? e : { ...e, startM };
+      },
+    );
+  }
+
+  /** Where the next ride on route `id` starts (m); 0 = from the beginning. */
+  startOf(id: string): number {
+    const found = this.get(id);
+    const m = this.#starts.get(id) ?? 0;
+    return found ? normalizeRouteStart(found.track, m) : 0;
+  }
+
+  /**
+   * Remembers where the next ride on route `id` starts (0 = from the beginning). Returns the
+   * start point in effect (wrapped on a loop, kept short of the finish), or null for an unknown
+   * route. The library is not changed by a failed write (saveFailed tells).
+   */
+  setStart(id: string, distanceM: number): number | null {
+    const found = this.get(id);
+    if (!found) return null;
+    const m = normalizeRouteStart(found.track, distanceM);
+    this.#starts.delete(id);
+    if (m > 0) this.#starts.set(id, Math.round(m * 10) / 10);
+    while (this.#starts.size > MAX_ROUTE_STARTS) {
+      const oldest = this.#starts.keys().next().value;
+      if (oldest === undefined) break;
+      this.#starts.delete(oldest);
+    }
+    this.#write(ROUTE_STARTS_KEY, JSON.stringify(Object.fromEntries(this.#starts)));
+    return this.#starts.get(id) ?? 0;
   }
 
   get(id: string): { entry: RouteEntry; track: RouteTrack } | null {
@@ -173,6 +218,9 @@ export class RouteLibrary {
     this.#imported = this.#imported.filter((i) => i.track.id !== id);
     if (this.#imported.length === before) return false;
     this.#saveIndex();
+    if (this.#starts.delete(id)) {
+      this.#write(ROUTE_STARTS_KEY, JSON.stringify(Object.fromEntries(this.#starts)));
+    }
     try {
       if (this.#storage?.removeItem) this.#storage.removeItem(ROUTE_KEY_PREFIX + id);
       else this.#storage?.setItem(ROUTE_KEY_PREFIX + id, '');
@@ -203,6 +251,27 @@ export class RouteLibrary {
 
   #saveIndex(): boolean {
     return this.#write(ROUTE_INDEX_KEY, JSON.stringify(this.#imported.map((i) => i.track.id)));
+  }
+
+  #loadStarts(): void {
+    let raw: unknown;
+    try {
+      const text = this.#storage?.getItem(ROUTE_STARTS_KEY) ?? null;
+      if (!text) return;
+      raw = JSON.parse(text);
+    } catch {
+      return; // blocked or corrupt: every route starts at the beginning
+    }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return;
+    for (const [id, m] of Object.entries(raw as Record<string, unknown>).slice(
+      0,
+      MAX_ROUTE_STARTS,
+    )) {
+      if (id.length > 64 || typeof m !== 'number' || !Number.isFinite(m) || m <= 0 || m > 1e6) {
+        continue;
+      }
+      this.#starts.set(id, m);
+    }
   }
 
   #load(): void {

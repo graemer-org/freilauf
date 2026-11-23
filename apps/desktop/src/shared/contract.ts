@@ -278,6 +278,12 @@ export interface RouteControl {
    * null while an ERG workout segment holds the power instead.
    */
   trainerGradePercent: number | null;
+  /** Where on the route this ride starts (or started), metres; 0 = the start (docs/routes.md). */
+  startM: number;
+  /** Jumps along the route during this ride; 0 before the ride. */
+  jumps: number;
+  /** Where the last jump went (m), or null. */
+  lastJumpM: number | null;
 }
 
 /** The running workout as shown in the main window and overlay. */

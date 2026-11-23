@@ -1,5 +1,5 @@
 import { sanitizeName } from './signalling/channel';
-import type { GroupRider, RiderState } from './types';
+import type { GroupRider, RiderRoute, RiderState } from './types';
 
 /** No update for this long -> `stale: true`. */
 export const STALE_AFTER_MS = 3_000;
@@ -22,7 +22,19 @@ export const RIDER_STATE_LIMITS = {
   cadenceRpm: [0, 300],
   heartRateBpm: [0, 300],
   gear: [0, 100],
+  /** Routes are at most 1000 km (MAX_ROUTE_LENGTH_M in @freilauf/routes). */
+  routeM: [0, 1_000_000],
 } as const;
+
+/** Route ids as @freilauf/routes makes them (and its codec accepts). */
+const ROUTE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** The local rider's route, for placing the others on it (see RemoteRiders.getRiders). */
+export interface LocalRoutePlacement extends RiderRoute {
+  /** Length of the route (m) and whether it is ridden as laps. */
+  lengthM: number;
+  loop: boolean;
+}
 
 /** Data channel message: `{"v":1,"type":"state","state":{...RiderState}}`. */
 export interface StateMessage {
@@ -56,6 +68,15 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     heartRateBpm === null ? null : inRange(heartRateBpm, L.heartRateBpm) ? heartRateBpm : undefined;
   if (hr === undefined) return null;
   if (!inRange(gear, L.gear)) return null;
+  // Optional; when present it must be valid like every other field.
+  let route: RiderRoute | undefined;
+  if (v['route'] !== undefined) {
+    const r = v['route'];
+    if (typeof r !== 'object' || r === null || Array.isArray(r)) return null;
+    const { id, m } = r as Record<string, unknown>;
+    if (typeof id !== 'string' || !ROUTE_ID.test(id) || !inRange(m, L.routeM)) return null;
+    route = { id, m };
+  }
   return {
     name: sanitizeName(v['name']) || 'Rider',
     sentAt,
@@ -65,6 +86,7 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     cadenceRpm,
     heartRateBpm: hr,
     gear: Math.round(gear),
+    ...(route ? { route } : {}),
   };
 }
 
@@ -152,12 +174,24 @@ export class RemoteRiders {
     this.#tracks.clear();
   }
 
-  /** Remote riders at local time `now`, leader first; `gapM` relative to `localDistanceM`. */
-  getRiders(now: number, localDistanceM: number): GroupRider[] {
+  /**
+   * Remote riders at local time `now`, leader first. `gapM` is measured along the route for
+   * riders on `localRoute` (same id), otherwise relative to `localDistanceM` (ridden distance).
+   */
+  getRiders(
+    now: number,
+    localDistanceM: number,
+    localRoute?: LocalRoutePlacement | null,
+  ): GroupRider[] {
     const riders: GroupRider[] = [];
     for (const [peerId, track] of this.#tracks) {
       const s = track.state;
       const distanceM = displayedDistance(track, now);
+      const routeGap =
+        localRoute && s.route && s.route.id === localRoute.id
+          ? // The route position moves with the (extrapolated, smoothed) distance.
+            gapAlongRoute(s.route.m + (distanceM - s.distanceM), localRoute)
+          : null;
       riders.push({
         peerId,
         name: s.name,
@@ -167,11 +201,42 @@ export class RemoteRiders {
         cadenceRpm: s.cadenceRpm,
         heartRateBpm: s.heartRateBpm,
         gear: s.gear,
-        gapM: distanceM - localDistanceM,
+        gapM: routeGap ?? distanceM - localDistanceM,
+        ...(routeGap !== null ? { sameRoute: true } : {}),
         stale: now - track.receivedAt > STALE_AFTER_MS,
       });
     }
-    riders.sort((a, b) => b.distanceM - a.distanceM || (a.peerId < b.peerId ? -1 : 1));
+    riders.sort((a, b) => b.gapM - a.gapM || (a.peerId < b.peerId ? -1 : 1));
     return riders;
   }
+}
+
+/**
+ * A route position moved along by extrapolation, put back on the route: wrapped on a loop,
+ * clamped to the route otherwise (and to RIDER_STATE_LIMITS without a known shape).
+ */
+export function routeAhead(m: number, shape: { lengthM: number; loop: boolean } | null): number {
+  const [min, max] = RIDER_STATE_LIMITS.routeM;
+  if (!Number.isFinite(m)) return 0;
+  if (shape && shape.lengthM > 0) {
+    const L = shape.lengthM;
+    if (shape.loop) return Math.min(max, m - Math.floor(m / L) * L);
+    return Math.min(L, Math.max(0, m));
+  }
+  return Math.min(max, Math.max(min, m));
+}
+
+/**
+ * Gap (m, + = ahead) from the local rider to a position on the same route: on a loop the shorter
+ * way round (−length/2 … +length/2), otherwise along the road, both clamped to the route.
+ */
+export function gapAlongRoute(remoteM: number, local: LocalRoutePlacement): number {
+  const L = local.lengthM;
+  if (!(L > 0)) return remoteM - local.m;
+  if (local.loop) {
+    const g = remoteM - local.m;
+    return g - Math.floor((g + L / 2) / L) * L;
+  }
+  const clamp = (v: number): number => Math.min(L, Math.max(0, v));
+  return clamp(remoteM) - clamp(local.m);
 }

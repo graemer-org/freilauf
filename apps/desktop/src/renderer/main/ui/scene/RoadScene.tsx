@@ -41,6 +41,8 @@ const ATTR_MS = 200;
 const LABEL_MS = 2000;
 /** Further than this from the reported position, the scene jumps instead of catching up. */
 const SNAP_M = 30;
+/** After a jump along the route: a short fade-in at the new place (none with reduced motion). */
+const CUT_MS = 400;
 
 const EMPTY: readonly RoadRider[] = [];
 const deg = (rad: number): number => (rad * 180) / Math.PI;
@@ -81,7 +83,8 @@ export function describeRoad(live: LiveState | null, track: RouteTrack, distance
  * Test hooks: data-view="road", data-distance (route distance, continuous
  * across laps), data-heading (degrees, 0 = north), data-curve (degrees of
  * turn over the next 100 m, + right), data-grade (what the trainer is told),
- * data-route-grade (from the track), data-lateral, data-frames, data-frame-ms.
+ * data-route-grade (from the track), data-lateral, data-frames, data-frame-ms, data-jumps
+ * (jumps along the route seen; each one cuts to the new place, see CUT_MS).
  */
 export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: ReactNode }) {
   const app = useApp();
@@ -165,10 +168,24 @@ function startRoadScene(
   let target: number | null = null;
   let targetAt = 0;
   let others: RoadRider[] = [];
+  // A jump along the route: cut straight to the new place (no catching up across the gap).
+  let jumps: number | null = null;
+  let cut = false;
+  let cutTimer: ReturnType<typeof setTimeout> | null = null;
   const onLive = (next: LiveState | null): void => {
     if (next === live) return;
     live = next;
     if (!next) return;
+    const seen = next.routeControl?.jumps ?? 0;
+    if (jumps !== null && seen !== jumps && seen > 0) {
+      cut = true;
+      root.classList.remove('is-cut');
+      void root.offsetWidth; // restart the fade on back-to-back jumps
+      root.classList.add('is-cut');
+      if (cutTimer) clearTimeout(cutTimer);
+      cutTimer = setTimeout(() => root.classList.remove('is-cut'), CUT_MS);
+    }
+    jumps = seen;
     target = unwrappedDistance(track, next.route);
     targetAt = performance.now();
     const riders = next.group?.riders ?? [];
@@ -279,6 +296,7 @@ function startRoadScene(
       standing = 0;
       tuck = 0;
       // The road follows the 4 Hz samples; nothing is extrapolated in between.
+      cut = false;
       if (target !== null) distance = target;
       else if (riding) distance += speed * dt;
     } else {
@@ -287,7 +305,10 @@ function startRoadScene(
       standing = easeToward(standing, standingTarget(grade, targetCad, riding), dt, TAU.standing);
       tuck = easeToward(tuck, tuckTarget(speed, grade, cadence), dt, TAU.tuck);
       crank = integrateAngle(crank, -crankRate(cadence), dt);
-      if (target !== null) {
+      if (cut && target !== null) {
+        distance = target;
+        cut = false;
+      } else if (target !== null) {
         const ahead = riding && !finished ? targetSpeed * Math.min(1, (t - targetAt) / 1000) : 0;
         const goal = target + ahead;
         if (Math.abs(goal - distance) > SNAP_M || frames === 0) distance = goal;
@@ -362,6 +383,7 @@ function startRoadScene(
       ds.frameMs = frameMs.toFixed(3);
       ds.state = state;
       ds.motion = reducedMotion ? 'reduced' : 'full';
+      ds.jumps = String(jumps ?? 0);
       ds.nextSign = frame.next
         ? `${frame.next.gradePercent.toFixed(1)}@${Math.round(frame.next.inM)}`
         : '';
@@ -406,6 +428,7 @@ function startRoadScene(
 
   return () => {
     sleep();
+    if (cutTimer) clearTimeout(cutTimer);
     unsubscribe();
     keys.stop();
     document.removeEventListener('visibilitychange', onVisibility);

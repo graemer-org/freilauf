@@ -202,6 +202,31 @@ describe('RideSession', () => {
     expect(session.toRecordedRide().samples.at(-1)).not.toHaveProperty('lat');
   });
 
+  it('carries the route segment (jumps) from the position source; 0 is left out', () => {
+    const { session, ride } = setup();
+    let segment = 0;
+    session.setPositionSource(() => ({ lat: 47, lon: 11, altitudeM: 500, segment }));
+    session.start();
+    ride(3, 200);
+    segment = 1;
+    ride(2, 200);
+    segment = 2.5; // not an integer: ignored
+    ride(1, 200);
+    const samples = session.toRecordedRide().samples;
+    expect(samples.map((s) => s.segment)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      1,
+      1,
+      undefined,
+    ]);
+    // Ridden distance is unaffected by the segments.
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]!.distanceM).toBeGreaterThan(samples[i - 1]!.distanceM);
+    }
+  });
+
   it('samples have no position fields without a source', () => {
     const { session, ride } = setup();
     session.start();

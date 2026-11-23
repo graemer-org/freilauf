@@ -9,7 +9,7 @@ import type {
 } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
-import { pointAt, positionAt } from '@freilauf/routes';
+import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
@@ -48,6 +48,10 @@ export interface GroupLink {
     cadenceRpm: number;
     heartRateBpm: number | null;
     gear: number;
+    /** Where on the route the rider is (base id, metres), when riding one. */
+    route?: { id: string; m: number };
+    /** Length and kind of that route, to measure the others' gaps along it (not broadcast). */
+    routeShape?: { lengthM: number; loop: boolean };
   }): void;
   getRiders(): GroupRider[];
 }
@@ -78,6 +82,13 @@ const AUTOSAVE_INTERVAL_MS = 30_000;
 export const ROUTE_GRADE_STEP = 0.15;
 export const ROUTE_GRADE_MIN_INTERVAL_MS = 1_000;
 export const ROUTE_GRADE_SETTLE_MS = 5_000;
+/**
+ * After a jump along the route (docs/routes.md, "Choosing where to start, and jumping") the new gradient is sent on the next
+ * tick, without waiting for the rate limit; a larger change is eased in by at most this many
+ * percentage points per write, one write per ROUTE_GRADE_MIN_INTERVAL_MS, through the same
+ * update path: −5 % → +7 % is sent as −2, +1, +4, +7 % over 3 s instead of one 12-point step.
+ */
+export const JUMP_RAMP_STEP = 3;
 /** Rides shorter than this are discarded on finish (accidental start). */
 const MIN_RIDE_SAMPLES = 10;
 
@@ -100,6 +111,22 @@ interface Plan {
 /** A route chosen for the next (or current) ride. */
 interface RoutePlan {
   track: RouteTrack;
+  /** Where the next (or current) ride starts on the route (m, normalised). */
+  startM: number;
+  /**
+   * Route position = offsetM + ridden distance. startM at the start of the ride; every jump
+   * moves it, so the ridden distance (and time, energy, points) keeps counting what was ridden.
+   */
+  offsetM: number;
+  /** Route segment for the recording: +1 at every jump (RideSample.segment). */
+  segment: number;
+  /** Jumps during this ride and where the last one went (m). */
+  jumps: number;
+  lastJumpM: number | null;
+  /** Send the gradient on the next tick regardless of the rate limit (after a jump). */
+  sendNow: boolean;
+  /** Ease the gradient in by JUMP_RAMP_STEP per write until it reaches the road (after a jump). */
+  ramping: boolean;
   /** Gradient last given to the shifter (percent, after difficulty), and when. */
   sent: { gradePercent: number; at: number } | null;
   lastLap: number;
@@ -267,12 +294,28 @@ export class RideController {
    * advances; otherwise the route's gradient drives the trainer and manual gradient changes
    * are ignored. The route stays selected after the ride.
    */
-  selectRoute(track: RouteTrack | null): boolean {
+  selectRoute(track: RouteTrack | null, startM = 0): boolean {
     if (this.#session.state !== 'idle') return false;
     const before = this.#route?.track.id ?? null;
-    this.#route = track ? { track, sent: null, lastLap: 1, finishedLogged: false } : null;
+    const start = track ? normalizeRouteStart(track, startM) : 0;
+    this.#route = track
+      ? {
+          track,
+          startM: start,
+          offsetM: start,
+          segment: 0,
+          jumps: 0,
+          lastJumpM: null,
+          sendNow: false,
+          ramping: false,
+          sent: null,
+          lastLap: 1,
+          finishedLogged: false,
+        }
+      : null;
     if (track) {
       this.#log.info(`route selected: ${track.name}`, {
+        ...(start > 0 ? { startKm: round(start / 1000, 2) } : {}),
         id: track.id,
         distanceKm: round(track.totalDistanceM / 1000, 2),
         ascentM: Math.round(track.ascentM),
@@ -293,6 +336,55 @@ export class RideController {
 
   get selectedRoute(): RouteTrack | null {
     return this.#route?.track ?? null;
+  }
+
+  /**
+   * Where the next ride starts on the selected route (m; 0 = the start). Only while no ride is
+   * in progress (during a ride use jumpTo). Returns the start point in effect (wrapped on a
+   * loop, kept short of the finish otherwise), or null without a route or while riding.
+   */
+  setRouteStart(distanceM: number): number | null {
+    const route = this.#route;
+    if (!route || this.#session.state !== 'idle') return null;
+    const start = normalizeRouteStart(route.track, distanceM);
+    route.startM = start;
+    route.offsetM = start;
+    route.finishedLogged = false;
+    this.#log.info('route start point set', { startKm: round(start / 1000, 2) });
+    return start;
+  }
+
+  /**
+   * Moves the rider to another place on the route (docs/routes.md, "Choosing where to start, and jumping"). Before the ride
+   * this sets the start point. During the ride (riding or paused) only the place on the route
+   * changes: the ridden distance, time, energy and speed carry on; the new gradient reaches the
+   * trainer at once and is eased in when the change is large (JUMP_RAMP_STEP); the recording
+   * continues in a new route segment (a new lap in the FIT file). On a loop the current lap is
+   * kept. Returns the place jumped to, or null without a route.
+   */
+  jumpTo(distanceM: number): number | null {
+    const route = this.#route;
+    if (!route) return null;
+    if (this.#session.state === 'idle') return this.setRouteStart(distanceM);
+    const track = route.track;
+    const to = normalizeRouteStart(track, distanceM);
+    const ridden = this.#distanceM;
+    const from = positionAt(track, ridden, route.offsetM);
+    const lapBase = track.loop ? (from.lap - 1) * track.totalDistanceM : 0;
+    route.offsetM = lapBase + to - ridden;
+    route.segment += 1;
+    route.jumps += 1;
+    route.lastJumpM = to;
+    route.sendNow = true;
+    route.ramping = true;
+    route.finishedLogged = false;
+    this.#log.info(`route jump to km ${round(to / 1000, 2)}`, {
+      fromKm: round(from.distanceM / 1000, 2),
+      toKm: round(to / 1000, 2),
+      ridingKm: round(ridden / 1000, 2),
+      jumps: route.jumps,
+    });
+    return to;
   }
 
   skipWorkoutSegment(): void {
@@ -365,12 +457,18 @@ export class RideController {
       this.#distanceM = 0;
       const route = this.#route;
       if (route) {
-        route.lastLap = 1;
+        route.offsetM = route.startM;
+        route.segment = 0;
+        route.jumps = 0;
+        route.lastJumpM = null;
+        route.lastLap = positionAt(route.track, 0, route.startM).lap;
         route.finishedLogged = false;
         const track = route.track;
+        // Samples carry the place on the route (offset + ridden) and the segment, read live so a
+        // jump shows from the next sample on.
         this.#session.setPositionSource((d) => {
-          const p = pointAt(track, d);
-          return { lat: p.lat, lon: p.lon, altitudeM: p.elevationM };
+          const p = pointAt(track, route.offsetM + d);
+          return { lat: p.lat, lon: p.lon, altitudeM: p.elevationM, segment: route.segment };
         });
       }
       this.#session.start();
@@ -398,6 +496,13 @@ export class RideController {
     const plan = this.#plan;
     this.#session = this.#newSession();
     this.#distanceM = 0;
+    // The next ride starts at the chosen start point again.
+    if (this.#route) {
+      this.#route.offsetM = this.#route.startM;
+      this.#route.jumps = 0;
+      this.#route.lastJumpM = null;
+      this.#route.segment = 0;
+    }
     // The workout is done with; the next ride is a free ride unless one is chosen again.
     this.#plan = null;
     this.#shifter.resync(); // leave ERG: back to the simulated road
@@ -444,6 +549,7 @@ export class RideController {
       });
     }
 
+    const track = this.#route?.track;
     this.#group?.setLocalState({
       name: this.#settings.rider.name,
       distanceM: ride.distanceM,
@@ -452,6 +558,16 @@ export class RideController {
       cadenceRpm: ride.cadenceRpm,
       heartRateBpm: ride.heartRateBpm,
       gear: ride.gear,
+      // Riders on the same route are placed by where they are on it (docs/routes.md).
+      ...(track && this.#route
+        ? {
+            route: {
+              id: routeBaseId(track.id),
+              m: positionAt(track, ride.distanceM, this.#route.offsetM).distanceM,
+            },
+            routeShape: { lengthM: track.totalDistanceM, loop: track.loop },
+          }
+        : {}),
     });
 
     const live: LiveState = {
@@ -597,7 +713,7 @@ export class RideController {
   #driveRoute(): RoutePosition | null {
     const route = this.#route;
     if (!route) return null;
-    const pos = positionAt(route.track, this.#distanceM);
+    const pos = positionAt(route.track, this.#distanceM, route.offsetM);
     // The physics and the recording use the real road.
     this.#gradePercent = pos.gradePercent;
     if (pos.lap !== route.lastLap) {
@@ -615,24 +731,44 @@ export class RideController {
     const sent = route.sent;
     const diff = sent ? Math.abs(target - sent.gradePercent) : Infinity;
     const since = sent ? now - sent.at : Infinity;
+    const jumped = route.sendNow;
+    route.sendNow = false;
+    if (route.ramping && diff < 0.01) route.ramping = false;
     if (
       diff > 0 &&
-      ((diff >= ROUTE_GRADE_STEP - 1e-9 && since >= ROUTE_GRADE_MIN_INTERVAL_MS) ||
+      ((jumped && diff >= 0.01) ||
+        (diff >= ROUTE_GRADE_STEP - 1e-9 && since >= ROUTE_GRADE_MIN_INTERVAL_MS) ||
         (diff >= 0.01 && since >= ROUTE_GRADE_SETTLE_MS))
     ) {
-      route.sent = { gradePercent: target, at: now };
+      let next = target;
+      // After a jump: one write per interval, at most JUMP_RAMP_STEP points each, until the
+      // trainer is on the road again; then the normal policy takes over.
+      if (route.ramping && sent) {
+        const step = Math.max(
+          -JUMP_RAMP_STEP,
+          Math.min(JUMP_RAMP_STEP, target - sent.gradePercent),
+        );
+        next = Math.round((sent.gradePercent + step) * 100) / 100;
+        if (Math.abs(target - next) < 0.01) {
+          next = target;
+          route.ramping = false;
+        }
+      } else route.ramping = false;
+      route.sent = { gradePercent: next, at: now };
       const d = this.#routeLimit.take('route-gradient');
       if (d.allowed) {
-        this.#log.debug(`route gradient → ${round(target, 2)} %`, {
+        this.#log.debug(`route gradient → ${round(next, 2)} %`, {
           roadPercent: round(pos.gradePercent, 2),
           difficulty: this.#difficulty(),
           distanceKm: round(pos.distanceM / 1000, 3),
           erg: this.#ergActive,
+          ...(next !== target ? { easingTowardPercent: round(target, 2) } : {}),
+          ...(jumped ? { afterJump: true } : {}),
           ...(d.suppressed ? { suppressedBefore: d.suppressed } : {}),
         });
       }
       // In ERG the shifter's sink drops the write; leaving ERG resyncs with this gradient.
-      this.#shifter.setGradient(target);
+      this.#shifter.setGradient(next);
     }
     return pos;
   }
@@ -642,6 +778,9 @@ export class RideController {
       gradientLocked: true,
       difficulty: this.#difficulty(),
       trainerGradePercent: this.#ergActive ? null : (this.#route?.sent?.gradePercent ?? null),
+      startM: this.#route?.startM ?? 0,
+      jumps: this.#route?.jumps ?? 0,
+      lastJumpM: this.#route?.lastJumpM ?? null,
     };
   }
 

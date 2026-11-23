@@ -33,7 +33,10 @@ function decode(bytes: Uint8Array) {
   expect(Decoder.isFIT(stream)).toBe(true);
   const decoder = new Decoder(stream);
   expect(decoder.checkIntegrity()).toBe(true);
-  const { messages, errors } = decoder.read({ convertTypesToStrings: true, convertDateTimesToDates: true });
+  const { messages, errors } = decoder.read({
+    convertTypesToStrings: true,
+    convertDateTimesToDates: true,
+  });
   expect(errors).toEqual([]);
   return messages;
 }
@@ -62,7 +65,11 @@ describe('encodeFit', () => {
     expect(msgs.fileIdMesgs?.[0]?.serialNumber).toBeGreaterThan(0);
 
     const events = msgs.eventMesgs ?? [];
-    expect(events[0]).toMatchObject({ event: 'timer', eventType: 'start', timestamp: fitDate(START) });
+    expect(events[0]).toMatchObject({
+      event: 'timer',
+      eventType: 'start',
+      timestamp: fitDate(START),
+    });
     expect(events[events.length - 1]).toMatchObject({ event: 'timer', eventType: 'stopAll' });
 
     const records = msgs.recordMesgs ?? [];
@@ -143,7 +150,11 @@ describe('encodeFit', () => {
           i === 0
             ? { powerW: 100000, cadenceRpm: 400, heartRateBpm: 300, speedMps: -3 }
             : i === 1
-              ? { powerW: Number.NaN, cadenceRpm: Number.POSITIVE_INFINITY, heartRateBpm: Number.NaN }
+              ? {
+                  powerW: Number.NaN,
+                  cadenceRpm: Number.POSITIVE_INFINITY,
+                  heartRateBpm: Number.NaN,
+                }
               : {},
         ),
       ),
@@ -171,7 +182,13 @@ describe('encodeFit', () => {
   });
 
   it('encodes an empty ride as a valid, decodable file', () => {
-    const ride: RecordedRide = { id: 'x', name: 'Empty', startedAt: START, riderMassKg: 70, samples: [] };
+    const ride: RecordedRide = {
+      id: 'x',
+      name: 'Empty',
+      startedAt: START,
+      riderMassKg: 70,
+      samples: [],
+    };
     const msgs = decode(encodeFit(ride));
     expect(msgs.recordMesgs ?? []).toHaveLength(0);
     expect(msgs.sessionMesgs?.[0]).toMatchObject({
@@ -220,10 +237,14 @@ describe('encodeFit with positions (route rides)', () => {
       const lon = (r.positionLong as number) * semi;
       // 1 semicircle ≈ 0.9 cm; allow 2 cm.
       expect(Math.abs(lat - s.lat!) * 111_320).toBeLessThan(0.02);
-      expect(Math.abs(lon - s.lon!) * 111_320 * Math.cos((lat0 * Math.PI) / 180)).toBeLessThan(0.02);
+      expect(Math.abs(lon - s.lon!) * 111_320 * Math.cos((lat0 * Math.PI) / 180)).toBeLessThan(
+        0.02,
+      );
       // Resolution 0.2 m (scale 5): within half of it.
       expect(Math.abs((r.altitude as number) - s.altitudeM!)).toBeLessThanOrEqual(0.1 + 1e-9);
-      expect(Math.abs((r.enhancedAltitude as number) - s.altitudeM!)).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(Math.abs((r.enhancedAltitude as number) - s.altitudeM!)).toBeLessThanOrEqual(
+        0.1 + 1e-9,
+      );
       expect(r.power).toBe(s.powerW); // the usual fields are unchanged
     });
   });
@@ -247,7 +268,9 @@ describe('encodeFit with positions (route rides)', () => {
   });
 
   it('negative coordinates and the antimeridian side encode correctly', () => {
-    const msgs = decode(encodeFit(makeRide(3, () => ({ lat: -33.9, lon: 179.99, altitudeM: -20 }))));
+    const msgs = decode(
+      encodeFit(makeRide(3, () => ({ lat: -33.9, lon: 179.99, altitudeM: -20 }))),
+    );
     const r = msgs.recordMesgs![0]!;
     expect((r.positionLat as number) * (180 / 2 ** 31)).toBeCloseTo(-33.9, 6);
     expect((r.positionLong as number) * (180 / 2 ** 31)).toBeCloseTo(179.99, 6);
@@ -279,6 +302,109 @@ describe('rideSummary', () => {
 
   it('is all zeros / null for an empty ride', () => {
     const s = rideSummary({ id: 'x', name: '', startedAt: START, riderMassKg: 70, samples: [] });
-    expect(s).toMatchObject({ durationS: 0, distanceM: 0, avgPowerW: 0, workKj: 0, avgHeartRateBpm: null, sampleCount: 0 });
+    expect(s).toMatchObject({
+      durationS: 0,
+      distanceM: 0,
+      avgPowerW: 0,
+      workKj: 0,
+      avgHeartRateBpm: null,
+      sampleCount: 0,
+    });
+  });
+});
+
+describe('encodeFit with jumps along the route (route segments)', () => {
+  const semi = 180 / 2 ** 31;
+  /**
+   * Segments of 100 samples each; every segment climbs 50 m from its own base far from the
+   * previous one (a jump of several km and hundreds of metres of elevation in between).
+   */
+  const jumped = (bases: { lat: number; lon: number; alt: number }[]) =>
+    makeRide(bases.length * 100, (i) => {
+      const k = Math.floor(i / 100);
+      const j = i % 100;
+      const b = bases[k]!;
+      return {
+        lat: b.lat + j * 1e-5,
+        lon: b.lon,
+        altitudeM: b.alt + j * 0.5,
+        ...(k > 0 ? { segment: k } : {}),
+      };
+    });
+  const A = { lat: 47.1, lon: -11.6, alt: 600 };
+  const B = { lat: 47.3, lon: -11.6, alt: 900 }; // ~22 km north, 300 m higher
+  const C = { lat: 47.0, lon: -11.6, alt: 400 }; // back south, 500 m lower
+
+  it('one jump: two laps that start and end where the road was ridden', () => {
+    const ride = jumped([A, B]);
+    const msgs = decode(encodeFit(ride));
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(2);
+    expect(msgs.sessionMesgs?.[0]?.numLaps).toBe(2);
+    expect(laps.map((l) => l.lapTrigger)).toEqual(['manual', 'sessionEnd']);
+    expect(laps.map((l) => l.messageIndex)).toEqual([0, 1]);
+    const [l0, l1] = laps as [Record<string, unknown>, Record<string, unknown>];
+    expect((l0.startPositionLat as number) * semi).toBeCloseTo(A.lat, 6);
+    expect((l0.endPositionLat as number) * semi).toBeCloseTo(A.lat + 99e-5, 6);
+    expect((l1.startPositionLat as number) * semi).toBeCloseTo(B.lat, 6);
+    expect((l1.endPositionLat as number) * semi).toBeCloseTo(B.lat + 99e-5, 6);
+    // Each lap's box covers only its own road: no lap spans the gap.
+    expect((l0.necLat as number) * semi).toBeLessThan(A.lat + 0.01);
+    expect((l1.swcLat as number) * semi).toBeGreaterThan(B.lat - 0.01);
+    // Ascent: what was ridden (2 × ~50 m), not the 300 m across the jump.
+    expect(l0.totalAscent).toBeCloseTo(50, -1);
+    expect(l1.totalAscent).toBeCloseTo(50, -1);
+    const session = msgs.sessionMesgs![0]!;
+    expect(session.totalAscent).toBeCloseTo(100, -1);
+    expect(session.totalDescent).toBe(0);
+    // The session spans both legs (start of the first, end of the last, box over all).
+    expect((session.startPositionLat as number) * semi).toBeCloseTo(A.lat, 6);
+    expect((session.endPositionLat as number) * semi).toBeCloseTo(B.lat + 99e-5, 6);
+    expect((session.necLat as number) * semi).toBeCloseTo(B.lat + 99e-5, 6);
+    expect(session.enhancedMaxAltitude).toBeCloseTo(949.5, 0);
+    // Time, distance and work keep counting what was ridden: the laps add up to the session.
+    const sum = (k: string) =>
+      laps.reduce((a, l) => a + ((l as Record<string, unknown>)[k] as number), 0);
+    expect(sum('totalTimerTime')).toBeCloseTo(session.totalTimerTime as number, 3);
+    expect(sum('totalElapsedTime')).toBeCloseTo(session.totalElapsedTime as number, 3);
+    expect(sum('totalDistance')).toBeCloseTo(session.totalDistance as number, 1);
+    expect(Math.abs(sum('totalWork') - (session.totalWork as number))).toBeLessThanOrEqual(2);
+    expect(l1.startTime).toEqual(l0.timestamp); // lap 2 starts where lap 1 ended
+    // Records: distance is continuous across the jump; the position restarts.
+    const records = msgs.recordMesgs ?? [];
+    expect(records).toHaveLength(200);
+    expect(records[100]!.distance as number).toBeGreaterThan(records[99]!.distance as number);
+    expect((records[100]!.distance as number) - (records[99]!.distance as number)).toBeLessThan(10);
+    expect((records[100]!.positionLat as number) * semi).toBeCloseTo(B.lat, 6);
+    // No timer stop/start at the jump: the ride did not pause.
+    expect((msgs.eventMesgs ?? []).map((e) => e.eventType)).toEqual(['start', 'stopAll']);
+  });
+
+  it('several jumps: one lap per segment, totals only from ridden road', () => {
+    const ride = jumped([A, B, C, A]);
+    const bytes = encodeFit(ride);
+    const msgs = decode(bytes);
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(4);
+    expect(laps.map((l) => l.lapTrigger)).toEqual(['manual', 'manual', 'manual', 'sessionEnd']);
+    for (const l of laps) {
+      expect(l.totalAscent).toBeCloseTo(50, -1);
+      expect(l.totalDescent).toBe(0);
+      expect(l.totalTimerTime).toBe(100);
+      expect(l.subSport).toBe('virtualActivity');
+    }
+    expect(msgs.sessionMesgs?.[0]).toMatchObject({ numLaps: 4, totalTimerTime: 400 });
+    expect(msgs.sessionMesgs?.[0]?.totalAscent).toBeCloseTo(200, -1);
+    expect(msgs.sessionMesgs?.[0]?.totalDescent).toBe(0);
+    // Message order: stop_all, the laps, session, activity.
+    const nums: number[] = [];
+    new Decoder(Stream.fromByteArray(bytes)).read({ mesgListener: (n: number) => nums.push(n) });
+    expect(nums.slice(-7)).toEqual([21, 19, 19, 19, 19, 18, 34]);
+  });
+
+  it('a ride without jumps still has exactly one lap', () => {
+    const msgs = decode(encodeFit(jumped([A])));
+    expect(msgs.lapMesgs).toHaveLength(1);
+    expect(msgs.lapMesgs?.[0]?.lapTrigger).toBe('sessionEnd');
   });
 });

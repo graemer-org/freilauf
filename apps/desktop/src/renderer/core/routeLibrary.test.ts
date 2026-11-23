@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_IMPORTED_ROUTES,
   ROUTE_INDEX_KEY,
+  ROUTE_STARTS_KEY,
   ROUTE_KEY_PREFIX,
   RouteLibrary,
 } from './routeLibrary';
@@ -70,6 +71,66 @@ describe('RouteLibrary', () => {
     const r = lib.add(lib.get(builtin.id)!.track);
     expect(r.ok && r.entry.source).toBe('builtin');
     expect(lib.list()).toHaveLength(4);
+  });
+
+  it('remembers the start point per route, across restarts, with a reset', () => {
+    const storage = memoryStorage();
+    const lib = new RouteLibrary(storage);
+    const r = lib.importText(gpx(200));
+    if (!r.ok) throw new Error('import failed');
+    const builtin = lib.list()[0]!;
+    expect(lib.startOf(r.entry.id)).toBe(0);
+    expect(lib.setStart(r.entry.id, 1234.56)).toBeCloseTo(1234.6, 6);
+    expect(lib.setStart(builtin.id, 500)).toBe(500);
+    // Shown with the entry; other entries are unchanged.
+    expect(lib.list().find((e) => e.id === r.entry.id)?.startM).toBeCloseTo(1234.6, 6);
+    expect(lib.list().filter((e) => e.startM !== undefined)).toHaveLength(2);
+    expect(JSON.parse(storage.map.get(ROUTE_STARTS_KEY)!)).toEqual({
+      [r.entry.id]: 1234.6,
+      [builtin.id]: 500,
+    });
+
+    const again = new RouteLibrary(storage);
+    expect(again.startOf(r.entry.id)).toBeCloseTo(1234.6, 6);
+    expect(again.startOf(builtin.id)).toBe(500);
+    // "Start from the beginning".
+    expect(again.setStart(builtin.id, 0)).toBe(0);
+    expect(again.list().find((e) => e.id === builtin.id)).not.toHaveProperty('startM');
+    expect(new RouteLibrary(storage).startOf(builtin.id)).toBe(0);
+    // Deleting a route forgets its start point.
+    again.remove(r.entry.id);
+    expect(JSON.parse(storage.map.get(ROUTE_STARTS_KEY)!)).toEqual({});
+    expect(again.setStart('no-such-route', 100)).toBeNull();
+  });
+
+  it('keeps start points on the route and survives corrupt or blocked storage', () => {
+    const storage = memoryStorage();
+    const lib = new RouteLibrary(storage);
+    const loop = lib.list().find((e) => e.loop)!;
+    const p2p = lib.list().find((e) => !e.loop)!;
+    expect(lib.setStart(loop.id, loop.totalDistanceM + 250)).toBeCloseTo(250, 0);
+    expect(lib.setStart(p2p.id, p2p.totalDistanceM * 2)).toBeCloseTo(p2p.totalDistanceM - 100, 0);
+    storage.map.set(ROUTE_STARTS_KEY, '{not json');
+    expect(new RouteLibrary(storage).startOf(loop.id)).toBe(0);
+    storage.map.set(
+      ROUTE_STARTS_KEY,
+      JSON.stringify({ [loop.id]: 'x', [p2p.id]: -5, other: Number.MAX_VALUE }),
+    );
+    const lib2 = new RouteLibrary(storage);
+    expect(lib2.startOf(loop.id)).toBe(0);
+    expect(lib2.startOf(p2p.id)).toBe(0);
+    const blocked = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    const lib3 = new RouteLibrary(blocked);
+    expect(lib3.setStart(loop.id, 300)).toBe(300); // kept for this session
+    expect(lib3.saveFailed).toBe(true);
+    expect(lib3.startOf(loop.id)).toBe(300);
   });
 
   it('deletes routes from storage', () => {

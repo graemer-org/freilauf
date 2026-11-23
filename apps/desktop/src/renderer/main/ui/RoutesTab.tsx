@@ -1,11 +1,14 @@
-import { useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
+import { normalizeRouteStart } from '@freilauf/routes';
 import { downloadText } from './download';
 import { useApp, useAppState } from './hooks';
 import { RouteOutline, RouteProfile } from './RouteGraphics';
+import { ProfilePicker } from './RoutePick';
 import {
   hasRouteState,
   routeActions,
+  routeJumps,
   type RouteActions,
   type RouteEntry,
   routeSharing,
@@ -20,9 +23,13 @@ import {
   formatClimb,
   formatGradient,
   formatKm,
+  formatRouteKm,
+  profilePointInfo,
   routeImageLabel,
   routeSummary,
   steepestGradient,
+  trackPointInfo,
+  trackPosition,
 } from './routeView';
 
 /** GPX files above this are rejected before they are read. */
@@ -83,7 +90,8 @@ function DeleteRoute({ id, actions }: { id: string; actions: RouteActions }) {
   );
 }
 
-function RouteDetails({
+/** A route's details (exported for the server-render tests). */
+export function RouteDetails({
   entry,
   id,
   actions,
@@ -96,6 +104,19 @@ function RouteDetails({
 }) {
   const app = useApp();
   const sharingId = useAppState(sharingRouteIdOf);
+  const riding = useAppState((s) => (s.live?.ride.state ?? 'idle') !== 'idle');
+  const jumps = useMemo(() => routeJumps(app), [app]);
+  const track = useMemo(() => jumps?.trackFor(entry.id) ?? null, [jumps, entry.id]);
+  const total = entry.totalDistanceM;
+  const startM = entry.startM ?? 0;
+  // Exact from the track when there is one; from the thumbnail profile otherwise.
+  const info = useCallback(
+    (m: number) => {
+      const at = normalizeRouteStart(entry, m);
+      return track ? trackPointInfo(track, at) : profilePointInfo(entry.profile, total, at);
+    },
+    [entry, track, total],
+  );
   const steepest = useMemo(
     () => steepestGradient(entry.profile, entry.totalDistanceM, 200),
     [entry.profile, entry.totalDistanceM],
@@ -117,9 +138,54 @@ function RouteDetails({
           loop={entry.loop}
           size="lg"
           label={`Map of ${label}`}
+          startPoint={track && startM > 0 ? trackPosition(track, startM) : undefined}
         />
-        <RouteProfile profile={entry.profile} size="lg" label={`Elevation profile of ${label}`} />
+        {jumps ? (
+          <ProfilePicker
+            mode="start"
+            testId="route-details-profile-pick"
+            label={`Elevation profile of ${label} Choose where the next ride starts.`}
+            distanceAt={(f) => f * total}
+            fractionOf={(m) => (total > 0 ? Math.max(0, Math.min(1, m / total)) : null)}
+            spanM={total}
+            info={info}
+            currentM={startM}
+            onPick={(m) => jumps.setStart(entry.id, m)}
+            disabled={riding}
+          >
+            <RouteProfile
+              profile={entry.profile}
+              size="lg"
+              startAt={startM > 0 && total > 0 ? startM / total : undefined}
+              label={`Elevation profile of ${label}`}
+            />
+          </ProfilePicker>
+        ) : (
+          <RouteProfile profile={entry.profile} size="lg" label={`Elevation profile of ${label}`} />
+        )}
       </div>
+      {jumps && (
+        <p className="rt-start-row" data-testid="route-start-row">
+          <span data-testid="route-start-info">
+            {startM > 0
+              ? `The next ride starts at ${formatRouteKm(startM)}.`
+              : riding
+                ? 'Rides start at the beginning.'
+                : 'Rides start at the beginning. Click the profile to start somewhere else.'}
+          </span>
+          {startM > 0 && (
+            <button
+              type="button"
+              className="btn btn-small"
+              data-testid="route-start-reset"
+              disabled={riding}
+              onClick={() => jumps.setStart(entry.id, 0)}
+            >
+              Start from the beginning
+            </button>
+          )}
+        </p>
+      )}
       {entry.description && <p className="wo-description">{entry.description}</p>}
       <dl className="rt-facts">
         <div>

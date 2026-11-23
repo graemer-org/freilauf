@@ -10,7 +10,9 @@ import { DEFAULT_SETTINGS } from '../../../shared/contract';
 import { CommunityService } from '../../core/communityService';
 import { MainApp } from './index';
 import type { RouteEntry } from './routesApi';
-import { importRouteFiles, MAX_ROUTE_IMPORT_BYTES } from './RoutesTab';
+import { AppContext } from './hooks';
+import { JumpConfirm } from './RoutePick';
+import { importRouteFiles, MAX_ROUTE_IMPORT_BYTES, RouteDetails } from './RoutesTab';
 import { syntheticTrack } from './scene/testTrack';
 
 const track = syntheticTrack(
@@ -308,6 +310,147 @@ describe('Ride tab on a route (SSR)', () => {
     expect(html).toContain('data-testid="ride-profile"');
     expect(html).not.toContain('data-testid="ride-route"');
     expect(html).not.toContain('The route sets the gradient');
+  });
+});
+
+describe('start point and jumps (SSR)', () => {
+  const JUMP_METHODS = {
+    jumpTo: () => 0,
+    setRouteStart: () => 0,
+    routeTrackFor: (id: string) => (id === 'r-hills' ? track : null),
+  };
+  const control = (over: Record<string, unknown> = {}) => ({
+    gradientLocked: true,
+    difficulty: 100,
+    trainerGradePercent: 6,
+    startM: 0,
+    jumps: 0,
+    lastJumpM: null,
+    ...over,
+  });
+  const onRoute = (
+    pos: RoutePosition,
+    rideState: 'idle' | 'riding',
+    routeControl: Record<string, unknown>,
+  ): AppState => {
+    const l = live(pos, rideState);
+    return state({ ...ROUTE_STATE, selectedRouteId: 'r-hills', routeTrack: track }, {
+      ...l,
+      routeControl: control(routeControl),
+    } as LiveState);
+  };
+  const attr = (html: string, testId: string, name: string): string | null => {
+    const tag = html.match(new RegExp(`<[^>]*data-testid="${testId}"[^>]*>`))?.[0] ?? '';
+    return tag.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? null;
+  };
+
+  it('the confirmation names the place, for a jump and for a start', () => {
+    const info = { distanceM: 42_312, elevationM: 811.6, gradePercent: 3.06 };
+    const noop = (): void => undefined;
+    const jump = renderToString(
+      createElement(JumpConfirm, { mode: 'jump', info, onConfirm: noop, onCancel: noop }),
+    );
+    expect(jump).toContain('role="dialog"');
+    expect(jump).toContain('Jump to km 42.3 · 812 m · +3.1 %');
+    expect(jump).toMatch(/data-testid="route-jump-ok"[^>]*>Jump</);
+    expect(jump).toMatch(/data-testid="route-jump-cancel"[^>]*>Cancel</);
+    expect(attr(jump, 'route-jump-confirm', 'data-distance')).toBe('42312.0');
+    const start = renderToString(
+      createElement(JumpConfirm, { mode: 'start', info, onConfirm: noop, onCancel: noop }),
+    );
+    expect(start).toContain('Start at km 42.3 · 812 m · +3.1 %');
+    expect(start).toMatch(/data-testid="route-jump-ok"[^>]*>Start here</);
+  });
+
+  it('before the ride: the profile sets the start point, which is marked and can be reset', () => {
+    const html = render(
+      onRoute(position({ distanceM: 1000, remainingM: 2000 }), 'idle', { startM: 1000 }),
+      'ride',
+      JUMP_METHODS,
+    );
+    expect(attr(html, 'route-profile-pick', 'role')).toBe('slider');
+    expect(attr(html, 'route-profile-pick', 'data-mode')).toBe('start');
+    expect(attr(html, 'route-profile-pick', 'tabindex')).toBe('0');
+    expect(attr(html, 'route-profile-pick', 'aria-valuetext')).toMatch(/^km 1\.0 · \d+ m · /);
+    expect(attr(html, 'route-profile-pick', 'aria-label')).toContain('Enter sets it as the start');
+    expect(attr(html, 'route-ahead-pick', 'role')).toBe('slider');
+    expect(html).toContain('data-testid="route-map-pick"');
+    expect(attr(html, 'route-start-marker', 'data-at')).toBe('0.3333');
+    expect(html).toContain('data-testid="route-map-start-marker"');
+    expect(html).toMatch(/data-testid="route-start-note"[^>]*>Starts at km 1\.0</);
+    expect(html).toMatch(
+      /aria-label="Start from the beginning"[^>]*data-testid="route-start-reset"|data-testid="route-start-reset"[^>]*aria-label="Start from the beginning"/,
+    );
+    // No confirmation until someone clicks.
+    expect(html).not.toContain('data-testid="route-jump-confirm"');
+  });
+
+  it('during the ride: the same controls jump, the start is noted, no reset', () => {
+    const html = render(
+      onRoute(position({ distanceM: 1500 }), 'riding', { startM: 1000 }),
+      'ride',
+      JUMP_METHODS,
+    );
+    expect(attr(html, 'route-profile-pick', 'data-mode')).toBe('jump');
+    expect(attr(html, 'route-profile-pick', 'aria-label')).toContain('Enter jumps there');
+    expect(html).toMatch(/data-testid="route-start-note"[^>]*>Started at km 1\.0</);
+    expect(html).not.toContain('data-testid="route-start-reset"');
+    // From the beginning: no marker, no note.
+    const plain = render(onRoute(position(), 'riding', {}), 'ride', JUMP_METHODS);
+    expect(plain).not.toContain('data-testid="route-start-marker"');
+    expect(plain).toMatch(/data-testid="route-start-note"[^>]*><\/span>/);
+  });
+
+  it('without the methods the route card is as before (no pickers)', () => {
+    const html = render(onRoute(position(), 'riding', {}), 'ride');
+    expect(html).toContain('data-testid="route-profile"');
+    expect(html).not.toContain('data-testid="route-profile-pick"');
+    expect(html).not.toContain('data-testid="route-map-pick"');
+  });
+
+  const details = (e: RouteEntry, liveState: LiveState | null = live(null, 'idle')): string =>
+    renderToString(
+      createElement(
+        AppContext.Provider,
+        { value: stubApp(state(ROUTE_STATE, liveState), JUMP_METHODS) },
+        createElement(RouteDetails, {
+          entry: e,
+          id: 'd1',
+          actions: {
+            importRoute: () => ({ ok: false as const, errors: [] }),
+            select: () => undefined,
+            remove: () => undefined,
+            exportRoute: () => null,
+          },
+          sharing: null,
+        }),
+      ),
+    );
+
+  it('Routes tab details: pick a start on the large profile; the stored one is marked', () => {
+    const fresh = details(entry());
+    expect(attr(fresh, 'route-details-profile-pick', 'role')).toBe('slider');
+    expect(attr(fresh, 'route-details-profile-pick', 'data-mode')).toBe('start');
+    expect(fresh).toContain(
+      'Rides start at the beginning. Click the profile to start somewhere else.',
+    );
+    expect(fresh).not.toContain('data-testid="route-start-marker"');
+    expect(fresh).not.toContain('data-testid="route-start-reset"');
+
+    const stored = details(entry({ startM: 1200 }));
+    expect(stored).toContain('The next ride starts at km 1.2.');
+    expect(attr(stored, 'route-start-marker', 'data-at')).toBe('0.4000');
+    expect(stored).toContain('data-testid="route-map-start-marker"');
+    expect(stored).toMatch(/data-testid="route-start-reset"[^>]*>Start from the beginning</);
+  });
+
+  it('Routes tab details: locked while riding', () => {
+    const html = details(entry({ startM: 1200 }), live(position(), 'riding'));
+    expect(attr(html, 'route-details-profile-pick', 'aria-disabled')).toBe('true');
+    expect(attr(html, 'route-details-profile-pick', 'tabindex')).toBe('-1');
+    expect(html).toMatch(
+      /data-testid="route-start-reset"[^>]*disabled=""|disabled=""[^>]*data-testid="route-start-reset"/,
+    );
   });
 });
 

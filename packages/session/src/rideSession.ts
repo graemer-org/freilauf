@@ -203,13 +203,17 @@ export class RideSession {
     }
   }
 
-  #position(): Partial<Pick<RideSample, 'lat' | 'lon' | 'altitudeM'>> {
+  #position(): Partial<Pick<RideSample, 'lat' | 'lon' | 'altitudeM' | 'segment'>> {
     const fix = this.#positionAt?.(this.#distanceM);
     if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return {};
+    const segment = fix.segment;
     return {
       lat: fix.lat,
       lon: fix.lon,
       ...(Number.isFinite(fix.altitudeM) ? { altitudeM: fix.altitudeM } : {}),
+      ...(typeof segment === 'number' && Number.isInteger(segment) && segment > 0
+        ? { segment }
+        : {}),
     };
   }
 

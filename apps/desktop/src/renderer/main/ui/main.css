@@ -4505,7 +4505,8 @@ div.server-note {
   grid-row: 1 / -1;
 }
 
-.rc-graphs > .rt-map {
+.rc-graphs > .rt-map,
+.rc-graphs > .rt-map-pick {
   flex: none;
 }
 
@@ -4526,7 +4527,8 @@ div.server-note {
   .rc-profiles {
     flex: 1.4 1 0;
   }
-  .rc-graphs > .rt-map {
+  .rc-graphs > .rt-map,
+  .rc-graphs > .rt-map-pick {
     flex: 1 1 0;
     min-height: 0;
     align-self: center;
@@ -4624,7 +4626,8 @@ div.server-note {
   min-width: 0;
 }
 
-.rt-details-graphs > .rt-profile {
+.rt-details-graphs > .rt-profile,
+.rt-details-graphs > .rt-pick {
   flex: 1 1 0;
   min-width: 0;
 }
@@ -4660,5 +4663,191 @@ div.server-note {
   }
   .rt-details-graphs > .rt-map {
     align-self: center;
+  }
+}
+
+/* ───────── choosing a point on a route: start point and jumps ───────── */
+
+.rt-pick {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-sm);
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+
+.rt-pick.is-disabled {
+  cursor: default;
+}
+
+.rt-pick:focus-visible,
+.rt-map-pick:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.rt-pick > .rt-profile-md,
+.rt-pick > .rt-ahead {
+  height: 100%;
+}
+
+.rt-pick > .rt-profile-lg {
+  height: 7rem;
+}
+
+.rt-pick-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--text);
+  pointer-events: none;
+}
+
+.rt-pick-tip {
+  position: absolute;
+  top: 2px;
+  z-index: 2;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.rt-profile-start {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+
+.rt-map-startpoint {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+
+.rt-map-pick {
+  position: relative;
+  display: flex;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+
+.rc-graphs > .rt-map-pick > .rt-map-md {
+  height: 100%;
+}
+
+.rt-map-pick-dot {
+  position: absolute;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.rt-map-pick-tip {
+  top: auto;
+  transform: translate(-50%, 0.6rem);
+}
+
+.rt-pick-confirm {
+  z-index: 1000;
+  display: grid;
+  gap: var(--s-2);
+  max-width: min(22rem, calc(100vw - 1rem));
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+}
+
+.rt-pick-confirm-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-pick-confirm-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.rt-pick-confirm-actions > .btn {
+  min-height: 2.25rem;
+}
+
+.rc-kind:empty {
+  display: none;
+}
+
+.rc-start {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-start:empty {
+  display: none;
+}
+
+.rc-start.is-jump {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.rc-start-reset {
+  flex: none;
+  min-height: 1.5rem;
+  padding: 0 var(--s-2);
+  font-size: var(--text-xs);
+}
+
+.rt-start-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* A jump along the route: the road scene cuts to the new place with a short fade. */
+@keyframes scene-cut {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.scene-road.is-cut .scene-canvas {
+  animation: scene-cut 320ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-road.is-cut .scene-canvas {
+    animation: none;
   }
 }
