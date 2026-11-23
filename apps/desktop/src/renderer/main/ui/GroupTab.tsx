@@ -20,7 +20,14 @@ import type {
 } from '../../core/groupConnection';
 import { useShallow } from 'zustand/react/shallow';
 import { formatGap, formatSpeed } from './format';
+import { startTogetherAction } from './groupShare';
 import { useApp, useAppState } from './hooks';
+
+/**
+ * Where the group UI is shown: its own page (`full`), compact on the start screen (`start`), or
+ * in the ride view's group panel (`ride`, with the live rider table).
+ */
+export type GroupVariant = 'full' | 'start' | 'ride';
 
 function CopyButton({
   text,
@@ -432,8 +439,35 @@ function OwnServer({
   );
 }
 
-function GroupStart({ ownServer }: { ownServer: string | null }) {
+function GroupStart({ ownServer, variant }: { ownServer: string | null; variant: GroupVariant }) {
   const app = useApp();
+  if (variant !== 'full') {
+    return (
+      <section className="group-start group-start-compact" data-testid="group-start">
+        {ownServer && (
+          <p className="hint" data-testid="group-own-server-note">
+            Rides you create use your own server, <code>{serverLabel(ownServer)}</code>.
+          </p>
+        )}
+        <div className="group-start-row">
+          <div className="group-start-create">
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="group-create"
+              onClick={() => void app.createGroup()}
+            >
+              Create group ride
+            </button>
+            <span className="hint">Then send your friends the invite link.</span>
+          </div>
+          <p className="or or-vertical">or</p>
+          <JoinForm label="Paste an invite you were sent" />
+        </div>
+        <HowItWorks />
+      </section>
+    );
+  }
   return (
     <section className="card group-start" data-testid="group-start">
       <h2 className="page-title">Ride together</h2>
@@ -544,7 +578,35 @@ function PeerStatus({
   );
 }
 
-export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
+/** Host or guest: a synchronised start for everyone in the room (before the ride only). */
+export function StartTogether() {
+  const app = useApp();
+  const idle = useAppState((s) => (s.live?.ride.state ?? 'idle') === 'idle');
+  const pending = useAppState((s) => s.groupCountdownS !== null);
+  const start = useMemo(() => startTogetherAction(app), [app]);
+  if (!start || !idle || pending) return null;
+  return (
+    <div className="start-together">
+      <button
+        type="button"
+        className="btn"
+        data-testid="group-start-together"
+        onClick={() => start(10)}
+      >
+        Start together in 10 s
+      </button>
+      <span className="hint">Everyone’s ride starts at the same moment.</span>
+    </div>
+  );
+}
+
+export function GroupTab({
+  onOpenSettings,
+  variant = 'full',
+}: {
+  onOpenSettings: () => void;
+  variant?: GroupVariant;
+}) {
   const app = useApp();
   const group = useAppState((s) => s.group);
   const signallingUrl = useAppState((s) => s.settings?.group.signallingUrl ?? '');
@@ -555,8 +617,10 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
   const canCreate = !useOwnServer || ownServerReady;
 
   return (
-    <div className="page group">
-      {group.phase === 'idle' && <GroupStart ownServer={ownServerReady ? signallingUrl : null} />}
+    <div className={variant === 'full' ? 'page group' : `group group-v-${variant}`}>
+      {group.phase === 'idle' && (
+        <GroupStart ownServer={ownServerReady ? signallingUrl : null} variant={variant} />
+      )}
 
       {group.phase === 'connecting' && (
         <section className="card group-status" role="status" data-testid="group-connecting">
@@ -629,8 +693,8 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
                 {group.joinLink}
               </p>
               <p className="hint">
-                <strong>Friends only need this link.</strong> They paste it into their Group tab —
-                no account, nothing to set up.
+                <strong>Friends only need this link.</strong> They paste it under “Group ride” on
+                their start screen — no account, nothing to set up.
               </p>
             </div>
             <div className="button-row">
@@ -650,7 +714,7 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
               </button>
             </div>
           </div>
-          <div className="room-meta">
+          <div className={variant === 'ride' ? 'room-meta is-quiet' : 'room-meta'}>
             <span className="room-label">
               {group.transport === 'relays' ? 'Invite code' : 'Room code'}
             </span>
@@ -672,11 +736,13 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
             roomCode={group.roomCode}
             transport={group.transport}
           />
-          <RiderTable />
+          {variant !== 'start' && <RiderTable />}
+          {variant !== 'full' && <StartTogether />}
         </section>
       )}
 
       {group.phase === 'joined' &&
+        variant !== 'ride' &&
         (group.transport === 'relays' ? (
           <HowItWorks />
         ) : (
@@ -688,7 +754,7 @@ export function GroupTab({ onOpenSettings }: { onOpenSettings: () => void }) {
           </p>
         ))}
 
-      {group.phase !== 'joined' && group.phase !== 'connecting' && (
+      {group.phase !== 'joined' && group.phase !== 'connecting' && variant !== 'ride' && (
         <OwnServer
           useOwnServer={useOwnServer}
           signallingUrl={signallingUrl}

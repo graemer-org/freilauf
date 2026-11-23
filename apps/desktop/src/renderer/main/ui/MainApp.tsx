@@ -1,165 +1,316 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
-import type { App, AppState } from '../appStore';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import type { App } from '../appStore';
+import type { ActivityTab } from './ActivityScreen';
+import { ActivityScreen } from './ActivityScreen';
 import { DevicePicker, DevicesTab } from './DevicesTab';
-import { FtpOutcomeDialog } from './FtpOutcomeDialog';
-import { GroupTab } from './GroupTab';
-import { ConnectionBanners, DeviceChips } from './Header';
-import { HistoryTab } from './HistoryTab';
-import { CommunityTab } from './CommunityTab';
-import { AppContext, useAppState } from './hooks';
+import { RideReturnBar } from './Header';
+import { AppContext, isEditableTarget, useAppState } from './hooks';
 import { Notices } from './Notices';
-import { RideTab } from './RideTab';
+import { readPrefs, writePrefs } from './prefs';
+import { RideView } from './RideView';
+import { routeActions } from './routesApi';
 import { RoutesTab } from './RoutesTab';
 import { SettingsTab } from './SettingsTab';
+import { StartScreen } from './StartScreen';
+import { SummaryScreen } from './SummaryScreen';
 import { WorkoutsTab } from './WorkoutsTab';
 import './main.css';
 
-export type TabId =
-  'ride' | 'workouts' | 'routes' | 'devices' | 'group' | 'community' | 'history' | 'settings';
+/**
+ * The main window's screens. The start screen is home; the ride fills the window; the summary
+ * follows Finish. Workouts and Routes are pickers inside the start flow; Devices, Activity and
+ * Settings are quiet places of their own.
+ */
+export type ScreenId =
+  'start' | 'ride' | 'summary' | 'workouts' | 'routes' | 'devices' | 'activity' | 'settings';
 
-const TABS: readonly { id: TabId; label: string }[] = [
-  { id: 'ride', label: 'Ride' },
-  { id: 'workouts', label: 'Workouts' },
-  { id: 'routes', label: 'Routes' },
-  { id: 'devices', label: 'Devices' },
-  { id: 'group', label: 'Group' },
-  { id: 'community', label: 'Community' },
-  { id: 'history', label: 'History' },
-  { id: 'settings', label: 'Settings' },
-];
+/** A screen, or a sub-place of one (Activity's two tabs, the start screen's group section). */
+export type InitialScreen = ScreenId | 'history' | 'community' | 'group';
 
-/** Ride, unless there is no trainer to ride with yet. */
-export function defaultTab(state: AppState): TabId {
-  if (state.simMode) return 'ride';
-  const remembered = state.settings?.devices.trainer !== undefined;
-  const connected = state.live?.devices.trainer?.state === 'connected';
-  return remembered || connected ? 'ride' : 'devices';
-}
+/** Screens with a Back button (and Escape): everything but start, ride and summary. */
+const FOCUSED: ReadonlySet<ScreenId> = new Set([
+  'workouts',
+  'routes',
+  'devices',
+  'activity',
+  'settings',
+]);
 
-function TabBar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void }) {
-  const refs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const i = TABS.findIndex((t) => t.id === tab);
-    const next = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
-    if (next) {
-      onSelect(next.id);
-      refs.current[next.id]?.focus();
-    }
-  };
+const SCREEN_NAME: Record<ScreenId, string> = {
+  start: 'Start',
+  ride: 'Ride',
+  summary: 'Summary',
+  workouts: 'Workouts',
+  routes: 'Routes',
+  devices: 'Devices',
+  activity: 'Activity',
+  settings: 'Settings',
+};
+
+/** Title shown on the focused screens whose content has none of its own. */
+const SCREEN_TITLE: Partial<Record<ScreenId, string>> = {
+  devices: 'Devices',
+  activity: 'Activity',
+  settings: 'Settings',
+};
+
+function ScreenHead({
+  screen,
+  backTo,
+  onBack,
+}: {
+  screen: ScreenId;
+  backTo: ScreenId;
+  onBack: () => void;
+}) {
+  const title = SCREEN_TITLE[screen];
   return (
-    <div className="tabs" role="tablist" aria-label="Sections" onKeyDown={onKeyDown}>
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          ref={(el) => {
-            refs.current[t.id] = el;
-          }}
-          type="button"
-          role="tab"
-          id={`tab-${t.id}`}
-          aria-selected={tab === t.id}
-          aria-controls={`panel-${t.id}`}
-          tabIndex={tab === t.id ? 0 : -1}
-          className="tab"
-          data-testid={`tab-${t.id}`}
-          onClick={() => onSelect(t.id)}
-        >
-          {t.label}
-        </button>
-      ))}
+    <div className="screen-head">
+      <button
+        type="button"
+        className="btn btn-quiet btn-small back-btn"
+        data-testid="screen-back"
+        aria-label={`Back to ${SCREEN_NAME[backTo].toLowerCase()}`}
+        onClick={onBack}
+      >
+        <span aria-hidden="true">‹</span> {SCREEN_NAME[backTo]}
+      </button>
+      {title && <h1 className="screen-title">{title}</h1>}
     </div>
   );
 }
 
-/** A freewheel: outer ring and hub. Drawn here, no external asset. */
-function BrandMark() {
-  return (
-    <svg className="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="2.2" />
-      <circle cx="10" cy="10" r="2.6" fill="currentColor" />
-    </svg>
-  );
+function initialStack(initial: InitialScreen | undefined): ScreenId[] {
+  switch (initial) {
+    case undefined:
+    case 'start':
+    case 'group':
+      return ['start'];
+    case 'ride':
+    case 'summary':
+      return [initial];
+    case 'history':
+    case 'community':
+      return ['start', 'activity'];
+    default:
+      return ['start', initial];
+  }
 }
 
-function SimBadge() {
-  const simMode = useAppState((s) => s.simMode);
-  if (!simMode) return null;
-  return (
-    <span className="badge badge-sim" data-testid="sim-badge">
-      Simulation
-    </span>
-  );
+/** Picks the last ride's workout and route again (not an FTP test: nobody repeats one at once). */
+function restoreLastChoice(app: App, afterFinish = false): void {
+  const s = app.store.getState();
+  // Right after Finish the live state may still say "riding" for one tick; the ride is over.
+  if (!afterFinish && (s.live?.ride.state ?? 'idle') !== 'idle') return;
+  const { lastWorkoutId, lastRouteId } = readPrefs();
+  if (
+    s.selectedWorkoutId === null &&
+    lastWorkoutId !== null &&
+    s.workouts.some((e) => e.workout.id === lastWorkoutId && e.ftpTest === undefined)
+  ) {
+    app.selectWorkout(lastWorkoutId);
+  }
+  if (
+    s.selectedRouteId === null &&
+    lastRouteId !== null &&
+    s.routes.some((r) => r.id === lastRouteId)
+  ) {
+    routeActions(app)?.select(lastRouteId);
+  }
 }
 
-function Shell({ app, initialTab }: { app: App; initialTab: TabId | undefined }) {
-  const [tab, setTabState] = useState<TabId>(() => initialTab ?? defaultTab(app.store.getState()));
-  // Opening Workouts from an "FTP test" link scrolls to the tests.
+function Shell({
+  app,
+  initial,
+  extras,
+}: {
+  app: App;
+  initial: InitialScreen | undefined;
+  extras: ReactNode;
+}) {
+  const [stack, setStack] = useState<ScreenId[]>(() => initialStack(initial));
+  const [activityTab, setActivityTab] = useState<ActivityTab>(
+    initial === 'community' ? 'community' : 'history',
+  );
+  const [withGroup, setWithGroup] = useState(
+    () => initial === 'group' || app.store.getState().group.phase !== 'idle',
+  );
+  // Opening Workouts for an FTP test scrolls to the tests.
   const [ftpFocus, setFtpFocus] = useState(false);
-  const setTab = (next: TabId): void => {
+  const screen = stack[stack.length - 1] ?? 'start';
+  const backTo = stack[stack.length - 2] ?? 'start';
+
+  const go = (next: ScreenId, opts: { ftp?: boolean } = {}): void => {
+    setFtpFocus(opts.ftp === true);
+    setStack((s) => (s[s.length - 1] === next ? s : [...s, next]));
+  };
+  const reset = (next: ScreenId): void => {
     setFtpFocus(false);
-    setTabState(next);
+    setStack(next === 'start' ? ['start'] : [next]);
   };
-  const openFtpTests = (): void => {
-    setTabState('workouts');
-    setFtpFocus(true);
+  const back = (): void => {
+    setFtpFocus(false);
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : ['start']));
   };
-  // Each tab starts at the top (the panel element is shared between tabs).
+  const toRide = (): void => reset('ride');
+  const startRiding = (): void => {
+    if ((app.store.getState().live?.ride.state ?? 'idle') === 'idle') app.startRide();
+    reset('ride');
+  };
+
+  // Once per launch: the last choice is preselected.
+  useEffect(() => {
+    restoreLastChoice(app);
+  }, [app]);
+
+  // A ride that starts (button, controller, group countdown): remember what it was; from the
+  // start screen, show it.
+  const rideState = useAppState((s) => s.live?.ride.state ?? 'idle');
+  const prevRide = useRef(rideState);
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  useEffect(() => {
+    const prev = prevRide.current;
+    prevRide.current = rideState;
+    if (prev !== 'idle' || rideState !== 'riding') return;
+    const s = app.store.getState();
+    writePrefs({ lastWorkoutId: s.selectedWorkoutId, lastRouteId: s.selectedRouteId });
+    if (screenRef.current === 'start') reset('ride');
+  }, [app, rideState]);
+
+  // A group countdown begins: the ride view is where it is shown.
+  const countdown = useAppState((s) => s.groupCountdownS !== null);
+  useEffect(() => {
+    if (countdown && (screenRef.current === 'start' || screenRef.current === 'summary'))
+      reset('ride');
+  }, [countdown]);
+
+  // Escape goes back from the pickers and the other focused screens.
+  useEffect(() => {
+    if (!FOCUSED.has(screen)) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || isEditableTarget(e.target)) return;
+      if (app.store.getState().picker) return;
+      e.preventDefault();
+      back();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [app, screen]);
+
+  // Each screen starts at the top (the scrolling element is shared).
   const mainRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     mainRef.current?.scrollTo?.(0, 0);
-  }, [tab]);
+  }, [screen, activityTab]);
+
+  const leaveSummary = (): void => {
+    if (app.store.getState().ftpOutcome) app.dismissFtpOutcome();
+  };
+
   return (
-    <div className="app">
-      <div className="chrome">
-        <header className="app-header">
-          <div className="brand">
-            <BrandMark />
-            <span className="brand-name">Freilauf</span>
-            <SimBadge />
-          </div>
-          <DeviceChips />
-        </header>
-        <nav className="app-nav" aria-label="Main">
-          <TabBar tab={tab} onSelect={setTab} />
-        </nav>
-        <ConnectionBanners />
-      </div>
+    <div className={`app app-${screen}`}>
+      <div className="chrome">{screen !== 'ride' && <RideReturnBar onReturn={toRide} />}</div>
       <main
         ref={mainRef}
-        className="app-main"
-        role="tabpanel"
-        id={`panel-${tab}`}
-        aria-labelledby={`tab-${tab}`}
-        data-testid={`panel-${tab}`}
+        className={`app-main screen-${screen}`}
+        id={`panel-${screen}`}
+        aria-label={SCREEN_NAME[screen]}
+        data-testid={`panel-${screen}`}
       >
-        {tab === 'ride' && <RideTab onOpenWorkouts={() => setTab('workouts')} />}
-        {tab === 'workouts' && (
+        {FOCUSED.has(screen) && <ScreenHead screen={screen} backTo={backTo} onBack={back} />}
+        {screen === 'start' && (
+          <StartScreen
+            onStart={startRiding}
+            onOpenRide={toRide}
+            onPickWorkout={() => go('workouts')}
+            onPickFtpTest={() => go('workouts', { ftp: true })}
+            onPickRoute={() => go('routes')}
+            onOpenDevices={() => go('devices')}
+            onOpenActivity={() => go('activity')}
+            onOpenSettings={() => go('settings')}
+            withGroup={withGroup}
+            onWithGroup={setWithGroup}
+            extras={extras}
+          />
+        )}
+        {screen === 'ride' && (
+          <RideView
+            onLeave={() => reset('start')}
+            onFinished={() => {
+              // The summary says it already; the "Ride saved." toast would only repeat it.
+              for (const n of app.store.getState().notices) {
+                if (n.kind === 'info' && /^Ride (saved|was shorter)/.test(n.message)) {
+                  app.dismissNotice(n.id);
+                }
+              }
+              reset('summary');
+            }}
+            onOpenWorkouts={() => go('workouts')}
+            onOpenDevices={() => go('devices')}
+            onOpenSettings={() => go('settings')}
+            extras={extras}
+          />
+        )}
+        {screen === 'summary' && (
+          <SummaryScreen
+            onDone={() => {
+              leaveSummary();
+              reset('start');
+              restoreLastChoice(app, true);
+            }}
+            onAgain={() => {
+              leaveSummary();
+              const { lastWorkoutId } = readPrefs();
+              if (lastWorkoutId !== null && app.store.getState().selectedWorkoutId === null) {
+                app.selectWorkout(lastWorkoutId);
+              }
+              // The finished ride is over even if the live state has not ticked yet.
+              app.startRide();
+              reset('ride');
+            }}
+          />
+        )}
+        {screen === 'workouts' && (
           <WorkoutsTab
-            onGoToRide={() => setTab('ride')}
-            onOpenSettings={() => setTab('settings')}
+            onGoToRide={back}
+            onOpenSettings={() => go('settings')}
             focusFtpTests={ftpFocus}
           />
         )}
-        {tab === 'routes' && <RoutesTab onGoToRide={() => setTab('ride')} />}
-        {tab === 'devices' && <DevicesTab />}
-        {tab === 'group' && <GroupTab onOpenSettings={() => setTab('settings')} />}
-        {tab === 'community' && (
-          <CommunityTab onOpenGroup={() => setTab('group')} onOpenFtpTests={openFtpTests} />
+        {screen === 'routes' && <RoutesTab onGoToRide={back} />}
+        {screen === 'devices' && <DevicesTab />}
+        {screen === 'activity' && (
+          <ActivityScreen
+            tab={activityTab}
+            onTab={setActivityTab}
+            onOpenGroup={() => {
+              setWithGroup(true);
+              reset('start');
+            }}
+            onOpenFtpTests={() => go('workouts', { ftp: true })}
+          />
         )}
-        {tab === 'history' && <HistoryTab />}
-        {tab === 'settings' && <SettingsTab onOpenFtpTests={openFtpTests} />}
+        {screen === 'settings' && (
+          <SettingsTab onOpenFtpTests={() => go('workouts', { ftp: true })} />
+        )}
       </main>
       <DevicePicker />
-      <FtpOutcomeDialog />
       <Notices />
     </div>
   );
 }
 
-function Gate({ app, initialTab }: { app: App; initialTab: TabId | undefined }) {
+function Gate({
+  app,
+  initial,
+  extras,
+}: {
+  app: App;
+  initial: InitialScreen | undefined;
+  extras: ReactNode;
+}) {
   const loaded = useAppState((s) => s.settings !== null && s.live !== null);
   if (!loaded) {
     return (
@@ -169,21 +320,23 @@ function Gate({ app, initialTab }: { app: App; initialTab: TabId | undefined }) 
       </div>
     );
   }
-  return <Shell app={app} initialTab={initialTab} />;
+  return <Shell app={app} initial={initial} extras={extras} />;
 }
 
 export interface MainAppProps {
   /** Must be a stable instance for the window's lifetime. */
   app: App;
-  /** Tab shown first; defaults to Ride, or Devices when there is no trainer yet. */
-  initialTab?: TabId;
+  /** Screen shown first; the start screen by default. */
+  initialScreen?: InitialScreen;
+  /** Extra controls for the start screen and the ride view's toolbar (the web pop-out). */
+  extras?: ReactNode;
 }
 
 /** Root of the main window. */
-export function MainApp({ app, initialTab }: MainAppProps) {
+export function MainApp({ app, initialScreen, extras }: MainAppProps) {
   return (
     <AppContext value={app}>
-      <Gate app={app} initialTab={initialTab} />
+      <Gate app={app} initial={initialScreen} extras={extras} />
     </AppContext>
   );
 }

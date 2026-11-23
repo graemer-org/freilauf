@@ -20,7 +20,8 @@ heart rate and other extras in the file are ignored. Files up to 20 MB / 500 000
 
 ## Importing
 
-Open the **Routes** tab and import the file. Freilauf shows the length, climbing and the profile.
+On the start screen, click the **Route** card: the route library opens as a picker. Import the
+file there (button, or drop it on the window). Freilauf shows the length, climbing and the profile.
 If the file has several segments they are joined in order (you get a note). A file without any
 elevation is accepted as a **flat route** — you are told so.
 
@@ -63,9 +64,10 @@ confirmation asks before anything happens —
 
 - **before the ride**: "Start at km 42.3 · 812 m · +3.1 %" → **Start here**. The ride will start
   there. The start point is remembered for this route (next time it starts there again) and is
-  marked on the profile and the map; **Reset** on the Ride tab or **Start from the beginning** in
-  the route's details in the **Routes** tab go back to the start. The larger profile in the
-  Routes tab's details works the same way.
+  marked on the profile and the map, and the start screen names it ("Rolling loop · 12.0 km ·
+  starts at km 4.2"). **Reset** on the ride view's route card or **Start from the beginning** in
+  the route's details in the route picker go back to the start. The larger profile in the
+  picker's route details works the same way.
 - **during the ride**: "Jump to km 42.3 · 812 m · +3.1 %" → **Jump**. A stray click never moves
   you: nothing happens without the second click (Cancel, Escape or a click elsewhere close it).
 
@@ -83,7 +85,7 @@ What a jump changes and what it does not:
 
 - **Only where you are on the route.** Your distance, time, energy, points and community totals
   keep counting what you actually rode; "To go" and "Climbing left" are counted from the new
-  place. The Ride tab shows "Started at km …" quietly, and "Jumped to km …" for a few seconds
+  place. The ride view shows "Started at km …" quietly, and "Jumped to km …" for a few seconds
   after a jump. The road view cuts to the new place with a short fade (none with reduced motion).
 - **The trainer** gets the new gradient straight away instead of waiting for the next regular
   update, but a big change is eased in: at most 3 percentage points per second (−5 % → +7 % goes

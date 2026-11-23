@@ -446,11 +446,12 @@ Actions on `App`: `setLeaderboardView`, `communityLeaderboard`, `setContactVisib
 message for the rider). `CHALLENGE_TEMPLATES` describes the seven templates (metrics, target
 ranges) for the creation form.
 
-### The Community tab
+### In the app: Activity → Community
 
 `apps/desktop/src/renderer/main/ui/CommunityTab.tsx` (with `CommunityChallenges.tsx`,
-`CommunityFriends.tsx` and the pure helpers in `communityView.ts`), after the Group tab, in the
-desktop app and the browser build alike:
+`CommunityFriends.tsx` and the pure helpers in `communityView.ts`), reached from the start
+screen's **Activity** link (next to **Rides**), in the desktop app and the browser build alike.
+After each ride the post-ride summary shows the points of that ride and the week's total.
 
 - **Your week**: points large, distance, ride time, elevation, energy and rides of the current
   week, the month so far, a one-line explanation of points and a "How points work" disclosure
@@ -506,4 +507,4 @@ utcOffsetMin: -new Date(startedAt).getTimezoneOffset(), groupRide })` with the F
    - On `onDocument` `available`: collect that peer's community documents from
      `getSharedDocuments()` and call `mergeIncoming(state, { peerId, peerName }, docs, now)`;
      update the map with `riderId`, store the state, show `changes`.
-5. **UI**: done in this app — see [The Community tab](#the-community-tab).
+5. **UI**: done in this app — see [In the app: Activity → Community](#in-the-app-activity--community).

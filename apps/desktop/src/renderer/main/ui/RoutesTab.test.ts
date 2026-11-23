@@ -152,18 +152,18 @@ const ROUTE_STATE = {
   routeTrack: null,
   sharedRoutes: [],
   sharingRouteId: null,
+  lastRide: null,
 };
 
 const render = (s: AppState, tab: 'routes' | 'ride', methods?: Record<string, unknown>): string =>
-  renderToString(createElement(MainApp, { app: stubApp(s, methods), initialTab: tab }));
+  renderToString(createElement(MainApp, { app: stubApp(s, methods), initialScreen: tab }));
 
 describe('Routes tab (SSR)', () => {
-  it('sits between Workouts and Devices', () => {
+  it('is a picker reached from the start screen, with a way back', () => {
     const html = render(state(ROUTE_STATE), 'routes');
-    const i = (id: string): number => html.indexOf(`data-testid="tab-${id}"`);
-    expect(i('workouts')).toBeLessThan(i('routes'));
-    expect(i('routes')).toBeLessThan(i('devices'));
     expect(html).toContain('data-testid="panel-routes"');
+    expect(html).toContain('data-testid="screen-back"');
+    expect(html).not.toContain('role="tablist"');
   });
 
   it('lists built-in and imported routes as cards with thumbnails', () => {

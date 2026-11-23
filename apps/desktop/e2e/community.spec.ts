@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { launch, windows } from './helpers';
+import { atStart, finishRide, launch, openRideView, windows } from './helpers';
 
 /**
  * Community totals are fed by finished rides. This checks the persisted community state through
@@ -18,14 +18,18 @@ test('a finished sim ride counts towards this week with points', async () => {
     main.on('pageerror', (e) => errors.push(e.message));
     main.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 
-    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+    await atStart(main);
+    await openRideView(main);
     // Hard effort (IF capped at 1.3 with the default FTP of 200 W): ~2 points in 25 s.
     await main.getByTestId('sim-effort').fill('400');
     await main.getByTestId('ride-start').click();
     await expect(main.getByTestId('stat-time')).toContainText(/0:2[5-9]/, { timeout: 40_000 });
-    await main.getByTestId('ride-finish').click();
-    await main.getByTestId('ride-finish-confirm').click();
-    await expect(main.getByTestId('ride-start')).toBeVisible();
+    await finishRide(main);
+    // The summary names the points of this ride and the week so far.
+    await expect(main.getByTestId('summary-points')).toContainText(/\+[1-9]/);
+    await expect(main.getByTestId('summary-week-points')).toContainText(/[1-9]\d* this week/);
+    await main.getByTestId('summary-done').click();
+    await expect(main.getByTestId('start-screen')).toBeVisible();
 
     const thisWeek = () =>
       main.evaluate(() => {

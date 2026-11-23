@@ -5,7 +5,7 @@ import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
 import { routeDifficultyOf, setRouteDifficulty } from './routesApi';
-import { ButtonMapping, DiagnosticsCard, LeverMapping } from './SettingsExtras';
+import { DiagnosticsCard } from './SettingsExtras';
 
 export const MAX_NAME_LENGTH = 24;
 const MAX_TILES = 12;
@@ -124,7 +124,7 @@ function TileRow({
   );
 }
 
-function TileEditor({ tiles }: { tiles: OverlayTile[] }) {
+export function TileEditor({ tiles }: { tiles: OverlayTile[] }) {
   const app = useApp();
   const save = (next: OverlayTile[]): void => {
     void app.updateSettings({ overlay: { tiles: next } });
@@ -188,9 +188,8 @@ function TileEditor({ tiles }: { tiles: OverlayTile[] }) {
 export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void }) {
   const app = useApp();
   const settings = useAppState((s) => s.settings);
-  const editMode = useAppState((s) => s.overlayEditMode);
   if (!settings) return null;
-  const { rider, shifting, overlay, group } = settings;
+  const { rider, shifting, group } = settings;
   const update = (patch: Parameters<typeof app.updateSettings>[0]): void => {
     void app.updateSettings(patch);
   };
@@ -259,89 +258,11 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
         </div>
       </section>
 
-      <section className="settings-section" aria-labelledby="set-shifting">
-        <h2 id="set-shifting" className="section-title section-head">
-          Shifting
-        </h2>
-        <div className="card rows">
-          <NumberField
-            label="Physical gear ratio"
-            testId="settings-ratio"
-            value={shifting.physicalRatio}
-            min={0.1}
-            max={20}
-            step={0.01}
-            hint="Chainring teeth ÷ cog teeth of the gear the bike is actually in, e.g. 34 ÷ 14 ≈ 2.43."
-            onCommit={(v) => v !== null && update({ shifting: { physicalRatio: v } })}
-          />
-          <NumberField
-            label="Trainer assumed mass"
-            unit="kg"
-            testId="settings-trainer-mass"
-            value={shifting.trainerMassKg}
-            min={1}
-            max={500}
-            step={0.5}
-            allowEmpty
-            placeholder={`${rider.massKg + rider.bikeMassKg} (rider + bike)`}
-            hint="Leave empty if the trainer uses your rider + bike mass."
-            onCommit={(v) => update({ shifting: { trainerMassKg: v } })}
-          />
-        </div>
-        <ButtonMapping buttons={shifting.buttons} />
-        <LeverMapping levers={shifting.levers} />
-      </section>
-
-      <RouteSettings />
-
       <section className="settings-section" aria-labelledby="set-overlay">
         <h2 id="set-overlay" className="section-title section-head">
           Overlay
         </h2>
-        <div className="card rows">
-          <Toggle
-            label="Show overlay"
-            testId="settings-overlay-visible"
-            checked={overlay.visible}
-            onChange={(visible) => update({ overlay: { visible } })}
-          />
-          <Toggle
-            label="Edit overlay position"
-            testId="settings-overlay-edit"
-            checked={editMode}
-            hint={
-              <>
-                Drag and resize the overlay while this is on. Hotkey:{' '}
-                <kbd>{overlay.editHotkey}</kbd>
-              </>
-            }
-            onChange={(edit) => app.setOverlayEditMode(edit)}
-          />
-          <Toggle
-            label="Show group riders on the overlay"
-            checked={overlay.showGroup}
-            onChange={(showGroup) => update({ overlay: { showGroup } })}
-          />
-          <RangeField
-            label="Backdrop opacity"
-            value={overlay.backdropOpacity}
-            min={0}
-            max={1}
-            step={0.05}
-            format={(v) => `${Math.round(v * 100)} %`}
-            onCommit={(backdropOpacity) => update({ overlay: { backdropOpacity } })}
-          />
-          <TextField
-            label="Edit hotkey"
-            value={overlay.editHotkey}
-            maxLength={100}
-            validate={nonEmpty(100)}
-            errorText="Enter a shortcut such as CommandOrControl+Shift+O."
-            hint="Format: modifiers and a key joined by +, e.g. CommandOrControl+Shift+O."
-            onCommit={(editHotkey) => update({ overlay: { editHotkey } })}
-          />
-        </div>
-        <TileEditor tiles={overlay.tiles} />
+        <OverlaySettings />
       </section>
 
       <section className="settings-section" aria-labelledby="set-group">
@@ -354,37 +275,48 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
             others, which only pass on an encrypted handshake. The options below are for special
             cases.
           </p>
-          <Toggle
-            label="Use my own signalling server"
-            testId="settings-own-server"
-            checked={group.useOwnServer}
-            hint="Rides you create go through your own server instead of the public relays. Old-style invite links with a server address work either way."
-            onChange={(useOwnServer) => update({ group: { useOwnServer } })}
-          />
-          <TextField
-            label="Own signalling server URL"
-            testId="settings-signalling"
-            value={group.signallingUrl}
-            maxLength={500}
-            validate={validUrl}
-            errorText="Enter a ws:// or wss:// address, or leave it empty."
-            hint="Only used with the option above. Friends who join with your invite link use it automatically."
-            placeholder="wss://your-server.example/signal"
-            onCommit={(signallingUrl) => update({ group: { signallingUrl } })}
-          />
-          <TextField
-            label="Relay servers (advanced)"
-            testId="settings-relays"
-            value={group.relayUrls.join(' ')}
-            maxLength={4000}
-            validate={validRelayList}
-            errorText="Enter wss:// addresses separated by spaces, or leave it empty for the built-in ones."
-            hint="Empty = the built-in public relays. Everyone in a ride needs at least one relay in common, so only change this together with your friends."
-            placeholder="wss://relay.example.org wss://relay2.example.org"
-            onCommit={(text) => update({ group: { relayUrls: relayList(text) } })}
-          />
         </div>
+        <details
+          className="card disclosure settings-advanced"
+          data-testid="settings-group-advanced"
+          open={group.useOwnServer || group.relayUrls.length > 0}
+        >
+          <summary>Advanced: own signalling server and relays</summary>
+          <div className="rows">
+            <Toggle
+              label="Use my own signalling server"
+              testId="settings-own-server"
+              checked={group.useOwnServer}
+              hint="Rides you create go through your own server instead of the public relays. Old-style invite links with a server address work either way."
+              onChange={(useOwnServer) => update({ group: { useOwnServer } })}
+            />
+            <TextField
+              label="Own signalling server URL"
+              testId="settings-signalling"
+              value={group.signallingUrl}
+              maxLength={500}
+              validate={validUrl}
+              errorText="Enter a ws:// or wss:// address, or leave it empty."
+              hint="Only used with the option above. Friends who join with your invite link use it automatically."
+              placeholder="wss://your-server.example/signal"
+              onCommit={(signallingUrl) => update({ group: { signallingUrl } })}
+            />
+            <TextField
+              label="Relay servers (advanced)"
+              testId="settings-relays"
+              value={group.relayUrls.join(' ')}
+              maxLength={4000}
+              validate={validRelayList}
+              errorText="Enter wss:// addresses separated by spaces, or leave it empty for the built-in ones."
+              hint="Empty = the built-in public relays. Everyone in a ride needs at least one relay in common, so only change this together with your friends."
+              placeholder="wss://relay.example.org wss://relay2.example.org"
+              onCommit={(text) => update({ group: { relayUrls: relayList(text) } })}
+            />
+          </div>
+        </details>
       </section>
+
+      <RouteSettings />
 
       <section className="settings-section" aria-labelledby="set-diagnostics">
         <h2 id="set-diagnostics" className="section-title section-head">
@@ -392,7 +324,102 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
         </h2>
         <DiagnosticsCard />
       </section>
+
+      <section className="settings-section" aria-labelledby="set-advanced">
+        <h2 id="set-advanced" className="section-title section-head">
+          Advanced
+        </h2>
+        <details className="card disclosure settings-advanced" data-testid="settings-advanced">
+          <summary>Trainer and shifting details</summary>
+          <div className="rows">
+            <NumberField
+              label="Physical gear ratio"
+              testId="settings-ratio"
+              value={shifting.physicalRatio}
+              min={0.1}
+              max={20}
+              step={0.01}
+              hint="Chainring teeth ÷ cog teeth of the gear the bike is actually in, e.g. 34 ÷ 14 ≈ 2.43."
+              onCommit={(v) => v !== null && update({ shifting: { physicalRatio: v } })}
+            />
+            <NumberField
+              label="Trainer assumed mass"
+              unit="kg"
+              testId="settings-trainer-mass"
+              value={shifting.trainerMassKg}
+              min={1}
+              max={500}
+              step={0.5}
+              allowEmpty
+              placeholder={`${rider.massKg + rider.bikeMassKg} (rider + bike)`}
+              hint="Leave empty if the trainer uses your rider + bike mass."
+              onCommit={(v) => update({ shifting: { trainerMassKg: v } })}
+            />
+          </div>
+        </details>
+        <p className="hint section-foot">
+          Rarely needed. Controller buttons and levers are set up on the Devices screen.
+        </p>
+      </section>
     </div>
+  );
+}
+
+/** Overlay options; also offered in the ride view's Overlay panel, next to the overlay itself. */
+export function OverlaySettings() {
+  const app = useApp();
+  const overlay = useAppState((s) => s.settings?.overlay ?? null);
+  const editMode = useAppState((s) => s.overlayEditMode);
+  if (!overlay) return null;
+  const update = (patch: Parameters<typeof app.updateSettings>[0]): void => {
+    void app.updateSettings(patch);
+  };
+  return (
+    <>
+      <div className="card rows">
+        <Toggle
+          label="Show overlay"
+          testId="settings-overlay-visible"
+          checked={overlay.visible}
+          onChange={(visible) => update({ overlay: { visible } })}
+        />
+        <Toggle
+          label="Edit overlay position"
+          testId="settings-overlay-edit"
+          checked={editMode}
+          hint={
+            <>
+              Drag and resize the overlay while this is on. Hotkey: <kbd>{overlay.editHotkey}</kbd>
+            </>
+          }
+          onChange={(edit) => app.setOverlayEditMode(edit)}
+        />
+        <Toggle
+          label="Show group riders on the overlay"
+          checked={overlay.showGroup}
+          onChange={(showGroup) => update({ overlay: { showGroup } })}
+        />
+        <RangeField
+          label="Backdrop opacity"
+          value={overlay.backdropOpacity}
+          min={0}
+          max={1}
+          step={0.05}
+          format={(v) => `${Math.round(v * 100)} %`}
+          onCommit={(backdropOpacity) => update({ overlay: { backdropOpacity } })}
+        />
+        <TextField
+          label="Edit hotkey"
+          value={overlay.editHotkey}
+          maxLength={100}
+          validate={nonEmpty(100)}
+          errorText="Enter a shortcut such as CommandOrControl+Shift+O."
+          hint="Format: modifiers and a key joined by +, e.g. CommandOrControl+Shift+O."
+          onCommit={(editHotkey) => update({ overlay: { editHotkey } })}
+        />
+      </div>
+      <TileEditor tiles={overlay.tiles} />
+    </>
   );
 }
 

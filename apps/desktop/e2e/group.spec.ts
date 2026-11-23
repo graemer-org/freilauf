@@ -4,7 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { appDir, launch, NO_RELAYS_SWITCH, windows } from './helpers';
+import { appDir, atStart, launch, NO_RELAYS_SWITCH, windows } from './helpers';
 
 const signallingMain = path.resolve(appDir, '../signalling/src/main.ts');
 
@@ -41,7 +41,7 @@ async function startSignalling(port: number): Promise<ChildProcess> {
  * network the tests run on) the plain "No relay server reachable" message appears instead of a
  * hang. Two riders over real public relays cannot be tested here (docs/group-rides.md).
  */
-test('group tab: zero-setup create and join, relays unreachable → plain message', async () => {
+test('group ride from the start screen: zero-setup create and join, relays unreachable → plain message', async () => {
   test.setTimeout(120_000);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'freilauf-e2e-relays-'));
   const app = await launch(userData, [NO_RELAYS_SWITCH]);
@@ -50,7 +50,11 @@ test('group tab: zero-setup create and join, relays unreachable → plain messag
     const errors: string[] = [];
     main.on('pageerror', (e) => errors.push(e.message));
 
-    await main.getByTestId('tab-group').click();
+    // On the start screen, "With whom": Group ride.
+    await atStart(main);
+    await expect(main.getByTestId('with-alone')).toHaveAttribute('aria-pressed', 'true');
+    await main.getByTestId('with-group').click();
+    await expect(main.getByTestId('start-group')).toBeVisible();
     // Fresh install: Create right away, nothing to set up; the own server is tucked away.
     await expect(main.getByTestId('group-start')).toBeVisible();
     await expect(main.getByTestId('group-create')).toBeVisible();
@@ -119,7 +123,7 @@ test('group tab: zero-setup create and join, relays unreachable → plain messag
  * inline validation, Test connection, Use this server, Create with an old-style invite, and the
  * plain failure when the server is gone.
  */
-test('group tab: own signalling server (advanced): test it, host a ride, plain failures', async () => {
+test('group ride: own signalling server (advanced): test it, host a ride, plain failures', async () => {
   test.setTimeout(120_000);
   const port = await freePort();
   const closedPort = await freePort();
@@ -131,7 +135,8 @@ test('group tab: own signalling server (advanced): test it, host a ride, plain f
     const errors: string[] = [];
     main.on('pageerror', (e) => errors.push(e.message));
 
-    await main.getByTestId('tab-group').click();
+    await atStart(main);
+    await main.getByTestId('with-group').click();
     await main.getByTestId('group-advanced').locator(':scope > summary').click();
 
     // Inline validation.
@@ -175,15 +180,31 @@ test('group tab: own signalling server (advanced): test it, host a ride, plain f
       'Friends only need this link.',
     );
     await expect(main.getByTestId('group-empty')).toContainText('Waiting for friends');
+    // Joined: "Alone" is not offered until the rider leaves; Start together is.
+    await expect(main.getByTestId('with-alone')).toBeDisabled();
+    await expect(main.getByTestId('group-start-together')).toBeVisible();
+
+    // The ride view's group panel shows the room and the live rider table.
+    await main.getByTestId('start-open-ride').click();
+    await expect(main.getByTestId('ride-open-group')).toContainText('1');
+    await main.getByTestId('ride-open-group').click();
+    const sheet = main.getByTestId('ride-sheet-group');
+    await expect(sheet.getByTestId('group-link')).toHaveText(link!);
+    await expect(sheet.getByTestId('group-rider-local')).toBeVisible();
+    await main.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await main.getByTestId('ride-leave').click();
     await main.getByTestId('group-leave').click();
 
     // A server that went away: a plain message, never a raw error.
-    await main.getByTestId('tab-settings').click();
+    await main.getByTestId('nav-settings').click();
+    await expect(main.getByTestId('settings-group-advanced')).toHaveAttribute('open', '');
     await expect(main.getByTestId('settings-own-server')).toBeChecked();
     const field = main.getByTestId('settings-signalling');
     await field.fill(`ws://127.0.0.1:${closedPort}`);
     await field.press('Enter');
-    await main.getByTestId('tab-group').click();
+    await main.getByTestId('screen-back').click();
+    await expect(main.getByTestId('start-group')).toBeVisible(); // the choice is kept
     await main.getByTestId('group-create').click();
     const error = main.getByTestId('group-error');
     await expect(error).toHaveAttribute('data-failure', 'unreachable', { timeout: 30_000 });

@@ -1,5 +1,6 @@
 import type { DeviceKind } from '@freilauf/devices';
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { App, AppState } from '../appStore';
 import type { StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from './format';
@@ -35,7 +36,7 @@ function toggleRide(app: App): void {
   else app.startRide();
 }
 
-/** Ride tab keyboard shortcuts; mounted only while the tab is shown. */
+/** Ride keyboard shortcuts; mounted only while the ride view is shown. */
 function useRideShortcuts(app: App): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -192,7 +193,7 @@ function TrainerHint() {
   );
 }
 
-function RideButtons() {
+function RideButtons({ onFinished }: { onFinished: (() => void) | undefined }) {
   const app = useApp();
   const state = useAppState((s) => s.live?.ride.state ?? 'idle');
   const [confirming, setConfirming] = useState(false);
@@ -210,7 +211,7 @@ function RideButtons() {
           data-testid="ride-finish-confirm"
           onClick={() => {
             setConfirming(false);
-            void app.finishRide();
+            void app.finishRide().then(() => onFinished?.());
           }}
         >
           Finish &amp; save
@@ -494,7 +495,15 @@ function FreeRideHint({ onOpenWorkouts }: { onOpenWorkouts: (() => void) | undef
   );
 }
 
-export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}) {
+export interface RideTabProps {
+  onOpenWorkouts?: () => void;
+  /** After Finish: the ride is saved (or found too short); show the summary. */
+  onFinished?: () => void;
+  /** The ride view's quiet toolbar, on top of the stage. */
+  toolbar?: ReactNode;
+}
+
+export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = {}) {
   const app = useApp();
   useRideShortcuts(app);
   useBrakeKey(app);
@@ -507,6 +516,7 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
       <div
         className={`ride-stage${phase === 'erg' || phase === 'free' || phase === 'finished' ? ' has-workout' : ''}`}
       >
+        {toolbar}
         <TrainerHint />
         <GroupCountdown />
         {phase === 'pending' && <WorkoutBanner />}
@@ -531,7 +541,7 @@ export function RideTab({ onOpenWorkouts }: { onOpenWorkouts?: () => void } = {}
           </div>
         </div>
         <section className="controls card" aria-label="Ride controls">
-          <RideButtons />
+          <RideButtons onFinished={onFinished} />
           <div className={`adjust${erg ? ' is-muted' : ''}`}>
             {erg && (
               <p className="hint adjust-note" data-testid="erg-note">

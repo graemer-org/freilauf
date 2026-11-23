@@ -5,6 +5,10 @@ APIs, no timers: everything is driven by the caller passing elapsed time. The ri
 the recording, the UI and the P2P layer integrate it; this package only models, validates,
 plans and evaluates.
 
+In the app, a workout or an FTP test is chosen on the start screen: the **Workout** and **FTP
+test** cards open the library as a picker (import `.zwo` files there; **Done** returns to the
+start screen, which names the choice). The running workout is shown in the ride view.
+
 | Module        | Responsibility                                                              |
 | ------------- | --------------------------------------------------------------------------- |
 | `model.ts`    | `Workout` / `WorkoutStep` types, `WORKOUT_LIMITS`, `validateWorkout`        |
@@ -228,7 +232,8 @@ maxHeartRateBpm?, rampDurationS }`. Invalid if the ramp lasted < 3 min or no 1-m
   (assuming no skip/back during the test).
 
 FTP is rounded to whole watts. The result is **offered** to the rider ("Save 276 W as your new
-FTP?"); on confirmation the integrator stores `ftpW` in the settings. This package never stores
+FTP?" — in the app, on the post-ride summary with **Save as my FTP**); on confirmation the
+integrator stores `ftpW` in the settings. This package never stores
 anything.
 
 ## Integration checklist

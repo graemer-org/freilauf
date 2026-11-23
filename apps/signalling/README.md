@@ -2,8 +2,8 @@
 
 > **Optional.** Group rides need no server: by default riders find each other through public
 > relay servers ([docs/group-rides.md](../../docs/group-rides.md)). This server is the
-> advanced fallback behind **Use my own signalling server** (Group tab → Advanced, or Settings
-> → Group), kept until the relay path is confirmed on real networks
+> advanced fallback behind **Use my own signalling server** (start screen → Group ride →
+> Advanced, or Settings → Group), kept until the relay path is confirmed on real networks
 > ([ADR 0003](../../docs/adr/0003-signalling-via-public-relays.md), which also lists what will
 > be removed with it). The rider-facing steps are in
 > [Advanced: your own signalling server](../../docs/group-rides.md#advanced-your-own-signalling-server);
@@ -46,7 +46,7 @@ Environment variables:
 | `LOG_LEVEL` | (quiet) | `debug` logs room open/close events, including the room code |
 
 To try the own-server path on one computer, choose **Use a server on this computer (for
-testing)** under **Advanced** in the app's Group tab (it sets `ws://127.0.0.1:8787` and switches
+testing)** under **Advanced** in the app's group section (start screen → **Group ride**; it sets `ws://127.0.0.1:8787` and switches
 the option on). Friends elsewhere cannot reach that
 address; for them the server must be reachable from the internet over `wss://` (below).
 
@@ -68,7 +68,7 @@ docker run -d --restart unless-stopped --name freilauf-signalling \
 
 The server speaks plain `ws://` only. For anything reachable from the internet, terminate TLS in
 a reverse proxy and enter the resulting `wss://` address once in the app (**Settings → Group**
-with **Use my own signalling server** on, or **Advanced** in the Group tab). Friends do not enter it: it travels inside the invite
+with **Use my own signalling server** on, or **Advanced** under **Group ride** on the start screen). Friends do not enter it: it travels inside the invite
 link. The proxy must pass the WebSocket
 upgrade through and should use a read timeout above the 30 s heartbeat.
 

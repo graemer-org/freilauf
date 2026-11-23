@@ -85,6 +85,10 @@ async function watch(page, label) {
 
 const text = (page, id) => page.getByTestId(id).first().innerText();
 
+/** The start screen is up and the simulated trainer is connected. */
+const trainerConnected = (page, timeout = 15_000) =>
+  page.locator('[data-testid="chip-trainer"][data-state="connected"]').waitFor({ timeout });
+
 async function waitForText(page, id, re, timeout = 15_000) {
   const locator = page.getByTestId(id).first();
   const end = Date.now() + timeout;
@@ -114,8 +118,9 @@ async function rideAndExport(browser, base) {
   check('index.html is no-cache', headers['cache-control'] === 'no-cache');
 
   await page.getByTestId('sim-badge').waitFor({ timeout: 15_000 });
-  const power = await waitForText(page, 'stat-power', /[1-9]\d+/);
-  check('UI renders and live power appears', true, power.replace(/\s+/g, ' '));
+  await page.getByTestId('start-screen').waitFor({ timeout: 15_000 });
+  await trainerConnected(page);
+  check('the start screen renders, simulated devices connect', true);
 
   const pip = await page.evaluate(() => 'documentPictureInPicture' in window);
   const pipButton = await page.getByTestId('pip-toggle').count();
@@ -161,7 +166,17 @@ async function rideAndExport(browser, base) {
     : 'none (Web Bluetooth available)';
   results.push(`INFO  Bluetooth notice on ${base}: ${noticeReason}`);
 
-  await page.getByTestId('ride-start').click();
+  await page.getByTestId('start-riding').click();
+  const power = await waitForText(page, 'stat-power', /[1-9]\d+/);
+  check(
+    'Start riding: one click to a running ride with live power',
+    (await page.getByTestId('ride-state').getAttribute('data-state')) === 'riding',
+    power.replace(/\s+/g, ' '),
+  );
+  check(
+    'the pop-out button sits in the ride toolbar as well',
+    (await page.getByTestId('pip-toggle').count()) === pipButton,
+  );
   const gearBefore = await text(page, 'stat-gear');
   await page.getByTestId('gear-up').click();
   await waitForText(
@@ -173,9 +188,16 @@ async function rideAndExport(browser, base) {
   await waitForText(page, 'stat-time', /0:1[2-9]/, 30_000);
   await page.getByTestId('ride-finish').click();
   await page.getByTestId('ride-finish-confirm').click();
-  await page.getByTestId('ride-start').waitFor();
+  await page.getByTestId('summary-screen').waitFor();
+  check(
+    'Finish shows the summary',
+    /0:1\d/.test(await text(page, 'summary-duration')) &&
+      (await page.getByTestId('summary-export-fit').count()) === 1,
+  );
+  await page.getByTestId('summary-done').click();
+  await page.getByTestId('start-screen').waitFor();
 
-  await page.getByTestId('tab-history').click();
+  await page.getByTestId('nav-activity').click();
   await page.getByTestId('history-row').first().waitFor();
   check('one ride in history', (await page.getByTestId('history-row').count()) === 1);
 
@@ -194,7 +216,7 @@ async function rideAndExport(browser, base) {
 
   // Persistence: the ride survives a reload (IndexedDB).
   await page.reload();
-  await page.getByTestId('tab-history').click();
+  await page.getByTestId('nav-activity').click();
   await page.getByTestId('history-row').first().waitFor();
   check(
     'ride persists across reload (IndexedDB)',
@@ -224,7 +246,7 @@ async function insecureNotice(base, port) {
       (await notice.getAttribute('data-reason')) === 'insecure-context',
       (await notice.innerText()).slice(0, 90) + '…',
     );
-    await waitForText(page, 'stat-power', /[1-9]\d+/);
+    await trainerConnected(page);
     check('sim mode still works without Web Bluetooth', true);
     const settings = await page.evaluate(() =>
       JSON.parse(localStorage.getItem('freilauf.settings.v1') ?? 'null'),
@@ -255,10 +277,10 @@ async function relayFlow(base) {
     const sockets = [];
     page.on('websocket', (ws) => sockets.push(ws.url()));
     await page.goto(`${base}/?sim=1`);
-    await waitForText(page, 'stat-power', /[1-9]\d+/);
-    await page.getByTestId('tab-group').click();
+    await trainerConnected(page);
+    await page.getByTestId('with-group').click();
     check(
-      'group tab: Create right away, with the note on public relays',
+      'start screen → Group ride: Create right away, with the note on public relays',
       (await page.getByTestId('group-create').count()) === 1 &&
         /public relay servers/.test(await text(page, 'group-how')),
     );
@@ -307,9 +329,9 @@ async function groupRide(browser, base) {
   a.on('websocket', (ws) => wsUrls.push(ws.url()));
   for (const p of [a, b]) {
     await p.goto(`${base}/?sim=1`);
-    await waitForText(p, 'stat-power', /[1-9]\d+/);
+    await trainerConnected(p);
+    await p.getByTestId('with-group').click();
   }
-  await a.getByTestId('tab-group').click();
   // Advanced fallback: the page's own /signal is prefilled; switching it on uses it.
   await a.getByTestId('group-advanced').locator(':scope > summary').click();
   await a.getByTestId('group-own-server-toggle').check();
@@ -336,12 +358,16 @@ async function groupRide(browser, base) {
   );
 
   // The second rider pastes the whole invite, as a friend would.
-  await b.getByTestId('tab-group').click();
   await b.getByTestId('group-join-input').fill(`Ride with me: ${link}`);
   await b.getByTestId('group-join').click();
   await waitForText(b, 'group-code', /[A-Z0-9]{3}-?[A-Z0-9]{3}/);
   check('second rider joins with the invite link', true);
 
+  // The ride view's group panel has the live rider table.
+  for (const p of [a, b]) {
+    await p.getByTestId('start-open-ride').click();
+    await p.getByTestId('ride-open-group').click();
+  }
   let seen = false;
   try {
     await Promise.all([
@@ -378,7 +404,14 @@ async function pairingWithoutPicker(browser, base) {
     const page = await browser.newPage();
     const problems = await watch(page, 'pair-unavailable');
     await page.goto(`${base}/`);
-    await page.getByTestId('tab-devices').click();
+    const warning = await waitForText(page, 'start-device-warning', /power will read 0/, 10_000)
+      .then(() => true)
+      .catch(() => false);
+    check(
+      'start screen without a trainer: warns, but Start riding stays usable',
+      warning && (await page.getByTestId('start-riding').isEnabled()),
+    );
+    await page.getByTestId('start-devices').click();
     await page.getByTestId('pair-trainer').click();
     const err = await waitForText(page, 'notice-error', /Bluetooth/, 5_000).catch(() => '');
     check(
@@ -425,7 +458,7 @@ async function pairingWithoutPicker(browser, base) {
     const page = await context.newPage();
     const problems = await watch(page, 'pair-stub');
     await page.goto(`${base}/`);
-    await page.getByTestId('tab-devices').click();
+    await page.getByTestId('start-devices').click();
     await page.getByTestId('pair-trainer').click();
     await page.waitForTimeout(500);
     check(

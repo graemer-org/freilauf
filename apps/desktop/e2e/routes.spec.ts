@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { launch, windows } from './helpers';
+import { atStart, launch, openRideView, windows } from './helpers';
 
 const num = (v: string | null): number => Number(v ?? Number.NaN);
 
@@ -64,13 +64,15 @@ test('routes: import a GPX, ride it in the road view', async () => {
     const errors: string[] = [];
     main.on('pageerror', (e) => errors.push(e.message));
     main.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+    await atStart(main);
 
     // Without a route: the side-on scene and the manual gradient.
+    await openRideView(main);
     await expect(main.getByTestId('ride-scene')).toHaveAttribute('data-view', 'side');
+    await main.getByTestId('ride-leave').click();
 
-    // Import through the file input.
-    await main.getByTestId('tab-routes').click();
+    // Import through the file input: the Route card opens the library as a picker.
+    await main.getByTestId('ride-kind-route').click();
     await expect(main.getByTestId('panel-routes')).toBeVisible();
     await main.getByTestId('route-import').setInputFiles(gpxFile);
     const result = main.getByTestId('route-import-result');
@@ -85,10 +87,13 @@ test('routes: import a GPX, ride it in the road view', async () => {
     await expect(row.getByTestId('route-details')).toBeVisible();
     await expect(row.getByTestId('route-steepest')).toContainText('%');
 
-    // Select it and go to the ride.
+    // Select it; Done leads back to the start screen, which names it.
     await row.getByTestId('route-select').click();
     await expect(row.getByTestId('route-selected')).toBeVisible();
     await row.getByTestId('route-go-ride').click();
+    await expect(main.getByTestId('start-route-summary')).toContainText(/E2E test road · 8\d0 m/);
+    await expect(main.getByTestId('ride-kind-route')).toHaveAttribute('aria-pressed', 'true');
+    await main.getByTestId('start-open-ride').click();
 
     const scene = main.getByTestId('ride-scene');
     await expect(scene).toHaveAttribute('data-view', 'road');
@@ -141,12 +146,18 @@ test('routes: import a GPX, ride it in the road view', async () => {
     await expect(main.getByTestId('route-remaining')).toContainText(/m|km/);
     await expect(overlay.getByTestId('overlay-route')).toContainText('to go');
 
-    // While riding the route cannot be changed.
-    await main.getByTestId('tab-routes').click();
+    // While riding the route cannot be changed (the start screen leads to the locked picker;
+    // the ride keeps recording meanwhile and the bar leads back).
+    await main.getByTestId('ride-leave').click();
+    await expect(main.getByTestId('ride-return-bar')).toHaveAttribute('data-state', 'riding');
+    await expect(main.getByTestId('start-riding')).toHaveText('Return to ride');
+    await main.getByTestId('ride-kind-route').click();
     await expect(main.getByTestId('routes-locked')).toBeVisible();
     await expect(
       main.getByTestId('route-row').filter({ hasText: 'E2E test road' }).getByTestId('route-clear'),
     ).toBeDisabled();
+    await main.getByTestId('ride-return').click();
+    await expect(scene).toHaveAttribute('data-state', 'riding');
 
     expect(errors).toEqual([]);
   } finally {
@@ -172,13 +183,14 @@ test('routes: start part-way along, then jump back during the ride', async () =>
     const errors: string[] = [];
     main.on('pageerror', (e) => errors.push(e.message));
     main.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-    await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
+    await atStart(main);
 
-    await main.getByTestId('tab-routes').click();
+    await main.getByTestId('ride-kind-route').click();
     await main.getByTestId('route-import').setInputFiles(gpxFile);
     const row = main.getByTestId('route-row').filter({ hasText: 'E2E test road' });
     await row.getByTestId('route-select').click();
     await row.getByTestId('route-go-ride').click();
+    await openRideView(main);
 
     const scene = main.getByTestId('ride-scene');
     const pick = main.getByTestId('route-profile-pick');

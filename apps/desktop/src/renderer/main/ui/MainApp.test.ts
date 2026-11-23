@@ -10,8 +10,10 @@ import { DEFAULT_SETTINGS } from '../../../shared/contract';
 import type { Workout } from '@freilauf/workouts';
 import type { WorkoutLive } from '../../../shared/contract';
 import { WorkoutLibrary } from '../../core/workoutLibrary';
-import type { TabId } from './MainApp';
-import { defaultTab, MainApp } from './index';
+import type { InitialScreen } from './MainApp';
+import { MainApp } from './index';
+import { GroupTab } from './GroupTab';
+import { AppContext } from './hooks';
 import { CommunityService } from '../../core/communityService';
 
 function baseState(): AppState {
@@ -41,6 +43,7 @@ function baseState(): AppState {
     routeTrack: null,
     sharedRoutes: [],
     sharingRouteId: null,
+    lastRide: null,
   };
 }
 
@@ -131,21 +134,72 @@ function stubApp(state: AppState, extra: Record<string, unknown> = {}): App {
 const render = (state: AppState): string =>
   renderToString(createElement(MainApp, { app: stubApp(state) }));
 
+const renderScreen = (state: AppState, screen: InitialScreen): string =>
+  renderToString(createElement(MainApp, { app: stubApp(state), initialScreen: screen }));
+
 describe('MainApp (SSR)', () => {
   it('shows a loading state until settings and live state exist', () => {
     const html = render(baseState());
     expect(html).toContain('data-testid="app-loading"');
-    expect(html).not.toContain('data-testid="tab-ride"');
+    expect(html).not.toContain('data-testid="start-screen"');
   });
 
-  it('renders the ride tab in sim mode with live values', () => {
-    const html = render({ ...baseState(), simMode: true, live: liveState() });
+  it('opens on the start screen: one primary button, the choice, the devices', () => {
+    const html = render({
+      ...baseState(),
+      simMode: true,
+      live: liveState({ ride: { ...liveState().ride, state: 'idle' } }),
+    });
     for (const id of [
-      'tab-ride',
-      'tab-devices',
-      'tab-group',
-      'tab-history',
-      'tab-settings',
+      'panel-start',
+      'start-screen',
+      'start-riding',
+      'start-open-ride',
+      'ride-kind-free',
+      'ride-kind-workout',
+      'ride-kind-ftp',
+      'start-summary',
+      'with-alone',
+      'with-group',
+      'start-devices',
+      'chip-trainer',
+      'chip-heartRate',
+      'chip-controller',
+      'nav-activity',
+      'nav-settings',
+      'sim-badge',
+      // Untouched rider data: the first-run questions, inline (never a blocking dialog).
+      'first-run',
+      'first-run-skip',
+      'first-run-ftp-unknown',
+    ]) {
+      expect(html, id).toContain(`data-testid="${id}"`);
+    }
+    expect(html).toContain('What are you riding today?');
+    expect(html).toContain('>Start riding<');
+    expect(html).toMatch(/data-testid="ride-kind-free"[^>]*aria-pressed="true"/);
+    // No tab bar any more, no ride underneath.
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain('data-testid="stat-power"');
+    expect(html).not.toContain('role="dialog"');
+    // Trainer connected: no warning.
+    expect(html).not.toContain('data-testid="start-device-warning"');
+  });
+
+  it('does not ask the first-run questions once the rider data was set', () => {
+    const state = { ...baseState(), live: liveState() };
+    state.settings!.rider.name = 'Ana';
+    expect(render(state)).not.toContain('data-testid="first-run"');
+  });
+
+  it('renders the ride view in sim mode with live values', () => {
+    const html = renderScreen({ ...baseState(), simMode: true, live: liveState() }, 'ride');
+    for (const id of [
+      'ride-leave',
+      'ride-open-devices',
+      'ride-open-group',
+      'ride-open-overlay',
+      'dot-trainer',
       'panel-ride',
       'stat-power',
       'stat-power3s',
@@ -176,14 +230,32 @@ describe('MainApp (SSR)', () => {
     expect(html).toContain('reconnecting…');
     expect(html).not.toContain('data-testid="ride-start"');
     expect(html).not.toContain('data-testid="trainer-missing"');
+    // The ride fills the window: no start-screen chrome, and no return bar inside the ride.
+    expect(html).not.toContain('data-testid="start-screen"');
+    expect(html).not.toContain('data-testid="ride-return-bar"');
   });
 
-  it('puts the ride scene and its profile strip at the centre of the ride tab', () => {
-    const html = render({
-      ...baseState(),
-      simMode: true,
-      live: liveState({ ride: { ...liveState().ride, gradePercent: 4.5 } }),
-    });
+  it('shows a persistent way back to a ride in progress on every other screen', () => {
+    for (const screen of ['start', 'settings', 'activity', 'devices', 'workouts'] as const) {
+      const html = renderScreen({ ...baseState(), simMode: true, live: liveState() }, screen);
+      expect(html, screen).toContain('data-testid="ride-return-bar"');
+      expect(html, screen).toContain('data-testid="ride-return"');
+      expect(html, screen).toContain('Ride in progress');
+    }
+    const start = renderScreen({ ...baseState(), simMode: true, live: liveState() }, 'start');
+    expect(start).toContain('>Return to ride<');
+    expect(start).toContain('data-testid="start-locked"');
+  });
+
+  it('puts the ride scene and its profile strip at the centre of the ride view', () => {
+    const html = renderScreen(
+      {
+        ...baseState(),
+        simMode: true,
+        live: liveState({ ride: { ...liveState().ride, gradePercent: 4.5 } }),
+      },
+      'ride',
+    );
     expect(html).toContain('data-testid="ride-scene"');
     expect(html).toContain('data-testid="ride-profile"');
     expect(html).toContain('data-grade="4.5"');
@@ -200,15 +272,21 @@ describe('MainApp (SSR)', () => {
     expect(html).toMatch(/<kbd>A<\/kbd> <kbd>D<\/kbd> steer/);
   });
 
-  it('defaults to the Devices tab when no trainer is known', () => {
+  it('warns on the start screen when no trainer is known, but can still start', () => {
     const state = {
       ...baseState(),
-      live: liveState({ devices: { trainer: null, heartRate: null, controller: null } }),
+      live: liveState({
+        ride: { ...liveState().ride, state: 'idle' },
+        devices: { trainer: null, heartRate: null, controller: null },
+      }),
     };
-    expect(defaultTab(state)).toBe('devices');
     const html = render(state);
-    expect(html).toContain('data-testid="panel-devices"');
+    expect(html).toContain('data-testid="panel-start"');
     expect(html).toContain('not paired');
+    expect(html).toContain('data-testid="start-device-warning"');
+    expect(html).toContain('You can still start — power will read 0.');
+    expect(html).toContain('data-testid="start-pair-trainer"');
+    expect(html).not.toMatch(/data-testid="start-riding"[^>]*disabled/);
   });
 
   it('renders a joined group with the local rider sorted in', () => {
@@ -251,11 +329,26 @@ describe('MainApp (SSR)', () => {
         },
       }),
     };
-    const html = renderToString(
-      createElement(MainApp, { app: stubApp(state), initialTab: 'group' }),
+    const start = renderToString(
+      createElement(MainApp, { app: stubApp(state), initialScreen: 'group' }),
     );
-    expect(html).toContain('data-testid="group-code"');
-    expect(html).toContain('QX7-K2M');
+    // On the start screen: compact — the invite and who is in the room, no rider table.
+    expect(start).toContain('data-testid="start-group"');
+    expect(start).toContain('data-testid="group-code"');
+    expect(start).toContain('QX7-K2M');
+    expect(start).toMatch(
+      /data-testid="with-group"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*data-testid="with-group"/,
+    );
+    expect(start).not.toContain('data-testid="group-riders"');
+    // In the ride view's group panel: the live rider table.
+    const html = renderToString(
+      createElement(
+        AppContext.Provider,
+        { value: stubApp(state) },
+        createElement(GroupTab, { variant: 'ride', onOpenSettings() {} }),
+      ),
+    );
+    expect(html).toContain('data-testid="group-riders"');
     const ben = html.indexOf('Ben');
     const ana = html.indexOf('Ana');
     const cleo = html.indexOf('Cleo');
@@ -296,8 +389,12 @@ function withWorkouts(overrides: Partial<AppState> = {}): AppState {
   };
 }
 
-const renderTab = (state: AppState, tab: TabId, extra: Record<string, unknown> = {}): string =>
-  renderToString(createElement(MainApp, { app: stubApp(state, extra), initialTab: tab }));
+const renderTab = (
+  state: AppState,
+  screen: InitialScreen,
+  extra: Record<string, unknown> = {},
+): string =>
+  renderToString(createElement(MainApp, { app: stubApp(state, extra), initialScreen: screen }));
 
 /** The HTML of the element that carries `marker` up to the next row (rough, enough for SSR). */
 function rowHtml(html: string, id: string): string {
@@ -331,11 +428,9 @@ function runningWorkout(overrides: Partial<WorkoutLive> = {}): WorkoutLive {
 describe('Workouts tab (SSR)', () => {
   it('lists FTP tests, the library and imported workouts with estimates', () => {
     const html = renderTab(withWorkouts(), 'workouts');
-    expect(html).toContain('data-testid="tab-workouts"');
     expect(html).toContain('data-testid="panel-workouts"');
-    // Tab order: Ride, Workouts, Devices.
-    expect(html.indexOf('tab-ride')).toBeLessThan(html.indexOf('tab-workouts'));
-    expect(html.indexOf('tab-workouts')).toBeLessThan(html.indexOf('tab-devices'));
+    // A picker inside the start flow: Back leads to the start screen.
+    expect(html).toMatch(/data-testid="screen-back"[^>]*>.*Start</);
     expect(html).toContain('FTP tests');
     expect(html).toContain('Library');
     expect(html).toContain('My workouts');
@@ -371,7 +466,7 @@ describe('Workouts tab (SSR)', () => {
     expect(html).not.toContain('data-testid="workouts-locked"');
   });
 
-  it('marks the selected workout and offers Go to ride / Clear', () => {
+  it('marks the selected workout and offers Done / Clear', () => {
     const html = renderTab(withWorkouts({ selectedWorkoutId: 'builtin-vo2max-5x4' }), 'workouts');
     const row = rowHtml(html, 'builtin-vo2max-5x4');
     expect(row).toContain('data-selected="true"');
@@ -507,10 +602,52 @@ describe('Ride tab with a workout (SSR)', () => {
   });
 });
 
-describe('FTP result dialog (SSR)', () => {
-  it('offers a valid result with previous FTP and the change', () => {
-    const html = render(
+const SUMMARY: NonNullable<AppState['lastRide']> = {
+  rideId: 'ride-1',
+  durationS: 1834,
+  distanceM: 15_420,
+  avgPowerW: 212,
+  points: 31,
+  bests: [{ key: 'p5m', powerW: 288, previousW: 270 }],
+  workoutName: 'FTP test · 20 minutes',
+  routeName: null,
+};
+
+describe('Post-ride summary (SSR)', () => {
+  it('shows time, distance, power, points with the week, bests, export and the way on', () => {
+    const html = renderTab(withWorkouts({ lastRide: SUMMARY }), 'summary');
+    expect(html).toContain('data-testid="summary-screen"');
+    expect(html).toMatch(/data-testid="summary-duration".*?>30:34</);
+    expect(html).toMatch(/data-testid="summary-distance".*?>15.42<.*?>km</);
+    expect(html).toMatch(/data-testid="summary-power".*?>212<.*?>W</);
+    expect(html).toMatch(/data-testid="summary-points".*?>\+31</);
+    expect(html).toMatch(/data-testid="summary-week-points">0 this week</);
+    expect(html).toContain('Best 5 min power');
+    expect(html).toContain('288 W');
+    expect(html).toContain('was 270 W');
+    for (const id of ['summary-export-fit', 'summary-again', 'summary-done']) {
+      expect(html, id).toContain(`data-testid="${id}"`);
+    }
+    expect(html).not.toContain('data-testid="ftp-outcome"');
+  });
+
+  it('says so when the ride was too short to keep', () => {
+    const html = renderTab(
       withWorkouts({
+        lastRide: { ...SUMMARY, rideId: null, avgPowerW: null, points: null, bests: [] },
+      }),
+      'summary',
+    );
+    expect(html).toContain('data-testid="summary-not-saved"');
+    expect(html).not.toContain('data-testid="summary-export-fit"');
+  });
+});
+
+describe('FTP result in the summary (SSR)', () => {
+  it('offers a valid result with previous FTP and the change', () => {
+    const html = renderTab(
+      withWorkouts({
+        lastRide: SUMMARY,
         ftpOutcome: {
           kind: 'twentyMinute',
           valid: true,
@@ -519,10 +656,11 @@ describe('FTP result dialog (SSR)', () => {
           previousFtpW: 200,
         },
       }),
+      'summary',
     );
     expect(html).toContain('data-testid="ftp-outcome"');
-    expect(html).toContain('role="dialog"');
-    expect(html).toContain('aria-modal="true"');
+    // Part of the summary now, not a modal on top of the ride.
+    expect(html).not.toContain('role="dialog"');
     expect(html).toContain('20-minute average');
     expect(html).toContain('251 W');
     expect(html).toContain('238');
@@ -534,8 +672,9 @@ describe('FTP result dialog (SSR)', () => {
   });
 
   it('explains an invalid result and only offers Close', () => {
-    const html = render(
+    const html = renderTab(
       withWorkouts({
+        lastRide: SUMMARY,
         ftpOutcome: {
           kind: 'ramp',
           valid: false,
@@ -545,6 +684,7 @@ describe('FTP result dialog (SSR)', () => {
           previousFtpW: 200,
         },
       }),
+      'summary',
     );
     expect(html).toContain('The ramp lasted less than 3 minutes.');
     expect(html).not.toContain('data-testid="ftp-accept"');
@@ -561,5 +701,40 @@ describe('Settings (SSR)', () => {
     expect(html).toContain('Measure it with an FTP test');
     expect(html).toContain('>Target power<');
     expect(html).toContain('>Step left<');
+  });
+
+  it('keeps rarely used options under Advanced and controllers out of Settings', () => {
+    const html = renderTab(withWorkouts(), 'settings');
+    expect(html).toMatch(/<details[^>]*data-testid="settings-advanced"(?![^>]*open)/);
+    const advanced = html.slice(html.indexOf('data-testid="settings-advanced"'));
+    expect(advanced).toContain('data-testid="settings-ratio"');
+    expect(advanced).toContain('data-testid="settings-trainer-mass"');
+    expect(html).toMatch(/<details[^>]*data-testid="settings-group-advanced"/);
+    expect(html).toContain('data-testid="settings-relays"');
+    expect(html).not.toContain('data-testid="button-mapping"');
+    expect(html).not.toContain('data-testid="lever-mapping"');
+  });
+});
+
+describe('Devices, Activity (SSR)', () => {
+  it('has the controllers (buttons, levers, dead zone under Advanced) on the Devices screen', () => {
+    const html = renderTab(withWorkouts(), 'devices');
+    expect(html).toContain('data-testid="device-trainer"');
+    expect(html).toContain('data-testid="devices-controllers"');
+    expect(html).toContain('data-testid="button-mapping"');
+    expect(html).toContain('data-testid="lever-mapping"');
+    expect(html).toMatch(/<details[^>]*data-testid="lever-advanced"/);
+    expect(html).toContain('data-testid="lever-deadzone"');
+  });
+
+  it('puts the ride history and the community under Activity', () => {
+    const rides = renderTab(withWorkouts(), 'activity');
+    expect(rides).toContain('data-testid="tab-history"');
+    expect(rides).toContain('data-testid="tab-community"');
+    expect(rides).toContain('data-testid="panel-history"');
+    expect(rides).toContain('data-testid="history-empty"');
+    const community = renderTab(withWorkouts(), 'community');
+    expect(community).toContain('data-testid="panel-community"');
+    expect(community).toMatch(/data-testid="tab-community"[^>]*|aria-selected="true"/);
   });
 });

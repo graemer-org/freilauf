@@ -70,8 +70,11 @@ import type {
 } from '../core/communityService';
 import type { Visibility } from '@freilauf/community';
 import { utf8Length } from '@freilauf/community';
+import { summarizeRide } from './rideSummary';
+import type { RideSummary } from './rideSummary';
 
 export type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
+export type { RideBest, RideSummary } from './rideSummary';
 
 /** A route another rider in the group is offering. */
 export interface SharedRoute {
@@ -170,6 +173,8 @@ export interface AppState {
   sharedRoutes: SharedRoute[];
   /** The route this rider is offering to the group, if any. */
   sharingRouteId: string | null;
+  /** What the ride finished last came to (post-ride summary); null before the first finish. */
+  lastRide: RideSummary | null;
 }
 
 export interface LeverPositionsState {
@@ -379,6 +384,7 @@ export class App {
     routeTrack: null,
     sharedRoutes: [],
     sharingRouteId: null,
+    lastRide: null,
   });
 
   readonly #api: FreilaufApi;
@@ -729,14 +735,29 @@ export class App {
   }
 
   async finishRide(): Promise<void> {
+    this.store.setState({ lastRide: null });
     try {
       const groupRide = this.#rideHadCompany || this.#groupPeers.size > 0;
-      const ftpW = this.store.getState().settings?.rider.ftpW ?? 0;
+      const before = this.store.getState();
+      const ftpW = before.settings?.rider.ftpW ?? 0;
       const finished = await this.#controller?.finish();
       this.#rideHadCompany = false;
       // The FTP in force during the ride (an FTP test result is only accepted afterwards).
       if (finished) this.#community.recordRide(finished.ride, { ftpW, groupRide });
-      this.store.setState({ selectedWorkoutId: null, ftpOutcome: finished?.ftpTest ?? null });
+      const rides = this.#community.state.ledger.rides;
+      const lastRide = summarizeRide({
+        live: before.live?.ride ?? null,
+        ride: finished?.ride ?? null,
+        facts: finished ? (rides[finished.ride.id] ?? null) : null,
+        previous: Object.values(rides),
+        workoutName: before.live?.workout?.name ?? null,
+        routeName: before.routeTrack?.name ?? null,
+      });
+      this.store.setState({
+        selectedWorkoutId: null,
+        ftpOutcome: finished?.ftpTest ?? null,
+        lastRide,
+      });
       if (finished) this.notify('info', 'Ride saved.');
       else this.notify('info', 'Ride was shorter than 10 seconds and was not saved.');
     } catch (err) {

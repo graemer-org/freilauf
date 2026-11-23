@@ -304,7 +304,7 @@ function SelectControls({
           data-testid="workout-go-ride"
           onClick={onGoToRide}
         >
-          Go to ride
+          Done
         </button>
         <button
           type="button"

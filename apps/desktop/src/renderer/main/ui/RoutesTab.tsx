@@ -270,7 +270,7 @@ function SelectRoute({
           data-testid="route-go-ride"
           onClick={onGoToRide}
         >
-          Go to ride
+          Done
         </button>
         <button
           type="button"

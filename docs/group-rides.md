@@ -22,31 +22,37 @@ account. This page is for riders; the protocol and the code are described in
 
 ## Start a ride and invite friends
 
-1. Open the **Group** tab and click **Create group ride**.
+1. On the start screen, under **With whom**, choose **Group ride** and click **Create group
+   ride**.
 2. An **invite link** appears at once, for example
    `freilauf://join/ABCDEF#GHJKMNPQRSTU`. Click **Copy invite link** and send it in any
    message.
 3. Below it, the status says _Looking for the relay servers…_ and, a moment later, _Ready:
    friends with the invite can find you_. Friends who paste the link show up under **In the
-   room**.
+   room**; a workout or route one of them shares appears right there ("Ben shares the workout
+   ‘VO2max 5×4’") with **Use it**.
+4. **Start riding** — or **Start together in 10 s**, which starts everyone's ride at the same
+   moment. During the ride, **Group** in the ride view's toolbar shows the riders (gap, power,
+   heart rate, speed) and the invite.
 
 Hosting and joining are the same now: whoever starts the ride sends the link. A new ride has a
 new link; the ride exists as long as at least one rider is in it.
 
 **Reading it out instead?** The invite also has a written form, the **invite code**, e.g.
 `ABC-DEF-GHJK-MNPQ-RSTU`, shown next to the link with its own copy button. Your friend can type
-it into the Group tab. The **whole** code is needed: the first six characters alone are only
+it under **Group ride** on their start screen. The **whole** code is needed: the first six characters alone are only
 the room's name, not its key (see [Privacy](#privacy-what-the-relay-servers-see)). The last
 character is a check, so a mistyped or misheard code is caught at once ("The invite has a
 typo") instead of opening an empty ride.
 
 ## Join a friend's ride
 
-Open the **Group** tab, paste the link (or type the invite code) into the **Join** field and
-click **Join**. You can paste the whole message the link came in. That is all — your settings
+On the start screen choose **Group ride**, paste the link (or type the invite code) into the
+**Paste an invite** field and click **Join**. You can paste the whole message the link came in. That is all — your settings
 are not changed.
 
-Clicking the link does not open Freilauf yet — copy it and paste it into the Group tab.
+Clicking the link does not open Freilauf yet — copy it and paste it under **Group ride** on the
+start screen.
 
 ## How it works
 
@@ -108,7 +114,8 @@ made — and the name you chose in **Settings → Rider**.
 
 ## Troubleshooting
 
-The Group tab shows these messages; the details of every failure are also written to the
+The group section of the start screen (and the ride view's **Group** panel) shows these
+messages; the details of every failure are also written to the
 [diagnostic log](diagnostics.md).
 
 | Message in the app                          | What it means                                                            | What to do                                                                                                            |
@@ -122,7 +129,7 @@ The Group tab shows these messages; the details of every failure are also writte
 | **Nobody else is here yet** (after joining) | You are in the ride, but alone so far.                                   | Wait a few seconds; check that the link is from your friend's current ride.                                           |
 | A rider _could not be reached directly_     | You found each other, but your computers cannot connect directly.        | Usually a restrictive network. Try another network for one of you, e.g. home Wi-Fi instead of a hotspot.              |
 | _Someone tried to join … different secret_  | Someone used this ride's code with another secret.                       | Send your friend the whole invite link again.                                                                         |
-| The link does nothing when clicked          | The app does not open `freilauf://` links from the operating system yet. | Copy the link and paste it into the Group tab.                                                                        |
+| The link does nothing when clicked          | The app does not open `freilauf://` links from the operating system yet. | Copy the link and paste it under **Group ride** on the start screen.                                                  |
 
 ### Help us verify it
 
@@ -147,9 +154,10 @@ no-relay`, `could not enter the group`.
 ## Advanced: your own signalling server
 
 Before the public relays, one person in the group had to run a small **signalling server**.
-That path still works, as a fallback while the relay path is being verified: in the **Group**
-tab, open **Advanced: use my own signalling server** (or **Settings → Group**), switch **Use my
-own signalling server** on and enter the address. Rides you create then go through that server,
+That path still works, as a fallback while the relay path is being verified: under **Group
+ride** on the start screen, open **Advanced: use my own signalling server** (or **Settings →
+Group → Advanced: own signalling server and relays**), switch **Use my own signalling server**
+on and enter the address. Rides you create then go through that server,
 and the invite link carries its address (`freilauf://join/ABCDEF?s=wss%3A%2F%2F…`). Friends
 need nothing set up: such a link always uses the server it names, whatever their own setting
 is. With the option on, a bare six-character code also joins through your server.

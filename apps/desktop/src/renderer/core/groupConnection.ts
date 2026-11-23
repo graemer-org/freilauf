@@ -371,7 +371,7 @@ export function describeGroupFailure(
         title: 'Your signalling server is not reachable',
         message: `Nothing answered at ${server}. The server may be switched off, the address may be mistyped, or it may not be reachable from this network.`,
         next: asHost
-          ? 'Check that your server is running and that the address is right — “Test connection” in the Group tab checks it. A server on a home network needs a reverse proxy to be reachable from outside.'
+          ? 'Check that your server is running and that the address is right — “Test connection” under “Group ride” on the start screen checks it. A server on a home network needs a reverse proxy to be reachable from outside.'
           : 'Ask the person who sent the invite to check their server, then try the link again.',
       };
     case 'not-signalling': {
@@ -462,7 +462,8 @@ export function emptyRoomHint(
   if (role === 'host') {
     return {
       title: 'Waiting for friends',
-      message: 'Send them the invite link. They paste it into their Group tab — nothing to set up.',
+      message:
+        'Send them the invite link. They paste it under “Group ride” on their start screen — nothing to set up.',
     };
   }
   if (transport === 'relays') {

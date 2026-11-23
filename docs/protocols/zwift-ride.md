@@ -18,7 +18,7 @@
 >   physically (a click at the end of the steer travel, or a separate side
 >   button that also moves the lever). They are seen only with a lever at
 >   the end of its travel. Riders can reassign every direction and button in
->   Settings → Shifting.
+>   Devices → Controllers.
 
 The protocol is proprietary and undocumented by the vendor.
 
@@ -157,7 +157,7 @@ This is the app's **default** (`Settings.shifting.levers`), not a fact. Each
 direction can be set to steer left, steer right, brake or nothing, with a
 dead zone (default ±5 %; the rest jitter is ±1–2 %) and a proportional output
 above it. The tester could not say which way was the brake, because nothing
-in the app showed it; the live lever display in Settings is there to find out.
+in the app showed it; the live lever display (Devices → Controllers) is there to find out.
 
 ## Open questions / verification checklist
 
@@ -181,8 +181,9 @@ the log is and how to export it). Nothing has to be enabled.
 
 To produce a capture that answers the open questions:
 
-1. Start Freilauf, connect the controllers (Devices tab) and wait until they
-   show as connected. Then open **Settings → Shifting → Controller buttons**:
+1. Start Freilauf, connect the controllers (**Devices**: click the device line
+   on the start screen) and wait until they show as connected. Further down
+   the same screen, **Controllers → Controller buttons**:
    it lists all sixteen buttons by grip (left grip: lower and upper shift
    button, D-pad up/right/down/left, lever click / side button, power
    button; right grip: lower and upper shift button, A, B, Y, Z, lever click
@@ -238,7 +239,7 @@ release:
   with hex and ASCII; the service used as `using Ride service FC82` or the
   legacy fallback.
 - `button <name> pressed: no action assigned` (source `ride`) means the
-  button was decoded but has no action in Settings → Shifting → Controller
+  button was decoded but has no action in Devices → Controllers → Controller
   buttons ("Nothing").
 
 `FREILAUF_BLE_LOG=1` additionally logs **every** raw frame, uncollapsed, as

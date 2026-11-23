@@ -96,7 +96,8 @@ is opened over plain HTTP.
 3. **Control Panel → Security → Certificate → Settings**: assign the
    certificate to the `freilauf.yourname.synology.me` reverse-proxy entry.
 4. Open `https://freilauf.yourname.synology.me` in Chrome or Edge on the bike
-   computer. The Bluetooth notice must be gone; **Devices → Pair** opens the
+   computer. The Bluetooth notice must be gone; the device line on the start screen →
+   **Pair** opens the
    browser's own device chooser.
 
 The NAS does not need to be reachable from the internet for solo riding — only
@@ -146,7 +147,7 @@ NAS does not have to be reachable from outside. This path is not yet verified on
 networks; see [group-rides.md](group-rides.md).
 
 **Own signalling server (advanced).** The container still serves a group-ride signalling
-WebSocket at `/signal` on the same address, as a fallback. In the Group tab, open **Advanced:
+WebSocket at `/signal` on the same address, as a fallback. On the start screen choose **Group ride** and open **Advanced:
 use my own signalling server** and switch it on — the address is already filled in with this
 container's `wss://<your-host>/signal`. Rides you create then go through the container, and the
 invite link carries its address, so friends need nothing set up. For friends outside your
@@ -184,8 +185,8 @@ of the public relay servers (`wss://` connections to hosts such as
 them; try another network. The container plays no part in this.
 
 **Own signalling server: "Your signalling server is not reachable" or "That
-address is not a group-ride server"** — the WebSocket to `/signal` is blocked. **Test connection** in the
-Group tab checks it from the app. With a reverse proxy, make sure the **WebSocket** custom headers
+address is not a group-ride server"** — the WebSocket to `/signal` is blocked. **Test connection** (start
+screen → Group ride → Advanced) checks it from the app. With a reverse proxy, make sure the **WebSocket** custom headers
 are enabled on the entry. Check in the browser's DevTools → Network → WS that
 `wss://<host>/signal` connects (101 Switching Protocols). Opening
 `https://<host>/signal` in a tab must answer "connect via WebSocket" (HTTP 426)
