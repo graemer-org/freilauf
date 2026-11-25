@@ -3,7 +3,7 @@ import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { isEditableTarget, useApp } from '../hooks';
 import { buildPalette } from './palette';
-import { PowerUpSceneState, powerUpAttributes } from './powerUpScene';
+import { PowerUpSceneState, cardsKey, powerUpAttributes } from './powerUpScene';
 import { ProfileRenderer, SceneRenderer, type SceneFrame } from './sceneRender';
 import {
   crankRate,
@@ -54,6 +54,8 @@ export function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) 
       text2: v('--text-2'),
       text3: v('--text-3'),
       accent: v('--accent'),
+      attack: v('--card-attack'),
+      guard: v('--card-guard'),
     },
     normalise,
   );
@@ -382,7 +384,7 @@ function startScene(
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
     frame.powerUps = boost.update(frame.distanceM, t);
-    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}`;
+    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${cardsKey(frame.powerUps.cards)}`;
 
     // Reduced motion: draw only when something visible changed.
     const changed =
@@ -432,6 +434,7 @@ function startScene(
       root.dataset.effect = pa.effect;
       root.dataset.effectPhase = pa.effectPhase;
       root.dataset.gateAhead = pa.gateAhead;
+      root.dataset.cards = pa.cards;
     }
     if (t - lastLabel >= LABEL_MS) {
       lastLabel = t;

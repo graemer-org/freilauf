@@ -27,12 +27,48 @@ export interface RiderState {
    * fields are dropped, so a later mode (e.g. battles) adds its own fields here.
    */
   rules?: GroupRules;
+  /**
+   * Optional (Card Race, docs/adr/0007-card-race.md): sent by every client that supports the
+   * Card Race, in every group ride — its presence is how others tell a compatible app from an
+   * old one. In a Card Race it also carries the signed race offset and the effects acting on
+   * this rider, which the rider applied to itself and everyone renders from here.
+   */
+  cards?: RiderCards;
 }
+
+/** How a group ride plays (`GroupRules.mode`). */
+export type GroupModeWire = 'normal' | 'cardRace';
 
 /** Group-level switches set by the host. */
 export interface GroupRules {
   /** Power-ups allowed in this group ride (default true). */
   powerUps: boolean;
+  /**
+   * Optional (added with the Card Race): 'normal' (power-ups, absent = normal) or 'cardRace'.
+   * Old clients ignore it and ride with normal power-ups.
+   */
+  mode?: GroupModeWire;
+}
+
+/** A rider's Card Race state as broadcast (see `RiderState.cards`). */
+export interface RiderCards {
+  /** Card Race protocol version the client speaks (1). */
+  v: number;
+  /**
+   * Card Race only: the signed race offset (m), negative after attacks. Placed by this instead
+   * of `raceOffsetM`, which stays ≥ 0 for old clients.
+   */
+  offsetM?: number;
+  /** An attack acting on the rider now: kind and seconds left. */
+  attack?: { kind: string; s: number };
+  /** Seconds the rider's shield stays up. */
+  shieldS?: number;
+  /** Seconds of protection left after a hit. */
+  protectedS?: number;
+  /** Cards held (0 … 8). */
+  held?: number;
+  /** Not in the race right now (paused, ERG step, FTP test, cards off): attacks pass by. */
+  away?: boolean;
 }
 
 /** A rider's place on a route, as broadcast. */
@@ -60,8 +96,13 @@ export interface GroupRider {
   gapM: number;
   /** True when `gapM` is measured along the route both riders share. */
   sameRoute?: boolean;
-  /** Metres of `gapM` that come from that rider's power-ups (race position − ridden), if any. */
+  /**
+   * Metres of `gapM` that come from that rider's power-ups / cards (race position − ridden), if
+   * any. Negative in a Card Race for a rider who lost ground to attacks.
+   */
   raceOffsetM?: number;
+  /** That rider's Card Race state (absent: their app does not support the Card Race). */
+  cards?: RiderCards;
   /** True when no update arrived for a while. */
   stale: boolean;
 }

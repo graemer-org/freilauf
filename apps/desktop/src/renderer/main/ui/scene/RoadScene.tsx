@@ -4,7 +4,8 @@ import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { useApp } from '../hooks';
 import { readPalette, startBrakeCue, steerKeyboard } from './RideScene';
-import { PowerUpSceneState, powerUpAttributes } from './powerUpScene';
+import { PowerUpSceneState, cardsKey, powerUpAttributes, riderFx } from './powerUpScene';
+import { gapsHidden } from '../../../../shared/powerUps';
 import { cameraFor, curveLean, riderLateralM } from './roadMath';
 import { RoadRenderer, type RoadFrame, type RoadRider } from './roadRender';
 import {
@@ -205,6 +206,7 @@ function startRoadScene(
         gapM: r.gapM,
         stale: r.stale,
         crank: prev.get(r.peerId) ?? (r.peerId.length * 1.7) % 6.28,
+        ...(riderFx(r.cards) ? { fx: riderFx(r.cards) } : {}),
       }))
       .sort((a, b) => a.gapM - b.gapM);
     cadences = new Map(riders.map((r) => [r.peerId, r.cadenceRpm]));
@@ -359,10 +361,11 @@ function startRoadScene(
         : Number.NaN
       : total;
     frame.others = others;
+    frame.hideGaps = gapsHidden(live?.powerUps);
     frame.reducedMotion = reducedMotion;
     frame.powerUps = boost.update(distance, t);
     const pu = frame.powerUps;
-    const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}`;
+    const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}|${cardsKey(pu.cards)}|${others.map((o) => (o.fx ? `${o.fx.attack}${o.fx.shield}${o.fx.protected}` : '')).join(',')}`;
 
     const changed =
       !reducedMotion ||
@@ -399,6 +402,7 @@ function startRoadScene(
       ds.effect = pa.effect;
       ds.effectPhase = pa.effectPhase;
       ds.gateAhead = pa.gateAhead;
+      ds.cards = pa.cards;
       ds.nextSign = frame.next
         ? `${frame.next.gradePercent.toFixed(1)}@${Math.round(frame.next.inM)}`
         : '';

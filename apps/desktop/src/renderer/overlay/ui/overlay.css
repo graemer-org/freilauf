@@ -18,6 +18,9 @@
   --ov-accent: #4c9dff;
   --ov-local: #ffd66b;
   --ov-alert: #e5484d;
+  /* Card Race markers (an attack, the shield / protection); the words say it too. */
+  --ov-attack: #f0995c;
+  --ov-guard: #4fcfbf;
   --ov-gap: clamp(3px, 0.9vmin + 1px, 14px);
   --ov-radius: clamp(6px, 2.2vmin, 18px);
   --ov-font:
@@ -626,4 +629,25 @@ body,
 .ov-pu-detail {
   color: var(--ov-text-2);
   font-weight: 650;
+}
+
+/* ───────── Card Race (docs/card-race.md) ───────── */
+
+.ov-powerup--attack::before {
+  background: var(--ov-attack);
+}
+
+.ov-powerup--guard::before {
+  background: var(--ov-guard);
+}
+
+.ov-g-mode {
+  position: relative;
+  z-index: 1;
+  padding: 0.1em 0.4em 0.2em;
+  color: var(--ov-text-2);
+  font-size: 0.8em;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }

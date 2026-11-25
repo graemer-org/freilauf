@@ -91,6 +91,13 @@ export interface ScenePalette {
   boostGlow: string;
   boostFaint: string;
   streak: string;
+  /** Card Race: attacks (gusts, the hit pulse), the shield and protection, the fog haze. */
+  attack: string;
+  attackFaint: string;
+  guard: string;
+  guardFill: string;
+  guardFaint: string;
+  haze: string;
 }
 
 const FALLBACK_LIGHT = {
@@ -99,6 +106,8 @@ const FALLBACK_LIGHT = {
   text2: '#63636b',
   text3: '#a3a3aa',
   accent: '#0b63d1',
+  attack: '#b4561f',
+  guard: '#14857a',
 };
 
 /**
@@ -107,7 +116,15 @@ const FALLBACK_LIGHT = {
  * back to the light theme.
  */
 export function buildPalette(
-  tokens: { surface: string; text: string; text2: string; text3: string; accent: string },
+  tokens: {
+    surface: string;
+    text: string;
+    text2: string;
+    text3: string;
+    accent: string;
+    attack?: string;
+    guard?: string;
+  },
   normalise: (css: string) => string = (c) => c,
 ): ScenePalette {
   const read = (v: string, fb: string): Rgb =>
@@ -117,6 +134,8 @@ export function buildPalette(
   const ink2 = read(tokens.text2, FALLBACK_LIGHT.text2);
   const ink3 = read(tokens.text3, FALLBACK_LIGHT.text3);
   const accent = read(tokens.accent, FALLBACK_LIGHT.accent);
+  const attack = read(tokens.attack ?? '', FALLBACK_LIGHT.attack);
+  const guard = read(tokens.guard ?? '', FALLBACK_LIGHT.guard);
   const lum = (c: Rgb): number => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
   const dark = lum(surface) < lum(ink);
   const tone = (t: number): string => css(mix(surface, ink, t));
@@ -158,5 +177,11 @@ export function buildPalette(
     boostGlow: css(accent, dark ? 0.26 : 0.18),
     boostFaint: css(accent, dark ? 0.12 : 0.08),
     streak: css(ink, dark ? 0.24 : 0.16),
+    attack: css(attack, dark ? 0.9 : 0.85),
+    attackFaint: css(attack, dark ? 0.35 : 0.28),
+    guard: css(guard, dark ? 0.85 : 0.8),
+    guardFill: css(guard, dark ? 0.12 : 0.08),
+    guardFaint: css(guard, dark ? 0.35 : 0.3),
+    haze: css(mix(surface, ink, dark ? 0.12 : 0.04), dark ? 0.62 : 0.68),
   };
 }

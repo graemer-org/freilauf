@@ -46,6 +46,7 @@ Layers inside `@freilauf/p2p`:
 | `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                 |
 | `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                  |
 | `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                               |
+| `cardRace.ts`              | Card Race attacks: messages, `AttackInbox` (exactly once, checks), `AttackOutbox` (retries)                                           |
 | `group.ts`                 | `GroupRide`: the API the app uses                                                                                                     |
 | `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`) |
 
@@ -288,6 +289,27 @@ rule. The `state` decoder rejects every `doc-*` message (wrong `type`), the docu
 rejects `state`, so old clients that only know `state` interoperate with new ones (they simply
 never see documents), and new clients do not send any `doc-*` traffic until something is shared.
 
+### Card Race (`cards`, `card-attack`, `card-ack`)
+
+Additive, for the Card Race ([ADR 0007](adr/0007-card-race.md)). The host's `rules` may carry
+`"mode": "cardRace"` (unknown modes count as normal). Every capable client adds
+`"cards": { "v": 1, … }` to its state — the capability marker; in a Card Race it also carries the
+signed race offset (`offsetM`, −100 km … 100 km; the plain `raceOffsetM` stays ≥ 0 for old
+clients), the attack acting on the rider (`attack: { kind, s }`), `shieldS`, `protectedS`,
+`held` and `away`. Attacks are messages to one peer, answered by an ack:
+
+```jsonc
+{ "v": 1, "type": "card-attack", "id": "k3j2a9x1.4", "to": "<peer id>", "kind": "headwind",
+  "gapM": 38.5, "raceM": 4231.0, "routeId": "isar-loop" } // routeId optional
+{ "v": 1, "type": "card-ack", "id": "k3j2a9x1.4", "result": "hit" } // blocked | protected | unavailable | refused
+```
+
+`GroupRide.sendAttack(to, payload)` re-sends on the mesh every 400 ms until acknowledged (once on
+the relay transport) and reports one outcome per attack (`onAttackResult`, or `timeout` after
+5 s). The receiver checks target, membership, replays (the last 64 ids per sender are
+remembered and re-acknowledged with their first verdict) and a rate limit (3 per 30 s, 1 s
+apart) before calling the app's handler (`setAttackHandler`) at most once per id. ≤ 512 bytes.
+
 ### Shared-document messages (`doc-*`)
 
 Short keys keep chunks small. `k` = kind, `id` = content hash, `n` = UTF-8 bytes of the text,
@@ -506,7 +528,8 @@ Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front and use the
 
 Trust-based, among friends: no anti-cheat, no authentication. Anyone with the whole invite
 (relays) or the room code (own server) can join. Peers can lie about their speed, but they cannot crash or corrupt other clients' UIs —
-every incoming packet is validated and bounded.
+every incoming packet is validated and bounded. Card Race attacks are additionally checked for
+target, membership, replays, rate and plausibility, so nobody can be pinned down.
 
 ## Testing
 

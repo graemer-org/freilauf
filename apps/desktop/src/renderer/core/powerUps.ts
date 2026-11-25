@@ -17,10 +17,22 @@
  * Extension points for a battle mode (ADR 0006): more kinds (POWER_UP_DEFINITIONS), a larger
  * hand (`capacity`), `activate(index)`, `grant()` from other sources, `applyEffect()` for
  * effects another rider sends, `target` on a definition, and `toLive()` as the wire format.
+ *
+ * **Card Race** (docs/card-race.md, ADR 0007) uses them: `setMode('cardRace')` gives a hand of
+ * two fixed slots (left/right button), a pool with attacks and a shield, `receiveAttack()` for
+ * an attack another rider aimed at this one (the effect is applied here, to this rider only),
+ * a protection window after every hit, and a second shadow bike for attacks, so the race offset
+ * splits into a gain from own cards (≥ 0) and a loss to attacks (≤ 0). Only in Card Race can the
+ * offset be negative; a normal ride is exactly as before.
  */
 import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
 import type {
+  AttackResult,
+  CardRaceLive,
+  GroupMode,
+  IncomingAttackLive,
+  OutgoingAttackLive,
   PowerUpBlock,
   PowerUpChallengeLive,
   PowerUpEffectLive,
@@ -29,7 +41,7 @@ import type {
   PowerUpKind,
   PowerUpLive,
 } from '../../shared/powerUps';
-import { POWER_UP_KINDS } from '../../shared/powerUps';
+import { CARD_KINDS, POWER_UP_KINDS } from '../../shared/powerUps';
 
 // ───────────── effects ─────────────
 
@@ -68,10 +80,16 @@ export interface PowerUpDefinition {
   fires?(ctx: EffectContext): boolean;
   modifiers(ctx: EffectContext): EffectModifiers;
   /**
-   * Who the effect acts on. Only 'self' exists so far; the battle mode adds kinds that act on
-   * another rider (they would be sent over the group and arrive there via `applyEffect`).
+   * Who the effect acts on: 'self', or (Card Race attacks) the rider directly ahead ('ahead')
+   * or the leader ('leader'). Attacks are sent over the group and applied by the target to
+   * itself (`receiveAttack`); nobody changes another rider's numbers.
    */
-  target: 'self';
+  target: 'self' | 'ahead' | 'leader';
+  /**
+   * 'boost' helps this rider (its gain is the "+ m from cards"), 'attack' slows the target (the
+   * "− m from attacks"), 'guard' is the shield (no modifiers; it blocks the next attack).
+   */
+  role: 'boost' | 'attack' | 'guard';
 }
 
 /** A descent for Downhill momentum: at least this steep downhill, percent. */
@@ -87,6 +105,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     kind: 'tailwind',
     durationS: 15,
     target: 'self',
+    role: 'boost',
     modifiers: () => ({ dragFactor: 0.6, massFactor: 1, rollingFactor: 1 }),
   },
   /** 12 % less mass for 25 s, applied uphill only (downhill less mass would slow the bike). */
@@ -94,6 +113,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     kind: 'lightLoad',
     durationS: 25,
     target: 'self',
+    role: 'boost',
     modifiers: (c) =>
       c.gradePercent > 0.5 ? { dragFactor: 1, massFactor: 0.88, rollingFactor: 1 } : NO_MODIFIERS,
   },
@@ -102,6 +122,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     kind: 'slipstream',
     durationS: 30,
     target: 'self',
+    role: 'boost',
     modifiers: () => ({ dragFactor: 0.75, massFactor: 1, rollingFactor: 1 }),
   },
   /**
@@ -114,9 +135,65 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     armedS: 180,
     fires: (c) => c.gradePercent <= DESCENT_GRADE_PERCENT,
     target: 'self',
+    role: 'boost',
     modifiers: () => ({ dragFactor: 0.7, massFactor: 1, rollingFactor: 0.5 }),
   },
+  /**
+   * Card Race attack on the rider directly ahead: 60 % more air resistance for 10 s. At 200 W
+   * on the flat that costs the target about 15 m of race position (less than a Tailwind gains);
+   * on a climb, where air matters little, hardly anything.
+   */
+  headwind: {
+    kind: 'headwind',
+    durationS: 10,
+    target: 'ahead',
+    role: 'attack',
+    modifiers: () => ({ dragFactor: 1.6, massFactor: 1, rollingFactor: 1 }),
+  },
+  /**
+   * Card Race attack on the leader: for 12 s their gaps to the others show as "?" (their own
+   * group list, overlay and scene labels). No physics at all.
+   */
+  fog: {
+    kind: 'fog',
+    durationS: 12,
+    target: 'leader',
+    role: 'attack',
+    modifiers: () => NO_MODIFIERS,
+  },
+  /** Card Race: raised when played, it blocks the next attack within 60 s, then it is gone. */
+  shield: {
+    kind: 'shield',
+    durationS: 60,
+    target: 'self',
+    role: 'guard',
+    modifiers: () => NO_MODIFIERS,
+  },
 };
+
+/** After any hit (or a blocked attack) no attack lands on that rider for this long, s. */
+export const PROTECTION_S = 15;
+/** Cards a Card Race hand holds: one per side button. */
+export const CARD_RACE_CAPACITY = 2;
+/**
+ * What a pick-up or challenge gives in a Card Race: every card, boosts most often (a pool entry
+ * per chance). Four boosts × 2, Headwind × 2, Shield × 2, Fog × 1: 8 of 13 help yourself.
+ */
+export const CARD_RACE_POOL: readonly PowerUpKind[] = [
+  'tailwind',
+  'tailwind',
+  'slipstream',
+  'slipstream',
+  'lightLoad',
+  'lightLoad',
+  'downhill',
+  'downhill',
+  'headwind',
+  'headwind',
+  'shield',
+  'shield',
+  'fog',
+];
 
 /** Several effects at once multiply (only one at a time for now; see `maxEffects`). */
 export function combineModifiers(list: readonly EffectModifiers[]): EffectModifiers {
@@ -190,6 +267,10 @@ export interface PowerUpConfig {
   maxEffects: number;
   /** Kinds a pick-up or challenge can give. */
   pool: readonly PowerUpKind[];
+  /** The same in a Card Race (entries may repeat: weights). */
+  cardPool: readonly PowerUpKind[];
+  /** Card Race: seconds of protection after a hit. */
+  protectionS: number;
   /** Pick-up spots reported ahead (m). */
   lookAheadM: number;
 }
@@ -218,6 +299,8 @@ export const DEFAULT_POWER_UP_CONFIG: PowerUpConfig = {
   capacity: 1,
   maxEffects: 1,
   pool: POWER_UP_KINDS,
+  cardPool: CARD_RACE_POOL,
+  protectionS: PROTECTION_S,
   lookAheadM: 600,
 };
 
@@ -230,6 +313,8 @@ export interface PowerUpTuning {
   challenge?: Partial<ChallengeRules>;
   /** Only these kinds (e.g. to see one effect in a test). */
   pool?: PowerUpKind[];
+  /** Card Race: only these cards (any of CARD_KINDS). */
+  cardPool?: PowerUpKind[];
 }
 
 export function powerUpConfig(tuning?: unknown): PowerUpConfig {
@@ -257,6 +342,11 @@ export function powerUpConfig(tuning?: unknown): PowerUpConfig {
   if (Array.isArray(pool)) {
     const kinds = POWER_UP_KINDS.filter((k) => pool.includes(k));
     if (kinds.length > 0) config.pool = kinds;
+  }
+  const cardPool = t.cardPool;
+  if (Array.isArray(cardPool)) {
+    const kinds = CARD_KINDS.filter((k) => cardPool.includes(k));
+    if (kinds.length > 0) config.cardPool = kinds;
   }
   const c = t.challenge;
   if (typeof c === 'object' && c !== null) {
@@ -392,11 +482,12 @@ export interface PowerUpEvent {
 
 interface Effect {
   kind: PowerUpKind;
+  role: PowerUpDefinition['role'];
   phase: 'armed' | 'active';
   /** Armed: when it expires; active: when it ends (ride time, s). */
   untilS: number;
   durationS: number;
-  /** Where it came from: 'self' (used a card) or e.g. a rider id in a battle. */
+  /** Where it came from: 'self' (used a card) or, for an attack, the attacker's name. */
   source: string;
 }
 
@@ -420,12 +511,65 @@ export interface PowerUpEngineOptions {
   /** The route ridden, or null/absent for a free ride. */
   track?: PowerUpTrack | null;
   config?: PowerUpConfig;
+  /** 'normal' (default) or 'cardRace'; can change during the ride (`setMode`). */
+  mode?: GroupMode;
 }
+
+/** What `receiveAttack` made of an attack (the target's answer). */
+export type AttackOutcome = Extract<AttackResult, 'hit' | 'blocked' | 'protected' | 'unavailable'>;
 
 /** How far a position may move in one tick and still count as riding through (not a jump). */
 const MAX_STEP_M = 80;
 /** Below this speed difference the shadow bike rejoins the real one (no drift). */
 const REJOIN_MPS = 0.01;
+
+/**
+ * A copy of the virtual bike with modified parameters. The difference between its distance and
+ * the recorded one is integrated into `offsetM`, kept on one side of zero (`sign`): a boost
+ * shadow only gains, an attack shadow only loses.
+ */
+class Shadow {
+  speedMps = 0;
+  offsetM = 0;
+  /** Away from the real bike: under an effect or still bleeding off its speed difference. */
+  #away = false;
+  readonly sign: 1 | -1;
+  /**
+   * `followIdle`: without an effect so far the shadow simply *is* the real bike (the attack
+   * shadow: it must not pick up the start-up lag of the first tick, which nothing clamps away).
+   * The boost shadow keeps the original behaviour of ADR 0006 (its lag is clamped at 0).
+   */
+  readonly #followIdle: boolean;
+  constructor(sign: 1 | -1, followIdle = false) {
+    this.sign = sign;
+    this.#followIdle = followIdle;
+  }
+
+  step(t: PowerUpTick, dt: number, realDeltaM: number, mods: EffectModifiers): void {
+    const none = isNoModifier(mods);
+    if (!none) this.#away = true;
+    if (none && !this.#away && this.#followIdle) {
+      this.speedMps = t.speedMps;
+      return;
+    }
+    if (none && Math.abs(this.speedMps - t.speedMps) < REJOIN_MPS) {
+      this.speedMps = t.speedMps;
+      this.#away = false;
+      return;
+    }
+    const step = stepBike(
+      this.speedMps,
+      t.powerW,
+      t.gradePercent,
+      modifiedBike(t.bike, mods),
+      dt,
+      t.brake,
+    );
+    this.speedMps = step.speedMps;
+    const next = this.offsetM + step.distanceM - realDeltaM;
+    this.offsetM = this.sign > 0 ? Math.max(0, next) : Math.min(0, next);
+  }
+}
 
 export class PowerUpEngine {
   readonly seed: string;
@@ -433,7 +577,9 @@ export class PowerUpEngine {
   readonly #track: PowerUpTrack | null;
   /** Route spots (route m) or free-ride spots (ridden m), ascending. */
   #spots: number[];
-  #hand: PowerUpKind[] = [];
+  #mode: GroupMode;
+  /** The hand as fixed slots (left first); a normal ride has one. */
+  #slots: (PowerUpKind | null)[];
   #effects: Effect[] = [];
   #challenge: Challenge | null = null;
   #lastOfferS = Number.NEGATIVE_INFINITY;
@@ -443,8 +589,15 @@ export class PowerUpEngine {
   #lastElapsedS: number | null = null;
   #lastDistanceM = 0;
   #lastCoord: number | null = null;
-  #shadowSpeedMps = 0;
-  #raceOffsetM = 0;
+  /** Own cards (and, in a normal ride, all power-ups): the race gain, ≥ 0. */
+  readonly #boost = new Shadow(1);
+  /** Card Race attacks on this rider: the race loss, ≤ 0. */
+  readonly #attack = new Shadow(-1, true);
+  /** Card Race: no attack lands before this ride time (s). */
+  #protectedUntilS = Number.NEGATIVE_INFINITY;
+  #incoming: IncomingAttackLive | null = null;
+  #outgoing: OutgoingAttackLive | null = null;
+  #attackSeq = 0;
   #picked = 0;
   #used = 0;
   #seq = 0;
@@ -459,6 +612,8 @@ export class PowerUpEngine {
     this.#spots = this.#track
       ? routeSpots(this.seed, this.#track.lengthM, this.#track.loop, this.config.spacing)
       : freeRideSpots(this.seed, 64, this.config.spacing);
+    this.#mode = options.mode ?? 'normal';
+    this.#slots = Array.from({ length: this.#capacity() }, () => null);
   }
 
   /** Pick-up spots: route metres on a route, ridden metres in a free ride (the first few). */
@@ -466,12 +621,62 @@ export class PowerUpEngine {
     return this.#spots;
   }
 
+  /** Held cards, first (left) first. */
   get hand(): readonly PowerUpKind[] {
-    return this.#hand;
+    return this.#slots.filter((k): k is PowerUpKind => k !== null);
   }
 
+  /** The hand as slots (Card Race: [left, right]); null = empty. */
+  get slots(): readonly (PowerUpKind | null)[] {
+    return this.#slots;
+  }
+
+  get mode(): GroupMode {
+    return this.#mode;
+  }
+
+  /** Race position − recorded position, m. Negative only in a Card Race (attacks). */
   get raceOffsetM(): number {
-    return this.#raceOffsetM;
+    const total = this.#boost.offsetM + this.#attack.offsetM;
+    // "Power-ups only help": a normal ride never places a rider behind their own legs.
+    return this.#mode === 'normal' ? Math.max(0, total) : total;
+  }
+
+  /** Metres gained from own cards / power-ups (≥ 0). */
+  get gainM(): number {
+    return this.#boost.offsetM;
+  }
+
+  /** Metres lost to attacks (≤ 0; always 0 in a normal ride). */
+  get lossM(): number {
+    return this.#attack.offsetM;
+  }
+
+  /**
+   * Switches between a normal ride and a Card Race (the host's choice; may change mid-ride).
+   * To Card Race: a second slot. Back to normal: one slot, the first boost held stays (attack
+   * cards and the shield have no use there), attacks and the shield end, the loss to attacks
+   * is dropped (a normal ride never places anyone behind their own riding).
+   */
+  setMode(mode: GroupMode): void {
+    if (mode === this.#mode) return;
+    this.#mode = mode;
+    const held = this.hand;
+    if (mode === 'normal') {
+      const keep = held.find((k) => POWER_UP_DEFINITIONS[k].role === 'boost') ?? null;
+      this.#slots = [keep];
+      for (const e of this.#effects.filter((x) => x.role !== 'boost')) this.#removeEffect(e);
+      this.#attack.offsetM = 0;
+      this.#attack.speedMps = this.#boost.speedMps;
+      this.#protectedUntilS = Number.NEGATIVE_INFINITY;
+      this.#incoming = null;
+      this.#outgoing = null;
+    } else {
+      this.#slots = [
+        ...this.#slots,
+        ...Array.from({ length: CARD_RACE_CAPACITY }, () => null),
+      ].slice(0, CARD_RACE_CAPACITY);
+    }
   }
 
   /** Advances the engine by one tick. Returns what happened in it (also kept for `toLive`). */
@@ -510,29 +715,19 @@ export class PowerUpEngine {
       }
     }
 
-    // ── race position: the shadow bike with the effects, next to the real one ──
+    // ── race position: shadow bikes with the effects, next to the real one ──
     if (riding && dt > 0) {
-      const mods = combineModifiers(
-        this.#effects
-          .filter((e) => e.phase === 'active')
-          .map((e) => POWER_UP_DEFINITIONS[e.kind].modifiers(ctx)),
-      );
-      if (isNoModifier(mods) && Math.abs(this.#shadowSpeedMps - t.speedMps) < REJOIN_MPS) {
-        this.#shadowSpeedMps = t.speedMps;
-      } else {
-        const step = stepBike(
-          this.#shadowSpeedMps,
-          t.powerW,
-          t.gradePercent,
-          modifiedBike(t.bike, mods),
-          dt,
-          t.brake,
+      const mods = (role: Effect['role']): EffectModifiers =>
+        combineModifiers(
+          this.#effects
+            .filter((e) => e.phase === 'active' && e.role === role)
+            .map((e) => POWER_UP_DEFINITIONS[e.kind].modifiers(ctx)),
         );
-        this.#shadowSpeedMps = step.speedMps;
-        this.#raceOffsetM = Math.max(0, this.#raceOffsetM + step.distanceM - realDeltaM);
-      }
+      this.#boost.step(t, dt, realDeltaM, mods('boost'));
+      if (this.#mode === 'cardRace') this.#attack.step(t, dt, realDeltaM, mods('attack'));
     } else if (!riding) {
-      this.#shadowSpeedMps = 0;
+      this.#boost.speedMps = 0;
+      this.#attack.speedMps = 0;
     }
 
     // ── pick-ups ──
@@ -542,9 +737,8 @@ export class PowerUpEngine {
       const prev = this.#lastCoord;
       if (prev !== null && riding && t.blocked === null) {
         for (const index of this.#crossed(prev, coord)) {
-          const kind = kindFor(this.seed, index, this.config.pool);
-          if (this.#hand.length < this.config.capacity) {
-            this.#hand.push(kind);
+          const kind = kindFor(this.seed, index, this.#pool());
+          if (this.#put(kind)) {
             this.#picked += 1;
             emit('picked', kind);
           } else emit('skipped', kind);
@@ -574,11 +768,12 @@ export class PowerUpEngine {
     return events;
   }
 
-  /** True when `activate()` would use a card now. */
+  /** True when `activate()` would use a card now (Card Race: any card of the hand). */
   get canActivate(): boolean {
+    if (this.#mode === 'cardRace') return this.#slots.some((_, i) => this.canPlay(i));
     const t = this.#last;
     return (
-      this.#hand.length > 0 &&
+      this.hand.length > 0 &&
       t !== null &&
       t.state === 'riding' &&
       t.blocked === null &&
@@ -587,13 +782,50 @@ export class PowerUpEngine {
   }
 
   /**
-   * Uses the card at `index` (the first by default). Returns false (and keeps the card) when
-   * none is held, the ride is not running, power-ups are blocked or an effect still acts.
+   * Card Race: whether the card in `slot` can be played now, as far as this rider can tell (an
+   * attack also needs a target, which the controller resolves).
+   */
+  canPlay(slot: number): boolean {
+    return this.playNote(slot) === null;
+  }
+
+  /** Card Race: why the card in `slot` cannot be played now, in a few words (null: it can). */
+  playNote(slot: number): string | null {
+    const kind = this.#slots[slot];
+    const t = this.#last;
+    if (kind === undefined || kind === null) return 'Empty';
+    if (!t || t.state !== 'riding') return 'Resume the ride to play it';
+    if (t.blocked === 'erg') return 'Kept for later · not in ERG steps';
+    if (t.blocked === 'ftpTest') return 'Kept for later · not in FTP tests';
+    if (t.blocked !== null) return 'Cards are off';
+    const role = POWER_UP_DEFINITIONS[kind].role;
+    if (role === 'boost' && this.#boostEffects().length > 0) return 'After your boost';
+    if (role === 'guard' && this.#effects.some((e) => e.role === 'guard')) return 'Shield is up';
+    return null;
+  }
+
+  /**
+   * Uses the card at `index` (the first by default): a power-up or (Card Race) a boost or the
+   * shield. In a Card Race `index` is the slot (0 left, 1 right). Returns false (and keeps the
+   * card) when none is held, the ride is not running, power-ups are blocked, an effect of the
+   * same sort still acts, or the card is an attack (see `spendCard`).
    */
   activate(index = 0): boolean {
-    const kind = this.#hand[index];
+    if (this.#mode === 'cardRace') {
+      const kind = this.#slots[index];
+      if (!kind || POWER_UP_DEFINITIONS[kind].role === 'attack' || !this.canPlay(index)) {
+        return false;
+      }
+      this.#slots[index] = null;
+      this.#used += 1;
+      this.#emit('activated', kind);
+      return this.applyEffect(kind, 'self');
+    }
+    const hand = this.hand;
+    const kind = hand[index];
     if (kind === undefined || !this.canActivate) return false;
-    this.#hand.splice(index, 1);
+    this.#slots[this.#slots.indexOf(kind)] = null;
+    this.#compact();
     this.#used += 1;
     this.#emit('activated', kind);
     this.applyEffect(kind, 'self');
@@ -601,17 +833,102 @@ export class PowerUpEngine {
   }
 
   /**
-   * Starts an effect without a card (extension point: an effect another rider sends in a
-   * battle). Armed kinds are armed; the rest start at once. Returns false when no effect slot
-   * is free or power-ups are blocked.
+   * Card Race: takes the attack card in `slot` out of the hand to play it (the controller has
+   * found its target and sends it). Null when the slot holds no attack or it cannot be played.
+   */
+  spendCard(slot: number): PowerUpKind | null {
+    const kind = this.#slots[slot];
+    if (this.#mode !== 'cardRace' || !kind || POWER_UP_DEFINITIONS[kind].role !== 'attack') {
+      return null;
+    }
+    if (!this.canPlay(slot)) return null;
+    this.#slots[slot] = null;
+    this.#used += 1;
+    this.#emit('played', kind);
+    return kind;
+  }
+
+  /**
+   * Card Race: an attack card played by this rider could not land (target protected, gone, not
+   * in the race, no answer): it goes back into the hand if there is room.
+   */
+  returnCard(kind: PowerUpKind): boolean {
+    if (!this.#put(kind)) return false;
+    this.#used = Math.max(0, this.#used - 1);
+    this.#emit('returned', kind);
+    return true;
+  }
+
+  /** Card Race: notes what became of an attack this rider played (for the notice). */
+  noteOutgoing(kind: PowerUpKind, target: string, result: OutgoingAttackLive['result']): void {
+    this.#attackSeq += 1;
+    this.#outgoing = { seq: this.#attackSeq, kind, target, result };
+  }
+
+  /**
+   * Card Race: another rider aimed attack `kind` at this one. Applied here, to this rider only,
+   * at most one attack at a time:
+   * - not riding, blocked (ERG, FTP test, off) or not in a Card Race → 'unavailable';
+   * - under an attack, or within the protection after one → 'protected';
+   * - shield up → the shield is used up, protection starts → 'blocked';
+   * - otherwise the effect starts, and protection runs until `protectionS` after it ends → 'hit'.
+   * The caller (the group link) guarantees each attack arrives here once.
+   */
+  receiveAttack(kind: PowerUpKind, by: string): AttackOutcome {
+    const t = this.#last;
+    const def = POWER_UP_DEFINITIONS[kind];
+    let result: AttackOutcome;
+    if (!t || this.#mode !== 'cardRace' || !def || def.role !== 'attack') result = 'unavailable';
+    else if (t.state !== 'riding' || t.blocked !== null) result = 'unavailable';
+    else if (this.#effects.some((e) => e.role === 'attack') || t.elapsedS < this.#protectedUntilS) {
+      result = 'protected';
+    } else {
+      const shield = this.#effects.find((e) => e.role === 'guard');
+      if (shield) {
+        this.#removeEffect(shield);
+        this.#protectedUntilS = t.elapsedS + this.config.protectionS;
+        this.#emit('blocked', kind);
+        result = 'blocked';
+      } else {
+        const untilS = t.elapsedS + def.durationS;
+        this.#effects.push({
+          kind,
+          role: 'attack',
+          phase: 'active',
+          untilS,
+          durationS: def.durationS,
+          source: by,
+        });
+        this.#protectedUntilS = untilS + this.config.protectionS;
+        this.#emit('hit', kind);
+        result = 'hit';
+      }
+    }
+    if (result !== 'unavailable') {
+      this.#attackSeq += 1;
+      this.#incoming = { seq: this.#attackSeq, kind, by, result };
+    }
+    return result;
+  }
+
+  /**
+   * Starts an effect without a card (an effect from elsewhere). Armed kinds are armed; the rest
+   * start at once. Returns false when no effect slot is free or power-ups are blocked. In a
+   * Card Race boosts, the shield and attacks each have their own slot; attacks arrive through
+   * `receiveAttack` instead (protection, shield).
    */
   applyEffect(kind: PowerUpKind, source = 'self'): boolean {
     const t = this.#last;
-    if (!t || t.blocked !== null || this.#effects.length >= this.config.maxEffects) return false;
+    if (!t || t.blocked !== null) return false;
     const def = POWER_UP_DEFINITIONS[kind];
+    if (this.#mode === 'cardRace') {
+      if (def.role === 'attack') return false;
+      if (this.#effects.some((e) => e.role === def.role)) return false;
+    } else if (this.#effects.length >= this.config.maxEffects) return false;
     if (def.armedS !== undefined) {
       this.#effects.push({
         kind,
+        role: def.role,
         phase: 'armed',
         untilS: t.elapsedS + def.armedS,
         durationS: def.armedS,
@@ -620,6 +937,7 @@ export class PowerUpEngine {
     } else {
       this.#effects.push({
         kind,
+        role: def.role,
         phase: 'active',
         untilS: t.elapsedS + def.durationS,
         durationS: def.durationS,
@@ -632,11 +950,10 @@ export class PowerUpEngine {
 
   /** Adds a card from elsewhere (a challenge here; e.g. a battle reward later). */
   grant(kind: PowerUpKind): boolean {
-    if (this.#hand.length >= this.config.capacity) {
+    if (!this.#put(kind)) {
       this.#emit('skipped', kind);
       return false;
     }
-    this.#hand.push(kind);
     return true;
   }
 
@@ -648,11 +965,11 @@ export class PowerUpEngine {
     return true;
   }
 
-  /** Plain, serialisable state for the UI, the overlay and (later) the network. */
+  /** Plain, serialisable state for the UI, the overlay and the network. */
   toLive(): PowerUpLive {
     const t = this.#last;
     const now = t?.elapsedS ?? 0;
-    const effect = this.#effects[0];
+    const effect = this.#mode === 'cardRace' ? this.#boostEffects()[0] : this.#effects[0];
     const ch = this.#challenge;
     const rules = this.config.challenge;
     const effectLive: PowerUpEffectLive | null = effect
@@ -676,23 +993,88 @@ export class PowerUpEngine {
           powerW: Math.round(t?.power3sW ?? 0),
         }
       : null;
+    const hand = this.hand;
     return {
       blocked: t?.blocked ?? null,
-      held: this.#hand[0] ?? null,
-      hand: [...this.#hand],
-      capacity: this.config.capacity,
+      held: hand[0] ?? null,
+      hand: [...hand],
+      capacity: this.#capacity(),
       canActivate: this.canActivate,
       effect: effectLive,
       challenge: challengeLive,
       upcoming: [...this.#upcoming],
-      raceOffsetM: Math.round(this.#raceOffsetM * 10) / 10,
+      raceOffsetM: Math.round(this.raceOffsetM * 10) / 10,
       picked: this.#picked,
       used: this.#used,
       event: this.#event,
+      ...(this.#mode === 'cardRace' ? { cards: this.#cardsLive(now) } : {}),
     };
   }
 
   // ───── internals ─────
+
+  #cardsLive(now: number): CardRaceLive {
+    const attack = this.#effects.find((e) => e.role === 'attack');
+    const shield = this.#effects.find((e) => e.role === 'guard');
+    const protecting = !attack && now < this.#protectedUntilS;
+    return {
+      slots: [...this.#slots],
+      slotNotes: this.#slots.map((k, i) => (k === null ? null : this.playNote(i))),
+      slotTargets: this.#slots.map(() => null),
+      attack: attack
+        ? {
+            kind: attack.kind,
+            by: attack.source,
+            remainingS: Math.max(0, attack.untilS - now),
+            durationS: attack.durationS,
+          }
+        : null,
+      shield: shield
+        ? { remainingS: Math.max(0, shield.untilS - now), durationS: shield.durationS }
+        : null,
+      protection: protecting
+        ? {
+            remainingS: Math.max(0, this.#protectedUntilS - now),
+            durationS: this.config.protectionS,
+          }
+        : null,
+      immuneS: Math.max(0, this.#protectedUntilS - now),
+      gainM: Math.round(this.gainM * 10) / 10,
+      lossM: Math.round(this.lossM * 10) / 10,
+      incoming: this.#incoming,
+      outgoing: this.#outgoing,
+    };
+  }
+
+  #capacity(): number {
+    return this.#mode === 'cardRace' ? CARD_RACE_CAPACITY : this.config.capacity;
+  }
+
+  #pool(): readonly PowerUpKind[] {
+    return this.#mode === 'cardRace' ? this.config.cardPool : this.config.pool;
+  }
+
+  #handCount(): number {
+    return this.#slots.reduce((n, k) => n + (k === null ? 0 : 1), 0);
+  }
+
+  #boostEffects(): Effect[] {
+    return this.#effects.filter((e) => e.role === 'boost');
+  }
+
+  /** Puts a card into the first empty slot (left first). False when the hand is full. */
+  #put(kind: PowerUpKind): boolean {
+    const free = this.#slots.indexOf(null);
+    if (free < 0) return false;
+    this.#slots[free] = kind;
+    return true;
+  }
+
+  /** A normal ride keeps its cards packed to the front (index = order of pick-up). */
+  #compact(): void {
+    const held = this.hand;
+    this.#slots = this.#slots.map((_, i) => held[i] ?? null);
+  }
 
   #emit(type: PowerUpEventType, kind?: PowerUpKind): void {
     this.#seq += 1;
@@ -784,7 +1166,11 @@ export class PowerUpEngine {
     if (!t.challenges || t.blocked !== null || t.state !== 'riding') return false;
     if (t.elapsedS < r.notBeforeS) return false;
     if (t.elapsedS - this.#lastOfferS < r.cooldownS) return false;
-    if (this.#hand.length > 0 || this.#effects.length > 0) return false;
+    if (this.#mode === 'normal') {
+      if (this.#handCount() > 0 || this.#effects.length > 0) return false;
+    } else if (this.#handCount() >= this.#capacity() || this.#boostEffects().length > 0) {
+      return false;
+    }
     if (t.gradePercent <= r.descentGradePercent) return false;
     const w = this.windows();
     if (!w || w.erg) return false;
@@ -842,7 +1228,7 @@ export class PowerUpEngine {
     }
     if (ch.heldS >= r.holdS) {
       this.#challenge = null;
-      const kind = kindFor(this.seed, this.#challengeCount++, this.config.pool, 'challenge');
+      const kind = kindFor(this.seed, this.#challengeCount++, this.#pool(), 'challenge');
       if (this.grant(kind)) {
         this.#picked += 1;
         emit('challenge-won', kind);

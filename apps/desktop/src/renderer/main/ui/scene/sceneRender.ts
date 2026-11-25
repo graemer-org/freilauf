@@ -7,6 +7,14 @@
 
 import type { ScenePalette } from './palette';
 import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
+import {
+  drawGustsSide,
+  drawHaze,
+  drawProtection,
+  drawPulse,
+  drawRiderFx,
+  drawShield,
+} from './cardFx';
 import { BIKE, BODY, computePose, createPose, type Point, type Pose } from './riderPose';
 import {
   formatGrade,
@@ -211,6 +219,7 @@ export class SceneRenderer {
     if (pu) this.boostAura(f, pu, slope, p);
     if (localLat >= otherLat) this.localRider(f, slope);
     if (pu) this.gates(pu, slope, p, true);
+    if (pu?.cards) this.cardsLocal(f, pu, slope, p);
 
     this.gradeLabel(f.gradeLabel, slope, p);
     if (pu) this.gateTag(pu, slope, p);
@@ -682,6 +691,26 @@ export class SceneRenderer {
     }
   }
 
+  /**
+   * Card Race on the local rider: Headwind's gusts arriving from ahead, the Shield's bubble,
+   * the protection ring with its countdown, a pulse when an attack lands or is blocked, and
+   * Fog's haze over the whole view (the gaps are hidden in the panels, not here).
+   */
+  private cardsLocal(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const c = pu.cards!;
+    const ctx = this.ctx;
+    const k = this.px;
+    const x = this.riderX + 0.05 * k;
+    const y = this.roadY(this.riderX, slope) + f.lateral * this.halfDepth * 0.62 - 0.85 * k;
+    if (c.attack === 'headwind') drawGustsSide(ctx, p, x, y, k, pu.timeS, f.reducedMotion);
+    if (c.shield) drawShield(ctx, p, x, y, 1.2 * k, 1.08 * k);
+    if (c.protection >= 0) drawProtection(ctx, p, x, y, 1.25 * k, 1.12 * k, c.protection);
+    if (c.pulse >= 0 && c.pulseKind) {
+      drawPulse(ctx, p, x, y, 1.15 * k, c.pulse, c.pulseKind, f.reducedMotion);
+    }
+    if (c.attack === 'fog') drawHaze(ctx, p, this.w, this.h, this.horizonY);
+  }
+
   /** Slipstream: a faint rider just ahead, as if riding in their wheel. */
   private slipstreamGhost(f: SceneFrame, slope: number): void {
     const x = this.riderX + 1.85 * this.px;
@@ -743,8 +772,22 @@ export class SceneRenderer {
         false,
       );
       ctx.globalAlpha = 1;
-      // Name above the head.
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      if (o.fx) {
+        const k = this.px * scale;
+        drawRiderFx(
+          ctx,
+          p,
+          o.fx,
+          this.tmp.x + 0.05 * k,
+          this.tmp.y - 0.85 * k,
+          k,
+          f.powerUps?.timeS ?? 0,
+          f.reducedMotion,
+          'side',
+        );
+      }
+      // Name above the head.
       ctx.font = this.nameFont;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';

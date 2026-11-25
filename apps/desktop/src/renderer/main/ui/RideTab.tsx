@@ -64,7 +64,14 @@ function useRideShortcuts(app: App): void {
         case 'p':
         case 'P':
           if (e.repeat) return;
+          // In a Card Race: the left card (docs/card-race.md); otherwise the held power-up.
           app.usePowerUp('keyboard');
+          break;
+        case 'l':
+        case 'L':
+          // Card Race only: the right card.
+          if (e.repeat || !app.store.getState().live?.powerUps?.cards) return;
+          app.playCard(1, 'keyboard');
           break;
         case ' ': {
           // Let a focused button handle its own Space activation.
@@ -517,6 +524,7 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
   const onRoute = useAppState((s) => routeTrackOf(s) !== null);
   const gradientLocked = useAppState((s) => onRouteOrLocked(s));
   const powerUpsOn = useAppState((s) => s.settings?.powerUps?.enabled !== false);
+  const cardRace = useAppState((s) => s.live?.group?.mode === 'cardRace');
   return (
     <>
       <div
@@ -568,12 +576,18 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
           )}
           <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) · <kbd>Space</kbd> start /
           pause
-          {powerUpsOn && (
-            <>
-              {' '}
-              · <kbd>P</kbd> use power-up
-            </>
-          )}
+          {powerUpsOn &&
+            (cardRace ? (
+              <>
+                {' '}
+                · <kbd>P</kbd> <kbd>L</kbd> play left / right card
+              </>
+            ) : (
+              <>
+                {' '}
+                · <kbd>P</kbd> use power-up
+              </>
+            ))}
         </p>
       </div>
       <SimulationPanel />

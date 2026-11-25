@@ -28,6 +28,11 @@ export interface RideSummary {
    * distance, power, points and bests above never include it.
    */
   powerUpGainM?: number;
+  /**
+   * Card Race only: the race offset split into metres gained from own cards (≥ 0) and lost to
+   * attacks (≤ 0), each shown on its own line ("+38 m from cards", "−24 m from attacks").
+   */
+  cards?: { gainM: number; lossM: number } | null;
 }
 
 export interface SummarizeInput {
@@ -43,6 +48,8 @@ export interface SummarizeInput {
   routeName: string | null;
   /** Race offset from power-ups at the finish (m); absent = 0. */
   powerUpGainM?: number;
+  /** Card Race: gain from cards and loss to attacks at the finish (m). */
+  cards?: { gainM: number; lossM: number } | null;
 }
 
 /** Pure: builds the post-ride summary. */
@@ -84,5 +91,17 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
     workoutName: input.workoutName,
     routeName: input.routeName,
     powerUpGainM: gain > 0 && Number.isFinite(gain) ? Math.round(gain) : 0,
+    ...(input.cards
+      ? {
+          cards: {
+            gainM: Number.isFinite(input.cards.gainM)
+              ? Math.max(0, Math.round(input.cards.gainM))
+              : 0,
+            lossM: Number.isFinite(input.cards.lossM)
+              ? Math.min(0, Math.round(input.cards.lossM))
+              : 0,
+          },
+        }
+      : {}),
   };
 }

@@ -53,6 +53,8 @@ import { RideController } from '../core/rideController';
 import type { ShiftSource } from '../core/rideController';
 import type { Workout } from '@freilauf/workouts';
 import type { GroupLink } from '../core/rideController';
+import type { GroupRules } from '@freilauf/p2p';
+import type { GroupMode } from '../../shared/powerUps';
 import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
 import type { RouteTrack } from '@freilauf/routes';
@@ -183,6 +185,8 @@ export interface AppState {
   watchRelay?: WatchRelayStatus;
   /** The host's switch: power-ups allowed in the group ride this rider creates (default on). */
   groupPowerUps?: boolean;
+  /** The host's choice: how the group ride this rider creates plays (default normal). */
+  groupMode?: GroupMode;
 }
 
 export interface LeverPositionsState {
@@ -395,6 +399,7 @@ export class App {
     lastRide: null,
     watchRelay: { state: 'off' },
     groupPowerUps: true,
+    groupMode: 'normal',
   });
 
   readonly #api: FreilaufApi;
@@ -767,6 +772,12 @@ export class App {
         workoutName: before.live?.workout?.name ?? null,
         routeName: before.routeTrack?.name ?? null,
         powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
+        cards:
+          finished?.powerUps?.mode === 'cardRace'
+            ? { gainM: finished.powerUps.gainM ?? 0, lossM: finished.powerUps.lossM ?? 0 }
+            : before.live?.powerUps?.cards
+              ? { gainM: before.live.powerUps.cards.gainM, lossM: before.live.powerUps.cards.lossM }
+              : null,
       });
       this.store.setState({
         selectedWorkoutId: null,
@@ -803,6 +814,11 @@ export class App {
     return this.#controller?.usePowerUp(source) ?? false;
   }
 
+  /** Card Race: plays the left (0) or right (1) card (P / L, the on-screen hand). */
+  playCard(slot: number, source: ShiftSource = 'ui'): boolean {
+    return this.#controller?.playCard(slot, source) ?? false;
+  }
+
   dismissPowerUpChallenge(): void {
     this.#controller?.dismissPowerUpChallenge();
   }
@@ -810,9 +826,28 @@ export class App {
   /** The host's switch for the group ride (only the host's counts; see GroupRules). */
   setGroupPowerUps(on: boolean): void {
     this.store.setState({ groupPowerUps: on });
+    this.#sendHostRules();
+  }
+
+  /**
+   * The host's choice of mode (docs/card-race.md): before creating the ride, for the ride to
+   * be created; as the host of a ride, for everyone at once. Guests cannot change it.
+   */
+  setGroupMode(mode: GroupMode): void {
+    this.store.setState({ groupMode: mode });
+    this.#sendHostRules();
+  }
+
+  /** The rules this rider sends as the host (none as a guest or alone). */
+  #hostRules(): GroupRules {
+    const s = this.store.getState();
+    return { powerUps: s.groupPowerUps !== false, mode: s.groupMode ?? 'normal' };
+  }
+
+  #sendHostRules(): void {
     const group = this.store.getState().group;
     if (group.phase === 'joined' && group.role === 'host') {
-      this.#controller?.setGroupRules({ powerUps: on });
+      this.#controller?.setGroupRules(this.#hostRules());
     }
   }
 
@@ -1271,9 +1306,7 @@ export class App {
       });
       this.#group = group;
       this.#controller?.setGroup(group);
-      this.#controller?.setGroupRules(
-        action === 'create' ? { powerUps: this.store.getState().groupPowerUps !== false } : null,
-      );
+      this.#controller?.setGroupRules(action === 'create' ? this.#hostRules() : null);
       this.#community.attach(group);
       this.#groupCleanup = [
         group.onSharedWorkoutsChange(() => this.#refreshSharedWorkouts()),

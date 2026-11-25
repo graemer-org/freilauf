@@ -7,7 +7,15 @@ import type {
   Trainer,
   Unsubscribe,
 } from '@freilauf/devices';
-import type { GroupRider, GroupRules } from '@freilauf/p2p';
+import type {
+  AttackOutcomeEvent,
+  AttackPayload,
+  AttackVerdict,
+  GroupRider,
+  GroupRules,
+  IncomingAttack,
+  RiderCards,
+} from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
 import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
@@ -31,7 +39,10 @@ import type {
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
-import type { PowerUpBlock, PowerUpLive } from '../../shared/powerUps';
+import type { GroupMode, PowerUpBlock, PowerUpKind, PowerUpLive } from '../../shared/powerUps';
+import { isAttackKind } from '../../shared/powerUps';
+import type { LocalRace } from './cardRace';
+import { attackPosition, cardsWire, checkAttack, resolveTarget } from './cardRace';
 import { combineSteering, leverOutput } from './levers';
 import type { LeverOutput } from './levers';
 import { RateLimiter } from './logFormat';
@@ -58,10 +69,18 @@ export interface GroupLink {
     raceOffsetM?: number;
     /** The host's rules for the group (only the host sends them). */
     rules?: GroupRules;
+    /** Card Race support and, in a Card Race, this rider's cards (docs/adr/0007-card-race.md). */
+    cards?: RiderCards;
   }): void;
   getRiders(): GroupRider[];
   /** The group's rules as the host set them; null when none were sent. */
   getRules?(): GroupRules | null;
+  /** Card Race: sends an attack to a peer (GroupRide.sendAttack); null when it cannot. */
+  sendAttack?(to: string, payload: () => AttackPayload | null): string | null;
+  /** Card Race: one outcome per attack sent. */
+  onAttackResult?(listener: (outcome: AttackOutcomeEvent) => void): () => void;
+  /** Card Race: decides and applies attacks aimed at this rider (null removes it). */
+  setAttackHandler?(handler: ((attack: IncomingAttack) => AttackVerdict) | null): void;
 }
 
 export interface RideControllerOptions {
@@ -80,6 +99,9 @@ export interface RideControllerOptions {
 export type ShiftSource = 'ui' | 'keyboard' | `button:${string}` | (string & {});
 
 const AUTOSAVE_INTERVAL_MS = 30_000;
+
+/** Buttons that play the right card in a Card Race when set to "Use power-up". */
+const RIGHT_CARD_BUTTONS: ReadonlySet<string> = new Set(['powerUpRight']);
 
 /**
  * Route gradient → trainer (docs/adr/0004-routes.md): a new gradient is sent when it differs
@@ -145,8 +167,18 @@ export interface FinishedRide {
   ride: RecordedRide;
   /** Present when the ride was an FTP test. */
   ftpTest: FtpTestOutcome | null;
-  /** Power-ups of the ride (never part of `ride`): the race offset they added, and counts. */
-  powerUps?: { raceOffsetM: number; picked: number; used: number } | null;
+  /**
+   * Power-ups of the ride (never part of `ride`): the race offset they added, and counts. In a
+   * Card Race also the split: metres gained from own cards and lost to attacks.
+   */
+  powerUps?: {
+    raceOffsetM: number;
+    picked: number;
+    used: number;
+    mode?: GroupMode;
+    gainM?: number;
+    lossM?: number;
+  } | null;
 }
 
 const INVALID_REASONS: Record<string, string> = {
@@ -195,6 +227,13 @@ export class RideController {
   #powerUpTuning: unknown = null;
   /** The rules this rider sets as the host of a group ride (null: a guest, or alone). */
   #hostRules: GroupRules | null = null;
+  #groupCleanup: (() => void) | null = null;
+  /** Card Race attacks this rider sent and is waiting to hear about, by id. */
+  #attacks = new Map<string, { kind: PowerUpKind; target: string }>();
+  /** Where this rider was in the race at the last tick (attack payloads, plausibility). */
+  #race: LocalRace = { distanceM: 0, offsetM: 0, route: null };
+  /** Whether the last tick was a Card Race (for the broadcast and the handler). */
+  #cardRace = false;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -259,7 +298,21 @@ export class RideController {
   }
 
   setGroup(group: GroupLink | null): void {
+    this.#groupCleanup?.();
+    this.#groupCleanup = null;
+    this.#group?.setAttackHandler?.(null);
+    this.#attacks.clear();
     this.#group = group;
+    if (!group) return;
+    group.setAttackHandler?.((attack) => this.#onAttack(attack));
+    this.#groupCleanup = group.onAttackResult?.((o) => this.#onAttackResult(o)) ?? null;
+  }
+
+  /** The mode of the group ride: the host's own rules, else the host's as received. */
+  get groupMode(): GroupMode {
+    if (!this.#group) return 'normal';
+    const rules = this.#hostRules ?? this.#group.getRules?.() ?? null;
+    return rules?.mode === 'cardRace' ? 'cardRace' : 'normal';
   }
 
   updateSettings(settings: Settings): void {
@@ -421,6 +474,7 @@ export class RideController {
    * not running, or power-ups do not apply now (ERG step, FTP test, switched off).
    */
   usePowerUp(source: ShiftSource = 'ui'): boolean {
+    if (this.#powerUps?.mode === 'cardRace') return this.playCard(0, source);
     const engine = this.#powerUps;
     const kind = engine?.hand[0];
     const used = engine?.activate() ?? false;
@@ -429,6 +483,59 @@ export class RideController {
       ...(used ? { kind } : { held: kind ?? null, blocked: this.#powerUpBlock() }),
     });
     return used;
+  }
+
+  /**
+   * Card Race: plays the card in `slot` (0 = left button / P, 1 = right button / L). A boost or
+   * the shield acts on this rider at once; an attack goes to its target (resolved now from the
+   * latest positions) and is applied there. Returns false (the card stays) when it cannot be
+   * played now; in a normal ride the left slot is the held power-up.
+   */
+  playCard(slot: number, source: ShiftSource = 'ui'): boolean {
+    const engine = this.#powerUps;
+    if (!engine) return false;
+    if (engine.mode !== 'cardRace') return slot === 0 ? this.usePowerUp(source) : false;
+    const kind = engine.slots[slot] ?? null;
+    const side = slot === 0 ? 'left' : 'right';
+    if (!kind) {
+      this.#log.info(`card not played: ${side} slot empty (${source})`, { source });
+      return false;
+    }
+    if (!isAttackKind(kind)) {
+      const used = engine.activate(slot);
+      this.#log.info(
+        used ? `card played: ${kind} (${side}, ${source})` : `card not played: ${kind}`,
+        { source, ...(used ? {} : { note: engine.playNote(slot) }) },
+      );
+      return used;
+    }
+    const group = this.#group;
+    const target = resolveTarget(kind, group?.getRiders() ?? []);
+    const note = engine.playNote(slot) ?? (target.ok ? null : target.note);
+    if (!target.ok || note !== null || !group?.sendAttack) {
+      this.#log.info(`card not played: ${kind} (${side}, ${source})`, { source, note });
+      return false;
+    }
+    if (engine.spendCard(slot) === null) return false;
+    const id = group.sendAttack(target.peerId, () => {
+      // Re-sends carry the latest positions (same id, applied once).
+      const now = group.getRiders().find((r) => r.peerId === target.peerId);
+      const gapM = Math.max(0, now?.gapM ?? target.gapM);
+      return { kind, gapM, ...attackPosition(this.#race, now?.sameRoute ?? target.sameRoute) };
+    });
+    if (id === null) {
+      engine.returnCard(kind);
+      engine.noteOutgoing(kind, target.name, 'timeout');
+      this.#log.info(`card not sent: ${kind} to ${target.name}`, { source });
+      return false;
+    }
+    this.#attacks.set(id, { kind, target: target.name });
+    engine.noteOutgoing(kind, target.name, 'sent');
+    this.#log.info(`card played: ${kind} at ${target.name} (${side}, ${source})`, {
+      source,
+      gapM: round(target.gapM, 1),
+    });
+    return true;
   }
 
   /** Waves the effort challenge on offer away. */
@@ -579,7 +686,18 @@ export class RideController {
       ride,
       ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null,
       powerUps: powerUps
-        ? { raceOffsetM: powerUps.raceOffsetM, picked: powerUps.picked, used: powerUps.used }
+        ? {
+            raceOffsetM: powerUps.raceOffsetM,
+            picked: powerUps.picked,
+            used: powerUps.used,
+            ...(powerUps.cards
+              ? {
+                  mode: 'cardRace' as const,
+                  gainM: powerUps.cards.gainM,
+                  lossM: powerUps.cards.lossM,
+                }
+              : {}),
+          }
         : null,
     };
   }
@@ -598,7 +716,10 @@ export class RideController {
     this.#distanceM = ride.distanceM;
     const now = this.#now();
     const workout = this.#driveWorkout(ride);
-    const powerUps = this.#drivePowerUps(ride, workout, braking, routePosition);
+    const mode = this.groupMode;
+    this.#cardRace = mode === 'cardRace';
+    this.#powerUps?.setMode(mode);
+    const powerUps = this.#withTargets(this.#drivePowerUps(ride, workout, braking, routePosition));
 
     if (ride.state !== 'idle' && now - this.#lastAutosaveAt >= AUTOSAVE_INTERVAL_MS) {
       this.#lastAutosaveAt = now;
@@ -609,6 +730,23 @@ export class RideController {
     }
 
     const track = this.#route?.track;
+    const routeM =
+      track && this.#route
+        ? positionAt(track, ride.distanceM, this.#route.offsetM).distanceM
+        : null;
+    this.#race = {
+      distanceM: ride.distanceM,
+      offsetM: powerUps?.raceOffsetM ?? 0,
+      route:
+        track && routeM !== null
+          ? {
+              id: routeBaseId(track.id),
+              m: routeM,
+              lengthM: track.totalDistanceM,
+              loop: track.loop,
+            }
+          : null,
+    };
     this.#group?.setLocalState({
       name: this.#settings.rider.name,
       distanceM: ride.distanceM,
@@ -619,12 +757,13 @@ export class RideController {
       gear: ride.gear,
       ...(powerUps && powerUps.raceOffsetM > 0 ? { raceOffsetM: powerUps.raceOffsetM } : {}),
       ...(this.#hostRules ? { rules: this.#hostRules } : {}),
+      cards: cardsWire(powerUps, this.#cardRace, ride.state === 'riding'),
       // Riders on the same route are placed by where they are on it (docs/routes.md).
-      ...(track && this.#route
+      ...(track && routeM !== null
         ? {
             route: {
               id: routeBaseId(track.id),
-              m: positionAt(track, ride.distanceM, this.#route.offsetM).distanceM,
+              m: routeM,
             },
             routeShape: { lengthM: track.totalDistanceM, loop: track.loop },
           }
@@ -639,7 +778,11 @@ export class RideController {
         controller: status(this.#devices.controller),
       },
       group: this.#group
-        ? { roomCode: this.#group.roomCode, riders: this.#group.getRiders() }
+        ? {
+            roomCode: this.#group.roomCode,
+            riders: this.#group.getRiders(),
+            ...(this.#cardRace ? { mode } : {}),
+          }
         : null,
       localName: this.#settings.rider.name,
       workout,
@@ -656,6 +799,54 @@ export class RideController {
     for (const kind of ['trainer', 'heartRate', 'controller'] as const) this.setDevice(kind, null);
   }
 
+  /**
+   * Card Race: adds, per attack card, whom it would hit now or why it waits (the engine knows
+   * the rider, the controller knows the group).
+   */
+  #withTargets(pu: PowerUpLive | null): PowerUpLive | null {
+    const c = pu?.cards;
+    if (!pu || !c) return pu;
+    const riders = this.#group?.getRiders() ?? [];
+    const slotNotes = [...c.slotNotes];
+    const slotTargets = [...c.slotTargets];
+    c.slots.forEach((kind, i) => {
+      if (!kind || !isAttackKind(kind) || slotNotes[i] !== null) return;
+      const t = resolveTarget(kind, riders);
+      if (t.ok) slotTargets[i] = t.name;
+      else slotNotes[i] = t.note;
+    });
+    const canActivate = c.slots.some((k, i) => k !== null && slotNotes[i] === null);
+    return { ...pu, canActivate, cards: { ...c, slotNotes, slotTargets } };
+  }
+
+  /** Card Race: an attack aimed at this rider (already checked by the group link). */
+  #onAttack(attack: IncomingAttack): AttackVerdict {
+    const engine = this.#powerUps;
+    if (!engine || engine.mode !== 'cardRace' || !this.#cardRace) return 'unavailable';
+    const refusal = checkAttack(attack, this.#race, this.#group?.getRiders() ?? []);
+    if (refusal) {
+      this.#log.warn(`card attack refused: ${refusal}`, { kind: attack.kind });
+      return 'refused';
+    }
+    const result = engine.receiveAttack(attack.kind as PowerUpKind, attack.fromName);
+    this.#log.info(`card attack ${result}: ${attack.kind}`, {
+      raceOffsetM: round(engine.raceOffsetM, 1),
+    });
+    return result;
+  }
+
+  /** Card Race: the target answered (or did not): a card that could not land comes back. */
+  #onAttackResult(o: AttackOutcomeEvent): void {
+    const sent = this.#attacks.get(o.id);
+    if (!sent) return;
+    this.#attacks.delete(o.id);
+    const engine = this.#powerUps;
+    if (!engine) return;
+    if (o.result !== 'hit' && o.result !== 'blocked') engine.returnCard(sent.kind);
+    engine.noteOutgoing(sent.kind, sent.target, o.result);
+    this.#log.info(`card ${sent.kind} at ${sent.target}: ${o.result}`);
+  }
+
   #newPowerUps(): PowerUpEngine {
     const track = this.#route?.track ?? null;
     const base = track ? routeBaseId(track.id) : null;
@@ -663,6 +854,7 @@ export class RideController {
       seed: powerUpSeed(base, this.#session.id),
       track: track ? { id: base!, lengthM: track.totalDistanceM, loop: track.loop } : null,
       config: powerUpConfig(this.#powerUpTuning),
+      mode: this.groupMode,
     });
     this.#log.info('power-ups ready', {
       enabled: this.#settings.powerUps?.enabled !== false,
@@ -681,7 +873,9 @@ export class RideController {
     const w = workout ?? null;
     if (this.#ergActive || (w && w.started && !w.finished && w.mode === 'erg')) return 'erg';
     const rules = this.#hostRules ?? this.#group?.getRules?.() ?? null;
-    if (this.#group && rules && rules.powerUps === false) return 'group';
+    // The host's power-up switch belongs to a normal ride; a Card Race always has cards.
+    if (this.#group && rules && rules.powerUps === false && rules.mode !== 'cardRace')
+      return 'group';
     return null;
   }
 
@@ -756,7 +950,10 @@ export class RideController {
         return;
       }
       case 'usePowerUp':
-        this.usePowerUp(source);
+        // Card Race: the right grip's side button plays the right card, any other the left.
+        if (this.#powerUps?.mode === 'cardRace') {
+          this.playCard(RIGHT_CARD_BUTTONS.has(event.button) ? 1 : 0, source);
+        } else this.usePowerUp(source);
         return;
       case 'none':
         this.#log.info(`button ${event.button} pressed: no action assigned`, {

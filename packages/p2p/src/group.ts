@@ -8,11 +8,24 @@ import {
   type StartResult,
 } from './documents';
 import {
+  AttackInbox,
+  AttackOutbox,
+  attackEpoch,
+  decodeCardMessage,
+  encodeAck,
+  type AttackMessage,
+  type AttackOutcomeEvent,
+  type AttackPayload,
+  type AttackVerdict,
+  type IncomingAttack,
+} from './cardRace';
+import {
   decodeStateMessage,
   encodeStateMessage,
   extrapolateDistance,
   type LocalRoutePlacement,
   RemoteRiders,
+  raceOffsetOf,
   routeAhead,
   sanitizeRiderState,
 } from './riderState';
@@ -114,7 +127,14 @@ interface GroupRideEvents {
   failure: TransportFailure;
   problem: TransportProblem;
   log: TransportLog;
+  'attack-result': AttackOutcomeEvent;
 }
+
+/**
+ * Decides what an incoming Card Race attack does (the app: plausibility, protection, shield)
+ * and applies it to the local rider. Called at most once per attack id.
+ */
+export type AttackHandler = (attack: IncomingAttack) => AttackVerdict;
 
 /** Problems are kept this long for `getProblems()`. */
 const PROBLEM_KEEP_MS = 60_000;
@@ -146,6 +166,9 @@ export class GroupRide {
   #failure: TransportFailure | null = null;
   #left = false;
   #unsubscribe: Unsubscribe[] = [];
+  readonly #inbox = new AttackInbox();
+  #outbox: AttackOutbox;
+  #attackHandler: AttackHandler | null = null;
 
   /** Creates a new room with a random code (and, for relay rides, a new secret) and joins it. */
   static create(name: string, deps: GroupRideDeps): Promise<GroupRide> {
@@ -218,6 +241,14 @@ export class GroupRide {
       timers: this.#timers,
       maxMessageBytes: deps.documentMessageMaxBytes,
     });
+    this.#outbox = new AttackOutbox({
+      epoch: attackEpoch(),
+      // The mesh channel is unreliable and unordered: re-send until acknowledged. The relay
+      // channel is reliable and ordered: one send arrives (or the peer is gone).
+      retry: transport.kind === 'self-hosted',
+      send: (to, raw) => transport.send(to, raw),
+      done: (outcome) => this.#events.emit('attack-result', outcome),
+    });
     const changed = () => this.#events.emit('change', undefined);
     this.#unsubscribe = [
       // Synchronous, and strictly before any message from or to that peer passes the transport
@@ -231,11 +262,19 @@ export class GroupRide {
           if (this.#riders.ingest(peerId, state, this.#now())) changed();
           return;
         }
+        const card = decodeCardMessage(data);
+        if (card) {
+          if (card.type === 'card-ack') this.#outbox.ack(peerId, card);
+          else this.#onAttack(peerId, card);
+          return;
+        }
         this.#docs.handleMessage(peerId, data); // ignores anything that is not a doc message
       }),
       transport.on('peer-left', ({ peerId }) => {
         this.#riders.remove(peerId);
         this.#docs.removePeer(peerId);
+        this.#inbox.removePeer(peerId);
+        this.#outbox.removePeer(peerId);
         changed();
       }),
       transport.on('status', ({ peerId, status }) => {
@@ -334,7 +373,7 @@ export class GroupRide {
       now,
       this.#localDistance(now),
       this.#localRoute(now),
-      this.#local?.state.raceOffsetM ?? 0,
+      this.#local ? raceOffsetOf(this.#local.state) : 0,
     );
   }
 
@@ -393,6 +432,37 @@ export class GroupRide {
     return this.#events.on('peer-joined', listener);
   }
 
+  // ---- Card Race attacks (docs/adr/0007-card-race.md) ---------------------------------------
+
+  /**
+   * Sends a Card Race attack to `to`. `payload` is read now and again for every re-send, so
+   * re-sends carry fresh positions (same id: the target applies it once). The outcome arrives
+   * once through `onAttackResult` (the target's verdict, or 'timeout'). Returns the attack id,
+   * or null when `to` is not connected or the payload is null.
+   */
+  sendAttack(to: string, payload: () => AttackPayload | null): string | null {
+    if (this.#left) return null;
+    if (!this.#transport.getPeers().some((p) => p.peerId === to && p.status === 'connected')) {
+      return null;
+    }
+    return this.#outbox.send(to, payload, this.#now());
+  }
+
+  /** What became of each attack this rider sent; exactly one event per attack. */
+  onAttackResult(listener: (outcome: AttackOutcomeEvent) => void): Unsubscribe {
+    return this.#events.on('attack-result', listener);
+  }
+
+  /**
+   * Sets the handler for attacks aimed at this rider (one at a time; null removes it). Without
+   * one, attacks are answered 'unavailable'. Before it is called, the attack is checked: meant
+   * for this rider, from a rider of this room, not seen before (duplicates get the first answer
+   * again, without calling the handler), not a replay, not too many from that sender.
+   */
+  setAttackHandler(handler: AttackHandler | null): void {
+    this.#attackHandler = handler;
+  }
+
   // ---- shared documents (see docs/p2p.md, "Shared documents") ---------------------------------
 
   /**
@@ -449,11 +519,49 @@ export class GroupRide {
     this.#left = true;
     this.#timers.clearInterval(this.#interval);
     this.#docs.close();
+    this.#outbox.clear();
+    this.#attackHandler = null;
     for (const off of this.#unsubscribe) off();
     this.#transport.close();
     this.#riders.clear();
     this.#events.emit('change', undefined);
     this.#events.clear();
+  }
+
+  #onAttack(peerId: string, msg: AttackMessage): void {
+    const now = this.#now();
+    const member =
+      this.#riders.has(peerId) &&
+      this.#transport.getPeers().some((p) => p.peerId === peerId && p.status === 'connected');
+    const decision = this.#inbox.check(peerId, msg, this.localPeerId, member, now);
+    let result: AttackVerdict;
+    if (decision.action === 'repeat') result = decision.result;
+    else if (decision.action === 'refuse') {
+      result = 'refused';
+      this.#inbox.record(peerId, msg.id, result, now, false);
+      this.#events.emit('log', {
+        level: 'warn',
+        message: `card attack refused: ${decision.reason}`,
+        data: { kind: msg.kind },
+      });
+    } else {
+      const attack: IncomingAttack = {
+        id: msg.id,
+        from: peerId,
+        fromName: this.#peerName(peerId),
+        kind: msg.kind,
+        gapM: msg.gapM,
+        raceM: msg.raceM,
+        ...(msg.routeId !== undefined ? { routeId: msg.routeId } : {}),
+      };
+      try {
+        result = this.#attackHandler ? this.#attackHandler(attack) : 'unavailable';
+      } catch {
+        result = 'refused'; // a broken handler must not break the ride (or retry forever)
+      }
+      this.#inbox.record(peerId, msg.id, result, now, true);
+    }
+    this.#transport.send(peerId, encodeAck(msg.id, result));
   }
 
   #peerName(peerId: string): string {
@@ -506,6 +614,7 @@ export class GroupRide {
   #broadcast(): void {
     const msg = this.#message();
     if (msg) this.#transport.broadcast(msg);
+    this.#outbox.pump(this.#now());
   }
 
   #sendTo(peerId: string): void {
