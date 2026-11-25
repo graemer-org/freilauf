@@ -1,5 +1,12 @@
 import { sanitizeName } from './signalling/channel';
-import type { GroupRider, GroupRules, RiderCards, RiderRoute, RiderState } from './types';
+import type {
+  GroupRider,
+  GroupRules,
+  RiderItems,
+  RiderRoute,
+  RiderState,
+  WirePuddle,
+} from './types';
 
 /** No update for this long -> `stale: true`. */
 export const STALE_AFTER_MS = 3_000;
@@ -26,48 +33,68 @@ export const RIDER_STATE_LIMITS = {
   routeM: [0, 1_000_000],
   /** Power-up gains are tens of metres per use; anything beyond this is not believable. */
   raceOffsetM: [0, 100_000],
-  /** Card Race: the signed offset (attacks cost tens of metres each). */
-  cardOffsetM: [-100_000, 100_000],
-  /** Card Race timers (attack, shield, protection), seconds. */
-  cardTimerS: [0, 600],
-  cardsHeld: [0, 8],
-  cardsVersion: [1, 1_000],
+  /** Rumble: the signed offset (hits cost tens of metres each). */
+  itemOffsetM: [-100_000, 100_000],
+  /** Rumble timers (hit, cape, protection, puddle life), seconds. */
+  itemTimerS: [0, 600],
+  itemsHeld: [0, 8],
+  /** Rumble protocol versions this client reads (2 = Freilauf Rumble). */
+  itemsVersion: [2, 1_000],
+  /** Puddle positions: route metres or ridden-distance race metres (offset included). */
+  puddleM: [-100_000, 11_000_000],
+  /** Puddles one rider can have on the road at once, on the wire. */
+  puddles: [0, 4],
 } as const;
 
-/** Card kinds on the wire: a short camelCase word (the app checks it is one it knows). */
-export const CARD_KIND_PATTERN = /^[a-z][a-zA-Z]{0,23}$/;
+/** Item kinds on the wire: a short camelCase word (the app checks it is one it knows). */
+export const RUMBLE_KIND_PATTERN = /^[a-z][a-zA-Z]{0,23}$/;
+/** Ids of Rumble events and puddles: `<epoch>.<seq>`, a random word and a counter. */
+export const RUMBLE_ID_PATTERN = /^([a-z0-9]{4,12})\.([1-9][0-9]{0,8})$/;
 
-/** Validates the optional `cards` field; undefined when malformed (the packet is dropped). */
-function sanitizeCards(value: unknown): RiderCards | undefined {
+function sanitizePuddle(value: unknown): WirePuddle | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const { id, m, routeId, s, used } = value as Record<string, unknown>;
+  const L = RIDER_STATE_LIMITS;
+  if (typeof id !== 'string' || !RUMBLE_ID_PATTERN.test(id)) return undefined;
+  if (!inRange(m, L.puddleM) || !inRange(s, L.itemTimerS)) return undefined;
+  if (routeId !== undefined && (typeof routeId !== 'string' || !ROUTE_ID.test(routeId))) {
+    return undefined;
+  }
+  if (used !== undefined && typeof used !== 'boolean') return undefined;
+  return { id, m, ...(routeId !== undefined ? { routeId } : {}), s, ...(used ? { used } : {}) };
+}
+
+/** Validates the optional `items` field; undefined when malformed (the packet is dropped). */
+function sanitizeItems(value: unknown): RiderItems | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const c = value as Record<string, unknown>;
   const L = RIDER_STATE_LIMITS;
   const v = c['v'];
-  if (!inRange(v, L.cardsVersion) || !Number.isInteger(v)) return undefined;
-  const out: RiderCards = { v };
+  if (!inRange(v, L.itemsVersion) || !Number.isInteger(v)) return undefined;
+  const out: RiderItems = { v };
   const offsetM = c['offsetM'];
   if (offsetM !== undefined) {
-    if (!inRange(offsetM, L.cardOffsetM)) return undefined;
+    if (!inRange(offsetM, L.itemOffsetM)) return undefined;
     out.offsetM = offsetM;
   }
-  const attack = c['attack'];
-  if (attack !== undefined) {
-    if (typeof attack !== 'object' || attack === null || Array.isArray(attack)) return undefined;
-    const { kind, s } = attack as Record<string, unknown>;
-    if (typeof kind !== 'string' || !CARD_KIND_PATTERN.test(kind) || !inRange(s, L.cardTimerS)) {
+  const hit = c['hit'];
+  if (hit !== undefined) {
+    if (typeof hit !== 'object' || hit === null || Array.isArray(hit)) return undefined;
+    const { kind, s } = hit as Record<string, unknown>;
+    if (typeof kind !== 'string' || !RUMBLE_KIND_PATTERN.test(kind) || !inRange(s, L.itemTimerS)) {
       return undefined;
     }
-    out.attack = { kind, s };
+    out.hit = { kind, s };
   }
-  for (const key of ['shieldS', 'protectedS'] as const) {
+  for (const key of ['capeS', 'protectedS'] as const) {
     const t = c[key];
     if (t === undefined) continue;
-    if (!inRange(t, L.cardTimerS)) return undefined;
+    if (!inRange(t, L.itemTimerS)) return undefined;
     out[key] = t;
   }
   const held = c['held'];
   if (held !== undefined) {
-    if (!inRange(held, L.cardsHeld)) return undefined;
+    if (!inRange(held, L.itemsHeld)) return undefined;
     out.held = Math.round(held);
   }
   const away = c['away'];
@@ -75,12 +102,23 @@ function sanitizeCards(value: unknown): RiderCards | undefined {
     if (typeof away !== 'boolean') return undefined;
     if (away) out.away = true;
   }
+  const puddles = c['puddles'];
+  if (puddles !== undefined) {
+    if (!Array.isArray(puddles) || puddles.length > L.puddles[1]) return undefined;
+    const list: WirePuddle[] = [];
+    for (const raw of puddles) {
+      const p = sanitizePuddle(raw);
+      if (!p || list.some((q) => q.id === p.id)) return undefined;
+      list.push(p);
+    }
+    if (list.length > 0) out.puddles = list;
+  }
   return out;
 }
 
-/** A rider's race offset: the signed Card Race one when sent, else the power-up one (≥ 0). */
-export function raceOffsetOf(state: Pick<RiderState, 'raceOffsetM' | 'cards'>): number {
-  const signed = state.cards?.offsetM;
+/** A rider's race offset: the signed Rumble one when sent, else the power-up one (≥ 0). */
+export function raceOffsetOf(state: Pick<RiderState, 'raceOffsetM' | 'items'>): number {
+  const signed = state.items?.offsetM;
   if (signed !== undefined && Number.isFinite(signed)) return signed;
   const plain = state.raceOffsetM ?? 0;
   return Number.isFinite(plain) ? Math.max(0, plain) : 0;
@@ -147,12 +185,13 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     if (typeof powerUps !== 'boolean') return null;
     rules = { powerUps };
     // A mode this client does not know is treated as absent (a normal ride).
-    if (mode === 'normal' || mode === 'cardRace') rules.mode = mode;
+    if (mode === 'normal' || mode === 'rumble') rules.mode = mode;
   }
-  let cards: RiderCards | undefined;
-  if (v['cards'] !== undefined) {
-    cards = sanitizeCards(v['cards']);
-    if (!cards) return null;
+  // `cards` (ADR 0007's superseded format) is not read: such an app has no Rumble.
+  let items: RiderItems | undefined;
+  if (v['items'] !== undefined) {
+    items = sanitizeItems(v['items']);
+    if (!items) return null;
   }
   return {
     name: sanitizeName(v['name']) || 'Rider',
@@ -166,7 +205,7 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     ...(route ? { route } : {}),
     ...(raceOffsetM !== undefined && raceOffsetM > 0 ? { raceOffsetM } : {}),
     ...(rules ? { rules } : {}),
-    ...(cards ? { cards } : {}),
+    ...(items ? { items } : {}),
   };
 }
 
@@ -267,8 +306,8 @@ export class RemoteRiders {
   /**
    * Remote riders at local time `now`, leader first. `gapM` is measured along the route for
    * riders on `localRoute` (same id), otherwise relative to `localDistanceM` (ridden distance).
-   * Both sides count their race offset (power-ups, cards): `localRaceOffsetM` and each rider's
-   * own (`raceOffsetOf`). Either may be negative in a Card Race.
+   * Both sides count their race offset (power-ups, items): `localRaceOffsetM` and each rider's
+   * own (`raceOffsetOf`). Either may be negative in a Rumble.
    */
   getRiders(
     now: number,
@@ -301,7 +340,7 @@ export class RemoteRiders {
         gapM: routeGap ?? distanceM + race - (localDistanceM + localRace),
         ...(routeGap !== null ? { sameRoute: true } : {}),
         ...(race !== 0 ? { raceOffsetM: race } : {}),
-        ...(s.cards ? { cards: s.cards } : {}),
+        ...(s.items ? { items: s.items } : {}),
         stale: now - track.receivedAt > STALE_AFTER_MS,
       });
     }

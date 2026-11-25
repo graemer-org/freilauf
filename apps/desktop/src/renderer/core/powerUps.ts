@@ -5,10 +5,10 @@
  *
  * - **Pick-ups:** spots every `spacing` metres, drawn from a seeded generator — on a route at
  *   fixed route positions (seed = route id, so every rider on that route meets the same spots),
- *   in a free ride along the ridden distance (seed = ride id). Riding through a spot adds a card
+ *   in a free ride along the ridden distance (seed = ride id). Riding through a spot adds an item
  *   to the hand when there is room; otherwise it is skipped ("already holding").
  * - **Effort challenges:** when the power has clearly dropped (see `ChallengeRules`), a short
- *   hold is offered; holding it grants a card. Ignoring or failing it does nothing.
+ *   hold is offered; holding it grants an item. Ignoring or failing it does nothing.
  * - **Effects** change only the *race position*: a shadow copy of the virtual bike is integrated
  *   with the effect's modifiers (less drag, less mass …) next to the real one, and the
  *   difference in distance is the race offset. The recorded ride (speed, distance, FIT, points,
@@ -18,20 +18,19 @@
  * hand (`capacity`), `activate(index)`, `grant()` from other sources, `applyEffect()` for
  * effects another rider sends, `target` on a definition, and `toLive()` as the wire format.
  *
- * **Card Race** (docs/card-race.md, ADR 0007) uses them: `setMode('cardRace')` gives a hand of
- * two fixed slots (left/right button), a pool with attacks and a shield, `receiveAttack()` for
- * an attack another rider aimed at this one (the effect is applied here, to this rider only),
- * a protection window after every hit, and a second shadow bike for attacks, so the race offset
- * splits into a gain from own cards (≥ 0) and a loss to attacks (≤ 0). Only in Card Race can the
- * offset be negative; a normal ride is exactly as before.
+ * **Freilauf Rumble** (docs/rumble.md, ADR 0008) uses them: `setMode('rumble')` gives two fixed
+ * item slots (left/right button), a pool with attacks and a rain cape, `receiveHit()` for a hit
+ * from another rider (a thrown bottle, hornets, a puddle ridden through; applied here, to this
+ * rider only), a protection window after every hit, and a second shadow bike for hits, so the
+ * race offset splits into a gain from own items (≥ 0) and a loss to hits (≤ 0). Only in a Rumble
+ * can the offset be negative; a normal ride is exactly as before.
  */
 import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
 import type {
   AttackResult,
-  CardRaceLive,
   GroupMode,
-  IncomingAttackLive,
+  IncomingHitLive,
   OutgoingAttackLive,
   PowerUpBlock,
   PowerUpChallengeLive,
@@ -40,8 +39,9 @@ import type {
   PowerUpEventType,
   PowerUpKind,
   PowerUpLive,
+  RumbleLive,
 } from '../../shared/powerUps';
-import { CARD_KINDS, POWER_UP_KINDS } from '../../shared/powerUps';
+import { POWER_UP_KINDS, RUMBLE_ITEM_KINDS } from '../../shared/powerUps';
 
 // ───────────── effects ─────────────
 
@@ -80,14 +80,15 @@ export interface PowerUpDefinition {
   fires?(ctx: EffectContext): boolean;
   modifiers(ctx: EffectContext): EffectModifiers;
   /**
-   * Who the effect acts on: 'self', or (Card Race attacks) the rider directly ahead ('ahead')
-   * or the leader ('leader'). Attacks are sent over the group and applied by the target to
-   * itself (`receiveAttack`); nobody changes another rider's numbers.
+   * Who the effect acts on: 'self', or (Rumble attacks) the rider directly ahead ('ahead'), the
+   * leader ('leader'), or whoever next rides through the spot behind this rider ('behind': the
+   * mud puddle). Hits are applied by the rider hit, to itself (`receiveHit`); nobody changes
+   * another rider's numbers.
    */
-  target: 'self' | 'ahead' | 'leader';
+  target: 'self' | 'ahead' | 'leader' | 'behind';
   /**
-   * 'boost' helps this rider (its gain is the "+ m from cards"), 'attack' slows the target (the
-   * "− m from attacks"), 'guard' is the shield (no modifiers; it blocks the next attack).
+   * 'boost' helps this rider (its gain is the "+ m from items"), 'attack' slows whoever it hits
+   * (the "− m from hits"), 'guard' is the rain cape (no modifiers; it keeps off the next hit).
    */
   role: 'boost' | 'attack' | 'guard';
 }
@@ -139,31 +140,42 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     modifiers: () => ({ dragFactor: 0.7, massFactor: 1, rollingFactor: 0.5 }),
   },
   /**
-   * Card Race attack on the rider directly ahead: 60 % more air resistance for 10 s. At 200 W
-   * on the flat that costs the target about 15 m of race position (less than a Tailwind gains);
-   * on a climb, where air matters little, hardly anything.
+   * Rumble: thrown at the rider directly ahead (it homes in; only protection or a rain cape stops
+   * it). Twice the air resistance for 10 s: at 200 W on the flat about 25 m of race position, as
+   * much as a boost gains (Tailwind ≈ 19 m, Slipstream ≈ 24 m); on a climb much less.
    */
-  headwind: {
-    kind: 'headwind',
+  bottle: {
+    kind: 'bottle',
     durationS: 10,
     target: 'ahead',
     role: 'attack',
-    modifiers: () => ({ dragFactor: 1.6, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => ({ dragFactor: 2, massFactor: 1, rollingFactor: 1 }),
   },
   /**
-   * Card Race attack on the leader: for 12 s their gaps to the others show as "?" (their own
-   * group list, overlay and scene labels). No physics at all.
+   * Rumble: dropped on the road behind this rider; the next rider through it is slowed: 3× the
+   * air resistance for 5 s (about 24 m at 200 W on the flat). It dries up after 60 s.
    */
-  fog: {
-    kind: 'fog',
-    durationS: 12,
+  puddle: {
+    kind: 'puddle',
+    durationS: 5,
+    target: 'behind',
+    role: 'attack',
+    modifiers: () => ({ dragFactor: 3, massFactor: 1, rollingFactor: 1 }),
+  },
+  /**
+   * Rumble: a swarm that chases the leader, however far ahead: 2.2× the air resistance for 8 s
+   * (about 24 m at 200 W on the flat), and the leader's own screen shows the gaps as "?".
+   */
+  hornets: {
+    kind: 'hornets',
+    durationS: 8,
     target: 'leader',
     role: 'attack',
-    modifiers: () => NO_MODIFIERS,
+    modifiers: () => ({ dragFactor: 2.2, massFactor: 1, rollingFactor: 1 }),
   },
-  /** Card Race: raised when played, it blocks the next attack within 60 s, then it is gone. */
-  shield: {
-    kind: 'shield',
+  /** Rumble: raised when used, it keeps off the next hit within 60 s, then it is used up. */
+  cape: {
+    kind: 'cape',
     durationS: 60,
     target: 'self',
     role: 'guard',
@@ -171,15 +183,16 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
   },
 };
 
-/** After any hit (or a blocked attack) no attack lands on that rider for this long, s. */
+/** After any hit (or one a rain cape kept off) nothing lands on that rider for this long, s. */
 export const PROTECTION_S = 15;
-/** Cards a Card Race hand holds: one per side button. */
-export const CARD_RACE_CAPACITY = 2;
+/** Items a Rumble rider holds: one per side button. */
+export const RUMBLE_CAPACITY = 2;
 /**
- * What a pick-up or challenge gives in a Card Race: every card, boosts most often (a pool entry
- * per chance). Four boosts × 2, Headwind × 2, Shield × 2, Fog × 1: 8 of 13 help yourself.
+ * What a feed bag or a challenge gives in a Rumble: every item, boosts most often (a pool entry
+ * per chance). Four boosts × 2, water bottle × 2, mud puddle × 2, rain cape × 2, hornets × 1:
+ * 8 of 15 help yourself, 5 slow someone else, 2 protect.
  */
-export const CARD_RACE_POOL: readonly PowerUpKind[] = [
+export const RUMBLE_POOL: readonly PowerUpKind[] = [
   'tailwind',
   'tailwind',
   'slipstream',
@@ -188,11 +201,13 @@ export const CARD_RACE_POOL: readonly PowerUpKind[] = [
   'lightLoad',
   'downhill',
   'downhill',
-  'headwind',
-  'headwind',
-  'shield',
-  'shield',
-  'fog',
+  'bottle',
+  'bottle',
+  'puddle',
+  'puddle',
+  'cape',
+  'cape',
+  'hornets',
 ];
 
 /** Several effects at once multiply (only one at a time for now; see `maxEffects`). */
@@ -261,15 +276,15 @@ export interface PowerUpConfig {
   /** Distance between pick-up spots, drawn uniformly from [minM, maxM]. */
   spacing: { minM: number; maxM: number };
   challenge: ChallengeRules;
-  /** Cards the hand holds. */
+  /** Items held at once (normal ride). */
   capacity: number;
   /** Effects at once. */
   maxEffects: number;
   /** Kinds a pick-up or challenge can give. */
   pool: readonly PowerUpKind[];
-  /** The same in a Card Race (entries may repeat: weights). */
-  cardPool: readonly PowerUpKind[];
-  /** Card Race: seconds of protection after a hit. */
+  /** The same in a Rumble (entries may repeat: weights). */
+  itemPool: readonly PowerUpKind[];
+  /** Rumble: seconds of protection after a hit. */
   protectionS: number;
   /** Pick-up spots reported ahead (m). */
   lookAheadM: number;
@@ -299,7 +314,7 @@ export const DEFAULT_POWER_UP_CONFIG: PowerUpConfig = {
   capacity: 1,
   maxEffects: 1,
   pool: POWER_UP_KINDS,
-  cardPool: CARD_RACE_POOL,
+  itemPool: RUMBLE_POOL,
   protectionS: PROTECTION_S,
   lookAheadM: 600,
 };
@@ -313,8 +328,8 @@ export interface PowerUpTuning {
   challenge?: Partial<ChallengeRules>;
   /** Only these kinds (e.g. to see one effect in a test). */
   pool?: PowerUpKind[];
-  /** Card Race: only these cards (any of CARD_KINDS). */
-  cardPool?: PowerUpKind[];
+  /** Rumble: only these items (any of RUMBLE_ITEM_KINDS). */
+  itemPool?: PowerUpKind[];
 }
 
 export function powerUpConfig(tuning?: unknown): PowerUpConfig {
@@ -343,10 +358,10 @@ export function powerUpConfig(tuning?: unknown): PowerUpConfig {
     const kinds = POWER_UP_KINDS.filter((k) => pool.includes(k));
     if (kinds.length > 0) config.pool = kinds;
   }
-  const cardPool = t.cardPool;
-  if (Array.isArray(cardPool)) {
-    const kinds = CARD_KINDS.filter((k) => cardPool.includes(k));
-    if (kinds.length > 0) config.cardPool = kinds;
+  const itemPool = t.itemPool;
+  if (Array.isArray(itemPool)) {
+    const kinds = RUMBLE_ITEM_KINDS.filter((k) => itemPool.includes(k));
+    if (kinds.length > 0) config.itemPool = kinds;
   }
   const c = t.challenge;
   if (typeof c === 'object' && c !== null) {
@@ -487,7 +502,7 @@ interface Effect {
   /** Armed: when it expires; active: when it ends (ride time, s). */
   untilS: number;
   durationS: number;
-  /** Where it came from: 'self' (used a card) or, for an attack, the attacker's name. */
+  /** Where it came from: 'self' (used an item) or, for a hit, the name of whose item it was. */
   source: string;
 }
 
@@ -511,11 +526,11 @@ export interface PowerUpEngineOptions {
   /** The route ridden, or null/absent for a free ride. */
   track?: PowerUpTrack | null;
   config?: PowerUpConfig;
-  /** 'normal' (default) or 'cardRace'; can change during the ride (`setMode`). */
+  /** 'normal' (default) or 'rumble'; can change during the ride (`setMode`). */
   mode?: GroupMode;
 }
 
-/** What `receiveAttack` made of an attack (the target's answer). */
+/** What `receiveHit` made of a hit (the target's answer). */
 export type AttackOutcome = Extract<AttackResult, 'hit' | 'blocked' | 'protected' | 'unavailable'>;
 
 /** How far a position may move in one tick and still count as riding through (not a jump). */
@@ -589,13 +604,13 @@ export class PowerUpEngine {
   #lastElapsedS: number | null = null;
   #lastDistanceM = 0;
   #lastCoord: number | null = null;
-  /** Own cards (and, in a normal ride, all power-ups): the race gain, ≥ 0. */
+  /** Own items (and, in a normal ride, all power-ups): the race gain, ≥ 0. */
   readonly #boost = new Shadow(1);
-  /** Card Race attacks on this rider: the race loss, ≤ 0. */
+  /** Rumble hits on this rider: the race loss, ≤ 0. */
   readonly #attack = new Shadow(-1, true);
-  /** Card Race: no attack lands before this ride time (s). */
+  /** Rumble: no hit lands before this ride time (s). */
   #protectedUntilS = Number.NEGATIVE_INFINITY;
-  #incoming: IncomingAttackLive | null = null;
+  #incoming: IncomingHitLive | null = null;
   #outgoing: OutgoingAttackLive | null = null;
   #attackSeq = 0;
   #picked = 0;
@@ -621,12 +636,12 @@ export class PowerUpEngine {
     return this.#spots;
   }
 
-  /** Held cards, first (left) first. */
+  /** Held items, first (left) first. */
   get hand(): readonly PowerUpKind[] {
     return this.#slots.filter((k): k is PowerUpKind => k !== null);
   }
 
-  /** The hand as slots (Card Race: [left, right]); null = empty. */
+  /** The held items as slots (Rumble: [left, right]); null = empty. */
   get slots(): readonly (PowerUpKind | null)[] {
     return this.#slots;
   }
@@ -635,28 +650,28 @@ export class PowerUpEngine {
     return this.#mode;
   }
 
-  /** Race position − recorded position, m. Negative only in a Card Race (attacks). */
+  /** Race position − recorded position, m. Negative only in a Rumble (hits). */
   get raceOffsetM(): number {
     const total = this.#boost.offsetM + this.#attack.offsetM;
     // "Power-ups only help": a normal ride never places a rider behind their own legs.
     return this.#mode === 'normal' ? Math.max(0, total) : total;
   }
 
-  /** Metres gained from own cards / power-ups (≥ 0). */
+  /** Metres gained from own items / power-ups (≥ 0). */
   get gainM(): number {
     return this.#boost.offsetM;
   }
 
-  /** Metres lost to attacks (≤ 0; always 0 in a normal ride). */
+  /** Metres lost to hits (≤ 0; always 0 in a normal ride). */
   get lossM(): number {
     return this.#attack.offsetM;
   }
 
   /**
-   * Switches between a normal ride and a Card Race (the host's choice; may change mid-ride).
-   * To Card Race: a second slot. Back to normal: one slot, the first boost held stays (attack
-   * cards and the shield have no use there), attacks and the shield end, the loss to attacks
-   * is dropped (a normal ride never places anyone behind their own riding).
+   * Switches between a normal ride and a Rumble (the host's choice; may change mid-ride).
+   * To Rumble: a second slot. Back to normal: one slot, the first boost held stays (attack
+   * items and the cape have no use there), hits and the cape end, the loss to hits is dropped
+   * (a normal ride never places anyone behind their own riding).
    */
   setMode(mode: GroupMode): void {
     if (mode === this.#mode) return;
@@ -672,10 +687,10 @@ export class PowerUpEngine {
       this.#incoming = null;
       this.#outgoing = null;
     } else {
-      this.#slots = [
-        ...this.#slots,
-        ...Array.from({ length: CARD_RACE_CAPACITY }, () => null),
-      ].slice(0, CARD_RACE_CAPACITY);
+      this.#slots = [...this.#slots, ...Array.from({ length: RUMBLE_CAPACITY }, () => null)].slice(
+        0,
+        RUMBLE_CAPACITY,
+      );
     }
   }
 
@@ -724,7 +739,7 @@ export class PowerUpEngine {
             .map((e) => POWER_UP_DEFINITIONS[e.kind].modifiers(ctx)),
         );
       this.#boost.step(t, dt, realDeltaM, mods('boost'));
-      if (this.#mode === 'cardRace') this.#attack.step(t, dt, realDeltaM, mods('attack'));
+      if (this.#mode === 'rumble') this.#attack.step(t, dt, realDeltaM, mods('attack'));
     } else if (!riding) {
       this.#boost.speedMps = 0;
       this.#attack.speedMps = 0;
@@ -768,9 +783,9 @@ export class PowerUpEngine {
     return events;
   }
 
-  /** True when `activate()` would use a card now (Card Race: any card of the hand). */
+  /** True when `activate()` would use an item now (Rumble: either slot). */
   get canActivate(): boolean {
-    if (this.#mode === 'cardRace') return this.#slots.some((_, i) => this.canPlay(i));
+    if (this.#mode === 'rumble') return this.#slots.some((_, i) => this.canPlay(i));
     const t = this.#last;
     return (
       this.hand.length > 0 &&
@@ -782,36 +797,36 @@ export class PowerUpEngine {
   }
 
   /**
-   * Card Race: whether the card in `slot` can be played now, as far as this rider can tell (an
-   * attack also needs a target, which the controller resolves).
+   * Rumble: whether the item in `slot` can be used now, as far as this rider can tell (an aimed
+   * item also needs a target, which the controller resolves).
    */
   canPlay(slot: number): boolean {
     return this.playNote(slot) === null;
   }
 
-  /** Card Race: why the card in `slot` cannot be played now, in a few words (null: it can). */
+  /** Rumble: why the item in `slot` cannot be used now, in a few words (null: it can). */
   playNote(slot: number): string | null {
     const kind = this.#slots[slot];
     const t = this.#last;
     if (kind === undefined || kind === null) return 'Empty';
-    if (!t || t.state !== 'riding') return 'Resume the ride to play it';
+    if (!t || t.state !== 'riding') return 'Resume the ride to use it';
     if (t.blocked === 'erg') return 'Kept for later · not in ERG steps';
     if (t.blocked === 'ftpTest') return 'Kept for later · not in FTP tests';
-    if (t.blocked !== null) return 'Cards are off';
+    if (t.blocked !== null) return 'Items are off';
     const role = POWER_UP_DEFINITIONS[kind].role;
     if (role === 'boost' && this.#boostEffects().length > 0) return 'After your boost';
-    if (role === 'guard' && this.#effects.some((e) => e.role === 'guard')) return 'Shield is up';
+    if (role === 'guard' && this.#effects.some((e) => e.role === 'guard')) return 'Cape is up';
     return null;
   }
 
   /**
-   * Uses the card at `index` (the first by default): a power-up or (Card Race) a boost or the
-   * shield. In a Card Race `index` is the slot (0 left, 1 right). Returns false (and keeps the
-   * card) when none is held, the ride is not running, power-ups are blocked, an effect of the
-   * same sort still acts, or the card is an attack (see `spendCard`).
+   * Uses the item at `index` (the first by default): a power-up or (Rumble) a boost or the rain
+   * cape. In a Rumble `index` is the slot (0 left, 1 right). Returns false (and keeps the item)
+   * when none is held, the ride is not running, power-ups are blocked, an effect of the same
+   * sort still acts, or the item is an attack (see `spendItem`).
    */
   activate(index = 0): boolean {
-    if (this.#mode === 'cardRace') {
+    if (this.#mode === 'rumble') {
       const kind = this.#slots[index];
       if (!kind || POWER_UP_DEFINITIONS[kind].role === 'attack' || !this.canPlay(index)) {
         return false;
@@ -833,64 +848,94 @@ export class PowerUpEngine {
   }
 
   /**
-   * Card Race: takes the attack card in `slot` out of the hand to play it (the controller has
-   * found its target and sends it). Null when the slot holds no attack or it cannot be played.
+   * Rumble: takes the attack item in `slot` out of its slot to use it — the controller has found
+   * the target of a bottle or the hornets and sends them, or drops the puddle on the road. Null
+   * when the slot holds no attack item or it cannot be used.
    */
-  spendCard(slot: number): PowerUpKind | null {
+  spendItem(slot: number): PowerUpKind | null {
     const kind = this.#slots[slot];
-    if (this.#mode !== 'cardRace' || !kind || POWER_UP_DEFINITIONS[kind].role !== 'attack') {
+    if (this.#mode !== 'rumble' || !kind || POWER_UP_DEFINITIONS[kind].role !== 'attack') {
       return null;
     }
     if (!this.canPlay(slot)) return null;
     this.#slots[slot] = null;
     this.#used += 1;
-    this.#emit('played', kind);
+    this.#emit(POWER_UP_DEFINITIONS[kind].target === 'behind' ? 'dropped' : 'played', kind);
     return kind;
   }
 
   /**
-   * Card Race: an attack card played by this rider could not land (target protected, gone, not
-   * in the race, no answer): it goes back into the hand if there is room.
+   * Rumble: an item used by this rider could not land (target protected, gone, not in the race,
+   * no answer; a puddle that could not be dropped): it goes back into a slot if there is room.
    */
-  returnCard(kind: PowerUpKind): boolean {
+  returnItem(kind: PowerUpKind): boolean {
     if (!this.#put(kind)) return false;
     this.#used = Math.max(0, this.#used - 1);
     this.#emit('returned', kind);
     return true;
   }
 
-  /** Card Race: notes what became of an attack this rider played (for the notice). */
-  noteOutgoing(kind: PowerUpKind, target: string, result: OutgoingAttackLive['result']): void {
+  /** Rumble: notes what became of an item this rider used on someone (for the notice). */
+  noteOutgoing(
+    kind: PowerUpKind,
+    target: string,
+    result: OutgoingAttackLive['result'],
+    targetId?: string,
+  ): void {
     this.#attackSeq += 1;
-    this.#outgoing = { seq: this.#attackSeq, kind, target, result };
+    this.#outgoing = {
+      seq: this.#attackSeq,
+      kind,
+      target,
+      ...(targetId ? { targetId } : {}),
+      result,
+    };
   }
 
   /**
-   * Card Race: another rider aimed attack `kind` at this one. Applied here, to this rider only,
-   * at most one attack at a time:
-   * - not riding, blocked (ERG, FTP test, off) or not in a Card Race → 'unavailable';
-   * - under an attack, or within the protection after one → 'protected';
-   * - shield up → the shield is used up, protection starts → 'blocked';
-   * - otherwise the effect starts, and protection runs until `protectionS` after it ends → 'hit'.
-   * The caller (the group link) guarantees each attack arrives here once.
+   * Rumble: what a hit would meet now — 'unavailable' (not riding, blocked, not a Rumble),
+   * 'protected' (slowed by a hit, or within the protection after one), or null (it would land,
+   * or the rain cape would keep it off). A rider checks this before claiming a puddle: a
+   * protected rider rolls through without using it up.
    */
-  receiveAttack(kind: PowerUpKind, by: string): AttackOutcome {
+  hitCheck(): 'unavailable' | 'protected' | null {
+    const t = this.#last;
+    if (!t || this.#mode !== 'rumble') return 'unavailable';
+    if (t.state !== 'riding' || t.blocked !== null) return 'unavailable';
+    if (this.#effects.some((e) => e.role === 'attack') || t.elapsedS < this.#protectedUntilS) {
+      return 'protected';
+    }
+    return null;
+  }
+
+  /**
+   * Rumble: a hit from another rider's item `kind` (a bottle or hornets aimed at this one, or a
+   * puddle this rider rode through and was granted). Applied here, to this rider only, one hit
+   * at a time:
+   * - not riding, blocked (ERG, FTP test, off) or not in a Rumble → 'unavailable';
+   * - slowed by a hit, or within the protection after one → 'protected';
+   * - rain cape up → the cape is used up, protection starts → 'blocked' (the cape keeps off
+   *   every kind of hit, the puddle included);
+   * - otherwise the slowing starts, and protection runs until `protectionS` after it → 'hit'.
+   * The caller (the group link) guarantees each hit arrives here once.
+   */
+  receiveHit(kind: PowerUpKind, by: string): AttackOutcome {
     const t = this.#last;
     const def = POWER_UP_DEFINITIONS[kind];
     let result: AttackOutcome;
-    if (!t || this.#mode !== 'cardRace' || !def || def.role !== 'attack') result = 'unavailable';
-    else if (t.state !== 'riding' || t.blocked !== null) result = 'unavailable';
-    else if (this.#effects.some((e) => e.role === 'attack') || t.elapsedS < this.#protectedUntilS) {
-      result = 'protected';
-    } else {
-      const shield = this.#effects.find((e) => e.role === 'guard');
-      if (shield) {
-        this.#removeEffect(shield);
-        this.#protectedUntilS = t.elapsedS + this.config.protectionS;
+    const check = this.hitCheck();
+    if (!def || def.role !== 'attack' || check === 'unavailable') result = 'unavailable';
+    else if (check === 'protected') result = 'protected';
+    else {
+      const now = t!.elapsedS;
+      const cape = this.#effects.find((e) => e.role === 'guard');
+      if (cape) {
+        this.#removeEffect(cape);
+        this.#protectedUntilS = now + this.config.protectionS;
         this.#emit('blocked', kind);
         result = 'blocked';
       } else {
-        const untilS = t.elapsedS + def.durationS;
+        const untilS = now + def.durationS;
         this.#effects.push({
           kind,
           role: 'attack',
@@ -912,16 +957,16 @@ export class PowerUpEngine {
   }
 
   /**
-   * Starts an effect without a card (an effect from elsewhere). Armed kinds are armed; the rest
+   * Starts an effect without an item (an effect from elsewhere). Armed kinds are armed; the rest
    * start at once. Returns false when no effect slot is free or power-ups are blocked. In a
-   * Card Race boosts, the shield and attacks each have their own slot; attacks arrive through
-   * `receiveAttack` instead (protection, shield).
+   * Rumble boosts, the cape and hits each have their own slot; hits arrive through `receiveHit`
+   * instead (protection, cape).
    */
   applyEffect(kind: PowerUpKind, source = 'self'): boolean {
     const t = this.#last;
     if (!t || t.blocked !== null) return false;
     const def = POWER_UP_DEFINITIONS[kind];
-    if (this.#mode === 'cardRace') {
+    if (this.#mode === 'rumble') {
       if (def.role === 'attack') return false;
       if (this.#effects.some((e) => e.role === def.role)) return false;
     } else if (this.#effects.length >= this.config.maxEffects) return false;
@@ -948,7 +993,7 @@ export class PowerUpEngine {
     return true;
   }
 
-  /** Adds a card from elsewhere (a challenge here; e.g. a battle reward later). */
+  /** Adds an item from elsewhere (a challenge here). */
   grant(kind: PowerUpKind): boolean {
     if (!this.#put(kind)) {
       this.#emit('skipped', kind);
@@ -969,7 +1014,7 @@ export class PowerUpEngine {
   toLive(): PowerUpLive {
     const t = this.#last;
     const now = t?.elapsedS ?? 0;
-    const effect = this.#mode === 'cardRace' ? this.#boostEffects()[0] : this.#effects[0];
+    const effect = this.#mode === 'rumble' ? this.#boostEffects()[0] : this.#effects[0];
     const ch = this.#challenge;
     const rules = this.config.challenge;
     const effectLive: PowerUpEffectLive | null = effect
@@ -1007,21 +1052,21 @@ export class PowerUpEngine {
       picked: this.#picked,
       used: this.#used,
       event: this.#event,
-      ...(this.#mode === 'cardRace' ? { cards: this.#cardsLive(now) } : {}),
+      ...(this.#mode === 'rumble' ? { rumble: this.#rumbleLive(now) } : {}),
     };
   }
 
   // ───── internals ─────
 
-  #cardsLive(now: number): CardRaceLive {
+  #rumbleLive(now: number): RumbleLive {
     const attack = this.#effects.find((e) => e.role === 'attack');
-    const shield = this.#effects.find((e) => e.role === 'guard');
+    const cape = this.#effects.find((e) => e.role === 'guard');
     const protecting = !attack && now < this.#protectedUntilS;
     return {
       slots: [...this.#slots],
       slotNotes: this.#slots.map((k, i) => (k === null ? null : this.playNote(i))),
       slotTargets: this.#slots.map(() => null),
-      attack: attack
+      hit: attack
         ? {
             kind: attack.kind,
             by: attack.source,
@@ -1029,9 +1074,7 @@ export class PowerUpEngine {
             durationS: attack.durationS,
           }
         : null,
-      shield: shield
-        ? { remainingS: Math.max(0, shield.untilS - now), durationS: shield.durationS }
-        : null,
+      cape: cape ? { remainingS: Math.max(0, cape.untilS - now), durationS: cape.durationS } : null,
       protection: protecting
         ? {
             remainingS: Math.max(0, this.#protectedUntilS - now),
@@ -1043,15 +1086,16 @@ export class PowerUpEngine {
       lossM: Math.round(this.lossM * 10) / 10,
       incoming: this.#incoming,
       outgoing: this.#outgoing,
+      puddles: [],
     };
   }
 
   #capacity(): number {
-    return this.#mode === 'cardRace' ? CARD_RACE_CAPACITY : this.config.capacity;
+    return this.#mode === 'rumble' ? RUMBLE_CAPACITY : this.config.capacity;
   }
 
   #pool(): readonly PowerUpKind[] {
-    return this.#mode === 'cardRace' ? this.config.cardPool : this.config.pool;
+    return this.#mode === 'rumble' ? this.config.itemPool : this.config.pool;
   }
 
   #handCount(): number {
@@ -1062,7 +1106,7 @@ export class PowerUpEngine {
     return this.#effects.filter((e) => e.role === 'boost');
   }
 
-  /** Puts a card into the first empty slot (left first). False when the hand is full. */
+  /** Puts an item into the first empty slot (left first). False when both are full. */
   #put(kind: PowerUpKind): boolean {
     const free = this.#slots.indexOf(null);
     if (free < 0) return false;
@@ -1070,7 +1114,7 @@ export class PowerUpEngine {
     return true;
   }
 
-  /** A normal ride keeps its cards packed to the front (index = order of pick-up). */
+  /** A normal ride keeps its items packed to the front (index = order of pick-up). */
   #compact(): void {
     const held = this.hand;
     this.#slots = this.#slots.map((_, i) => held[i] ?? null);

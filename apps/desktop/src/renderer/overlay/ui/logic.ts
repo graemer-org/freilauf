@@ -4,9 +4,9 @@ import type { RideSnapshot } from '@freilauf/session';
 import type { Bounds, LiveState } from '../../../shared/contract';
 import type { PowerUpKind } from '../../../shared/powerUps';
 import {
-  CARD_KEYS,
-  CARD_RACE_NAME,
-  FOG_GAP,
+  HIDDEN_GAP,
+  ITEM_KEYS,
+  RUMBLE_NAME,
   POWER_UP_INFO,
   POWER_UP_KEY,
   formatSignedM,
@@ -138,7 +138,7 @@ export interface GroupRow {
   key: string;
   name: string;
   gapM: number;
-  /** The gap as shown: "+12 m", or "?" while Fog lies on the local rider (Card Race). */
+  /** The gap as shown: "+12 m", or "?" while hornets buzz around the local rider (Rumble). */
   gapText: string;
   powerW: number;
   heartRateBpm: number | null;
@@ -152,12 +152,12 @@ export interface GroupRow {
  */
 export function groupRows(live: LiveState, max = MAX_GROUP_ROWS): GroupRow[] {
   const riders = live.group?.riders ?? [];
-  const fog = gapsHidden(live.powerUps);
+  const hidden = gapsHidden(live.powerUps);
   const rows: GroupRow[] = riders.map((r) => ({
     key: r.peerId,
     name: r.name,
     gapM: Number.isFinite(r.gapM) ? r.gapM : 0,
-    gapText: fog ? FOG_GAP : formatGap(Number.isFinite(r.gapM) ? r.gapM : 0),
+    gapText: hidden ? HIDDEN_GAP : formatGap(Number.isFinite(r.gapM) ? r.gapM : 0),
     powerW: r.powerW,
     heartRateBpm: r.heartRateBpm,
     stale: r.stale,
@@ -280,38 +280,39 @@ export function routeStrip(route: LiveState['route']): RouteStrip | null {
 
 /** One compact power-up line for the overlay: what is held, running or asked for. */
 export interface PowerUpPill {
-  key: 'challenge' | 'effect' | 'held' | 'attack' | 'hand' | 'guard';
+  key: 'challenge' | 'effect' | 'held' | 'hit' | 'slots' | 'guard' | 'puddle';
   kind: PowerUpKind | null;
   text: string;
   /** Quieter second part, e.g. "212 W now", "+38 m". */
   detail: string;
   /** Highlighted (a power-up ready to use, a target being met). */
   active: boolean;
-  /** Card Race: the colour of the marker (the text says what it is too). */
+  /** Rumble: the colour of the marker (the text says what it is too). */
   tone?: 'attack' | 'guard';
 }
 
-/** The group panel's heading in a Card Race (absent in a normal ride). */
+/** The group panel's heading in a Rumble (absent in a normal ride). */
 export function groupModeLabel(live: LiveState | null): string | null {
-  return live?.group?.mode === 'cardRace' ? CARD_RACE_NAME : null;
+  return live?.group?.mode === 'rumble' ? RUMBLE_NAME : null;
 }
 
 /**
- * The Card Race in the overlay (at most four pills): an attack acting on the rider, the hand
- * ("L Headwind · R Shield", with the keys when one can be played), the own boost or the
- * challenge, and the shield or protection; the race offset rides along once.
+ * Freilauf Rumble in the overlay (at most four pills): a hit slowing the rider ("Water bottle
+ * from Ben · 7 s"), the two slots ("L Water bottle · R Rain cape", with the keys when one can
+ * be used), the own boost or the challenge (or a puddle just ahead), and the cape or
+ * protection; the race offset rides along once.
  */
-export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
-  const c = pu?.cards;
+export function rumblePills(pu: LiveState['powerUps']): PowerUpPill[] {
+  const c = pu?.rumble;
   if (!pu || !c) return [];
   const out: PowerUpPill[] = [];
-  if (c.attack) {
-    const name = POWER_UP_INFO[c.attack.kind].label;
+  if (c.hit) {
+    const name = POWER_UP_INFO[c.hit.kind].label;
     out.push({
-      key: 'attack',
-      kind: c.attack.kind,
-      text: `${name} from ${c.attack.by}`,
-      detail: c.attack.kind === 'fog' ? 'gaps hidden' : `${Math.ceil(c.attack.remainingS)} s`,
+      key: 'hit',
+      kind: c.hit.kind,
+      text: `${name} from ${c.hit.by}`,
+      detail: `${c.hit.kind === 'hornets' ? 'gaps hidden · ' : ''}${Math.ceil(c.hit.remainingS)} s`,
       active: true,
       tone: 'attack',
     });
@@ -319,25 +320,25 @@ export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
   const label = (k: PowerUpKind | null) => (k ? POWER_UP_INFO[k].label : '–');
   const ready = c.slots.map((k, i) => k !== null && c.slotNotes[i] === null);
   out.push({
-    key: 'hand',
+    key: 'slots',
     kind: c.slots[0] ?? c.slots[1] ?? null,
     text: `L ${label(c.slots[0] ?? null)} · R ${label(c.slots[1] ?? null)}`,
     detail:
       ready[0] && ready[1]
-        ? `${CARD_KEYS.left} / ${CARD_KEYS.right}`
+        ? `${ITEM_KEYS.left} / ${ITEM_KEYS.right}`
         : ready[0]
-          ? CARD_KEYS.left
+          ? ITEM_KEYS.left
           : ready[1]
-            ? CARD_KEYS.right
+            ? ITEM_KEYS.right
             : '',
     active: ready.some(Boolean),
   });
   const offset = Math.round(pu.raceOffsetM) !== 0 ? formatSignedM(pu.raceOffsetM) : '';
-  const guard: PowerUpPill | null = c.shield
+  const guard: PowerUpPill | null = c.cape
     ? {
         key: 'guard',
-        kind: 'shield',
-        text: `Shield up · ${Math.ceil(c.shield.remainingS)} s`,
+        kind: 'cape',
+        text: `Rain cape · ${Math.ceil(c.cape.remainingS)} s`,
         detail: '',
         active: true,
         tone: 'guard',
@@ -352,6 +353,7 @@ export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
           tone: 'guard',
         }
       : null;
+  const puddle = c.puddles.find((p) => !p.own && p.aheadM > 0 && p.aheadM <= 150);
   if (pu.challenge) {
     out.push({
       key: 'challenge',
@@ -371,6 +373,15 @@ export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
       detail: offset,
       active: pu.effect.phase === 'active',
     });
+  } else if (puddle) {
+    out.push({
+      key: 'puddle',
+      kind: 'puddle',
+      text: `Mud puddle ahead · ${Math.max(1, Math.round(puddle.aheadM))} m`,
+      detail: offset,
+      active: false,
+      tone: 'attack',
+    });
   } else if (offset && !guard) {
     out.push({ key: 'effect', kind: null, text: 'Race', detail: offset, active: false });
   }
@@ -381,7 +392,7 @@ export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
 /** What the overlay shows about power-ups (at most two pills); [] without any. */
 export function powerUpPills(pu: LiveState['powerUps']): PowerUpPill[] {
   if (!pu) return [];
-  if (pu.cards) return cardPills(pu);
+  if (pu.rumble) return rumblePills(pu);
   const out: PowerUpPill[] = [];
   const ch = pu.challenge;
   if (ch) {

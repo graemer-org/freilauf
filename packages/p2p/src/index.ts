@@ -5,7 +5,7 @@ export * from './ice';
 export * from './transports/relay';
 export * from './riderState';
 export * from './group';
-export * from './cardRace';
+export * from './rumble';
 export * from './documents';
 export { defaultTimers, type Timers, type Unsubscribe } from './runtime';
 // Self-hosted signalling (advanced fallback; see docs/adr/0003-signalling-via-public-relays.md).

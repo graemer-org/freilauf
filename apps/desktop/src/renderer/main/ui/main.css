@@ -90,11 +90,15 @@
   --zone-7: #5d2a8c;
   --zone-free: rgb(118 118 128 / 0.16);
   --zone-free-line: rgb(118 118 128 / 0.5);
-  /* Card Race (docs/card-race.md): attacks a calm rust, the shield and protection a sea green. */
-  --card-attack: #b4561f;
-  --card-attack-soft: rgb(180 86 31 / 0.12);
-  --card-guard: #14857a;
-  --card-guard-soft: rgb(20 133 122 / 0.12);
+  /* Freilauf Rumble (docs/rumble.md): hits a calm rust, the rain cape and protection a sea green. */
+  --rumble-attack: #b4561f;
+  --rumble-attack-soft: rgb(180 86 31 / 0.12);
+  --rumble-guard: #14857a;
+  --rumble-guard-soft: rgb(20 133 122 / 0.12);
+  /* The items' own materials in the scene: bottle water, road mud, hornets. */
+  --rumble-water: #2f86d6;
+  --rumble-mud: #7a5636;
+  --rumble-hornet: #c98a12;
   --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%238a8a92' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 
   /* Scale the whole UI gently with the window: 15 px at 900 px, 20 px on 4K. */
@@ -141,10 +145,13 @@
     --zone-7: #b47ae6;
     --zone-free: rgb(120 120 128 / 0.22);
     --zone-free-line: rgb(160 160 168 / 0.45);
-    --card-attack: #f0995c;
-    --card-attack-soft: rgb(240 153 92 / 0.16);
-    --card-guard: #4fcfbf;
-    --card-guard-soft: rgb(79 207 191 / 0.15);
+    --rumble-attack: #f0995c;
+    --rumble-attack-soft: rgb(240 153 92 / 0.16);
+    --rumble-guard: #4fcfbf;
+    --rumble-guard-soft: rgb(79 207 191 / 0.15);
+    --rumble-water: #6cb4f2;
+    --rumble-mud: #b08a63;
+    --rumble-hornet: #f0b53c;
   }
 }
 
@@ -6269,14 +6276,14 @@ div.server-note {
   }
 }
 
-/* ───────── Card Race (docs/card-race.md) ───────── */
+/* ───────── Freilauf Rumble (docs/rumble.md) ───────── */
 
 /*
- * The hand sits along the bottom of the scene: the left card bottom left and the right card
- * bottom right, like the side buttons that play them; what acts on the rider in between; a
+ * Two item slots along the bottom of the scene: the left slot bottom left and the right slot
+ * bottom right, like the side buttons that use them; what acts on the rider in between; a
  * notice at the top. Opaque surfaces keep every word legible over the moving scene.
  */
-.cr-layer {
+.rb-layer {
   position: absolute;
   inset: 0;
   display: flex;
@@ -6286,17 +6293,17 @@ div.server-note {
   pointer-events: none;
 }
 
-/* The cards take the bottom corners: the view switch and the brake cue move to the top left. */
-.scene-view:has(.cr-layer) .scene-switch {
+/* The slots take the bottom corners: the view switch and the brake cue move to the top left. */
+.scene-view:has(.rb-layer) .scene-switch {
   top: var(--s-3);
   bottom: auto;
 }
 
-.scene-view:has(.cr-layer) .scene-brake {
+.scene-view:has(.rb-layer) .scene-brake {
   top: calc(var(--s-3) + 2.5rem);
 }
 
-.cr-hand {
+.rb-slots {
   display: grid;
   grid-template-columns: minmax(0, 13.5rem) minmax(0, 1fr) minmax(0, 13.5rem);
   grid-template-areas: 'left middle right';
@@ -6304,15 +6311,15 @@ div.server-note {
   gap: var(--s-3);
 }
 
-.cr-hand > .cr-left {
+.rb-slots > .rb-left {
   grid-area: left;
 }
 
-.cr-hand > .cr-right {
+.rb-slots > .rb-right {
   grid-area: right;
 }
 
-.cr-middle {
+.rb-middle {
   grid-area: middle;
   display: flex;
   flex-direction: column;
@@ -6322,15 +6329,15 @@ div.server-note {
   min-width: 0;
 }
 
-.cr-card,
-.cr-chip,
-.cr-notice,
-.cr-line,
-.cr-middle .pu-challenge {
+.rb-item,
+.rb-chip,
+.rb-notice,
+.rb-line,
+.rb-middle .pu-challenge {
   pointer-events: auto;
 }
 
-.cr-card {
+.rb-item {
   --role: var(--accent);
   --role-soft: var(--accent-soft);
   position: relative;
@@ -6355,63 +6362,56 @@ div.server-note {
     transform var(--t-med) var(--ease);
 }
 
-.cr-card.cr-right {
+.rb-item.rb-right {
   flex-direction: row-reverse;
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
   text-align: right;
 }
 
-.cr-card.is-attack {
-  --role: var(--card-attack);
-  --role-soft: var(--card-attack-soft);
+.rb-item.rb-right .rb-text {
+  align-items: flex-end;
 }
 
-.cr-card.is-guard {
-  --role: var(--card-guard);
-  --role-soft: var(--card-guard-soft);
+.rb-item.is-attack {
+  --role: var(--rumble-attack);
+  --role-soft: var(--rumble-attack-soft);
 }
 
-.cr-card:hover:not(.is-waiting):not(.is-empty) {
+.rb-item.is-guard {
+  --role: var(--rumble-guard);
+  --role-soft: var(--rumble-guard-soft);
+}
+
+.rb-item:hover:not(.is-waiting):not(.is-empty) {
   box-shadow:
     var(--shadow-raised),
     inset 0 0 0 1.5px var(--role);
   transform: translateY(-1px);
 }
 
-.cr-card:focus-visible {
+.rb-item:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
-.cr-card.is-waiting {
+.rb-item.is-waiting {
   cursor: default;
 }
 
-.cr-card.is-waiting .cr-badge {
+.rb-item.is-waiting .rb-pocket {
   background: var(--fill);
+  box-shadow: inset 0 0 0 1.5px var(--fill-strong);
   color: var(--text-2);
 }
 
-.cr-card.is-empty {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0.1rem;
-  padding: var(--s-2) var(--s-3);
+.rb-item.is-empty {
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   box-shadow: inset 0 0 0 1.5px var(--fill-strong);
   cursor: default;
 }
 
-.cr-card.is-empty.cr-right {
-  align-items: flex-end;
-}
-
-/* "Left" / "Right": which button plays it, small in the corner. */
-.cr-slot {
-  position: absolute;
-  top: 0.3rem;
-  right: var(--s-2);
+/* "Left" / "Right": which button uses it, a small label over the name. */
+.rb-side {
   color: var(--text-3);
   font-size: 0.625rem;
   font-weight: 650;
@@ -6419,44 +6419,48 @@ div.server-note {
   text-transform: uppercase;
 }
 
-.cr-card.cr-right .cr-slot {
-  right: auto;
-  left: var(--s-2);
+.rb-item.is-empty .rb-side {
+  color: var(--text-2);
 }
 
-.cr-card.is-empty .cr-slot {
-  position: static;
-}
-
-.cr-empty-text {
+.rb-empty-text {
   color: var(--text-2);
   font-size: var(--text-xs);
 }
 
-.cr-badge {
+/* The slot itself: a round pocket the item sits in (an empty one is a dashed ring). */
+.rb-pocket {
   display: inline-grid;
   place-items: center;
   flex: none;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: var(--r-sm);
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: 50%;
   background: var(--role-soft);
+  box-shadow: inset 0 0 0 1.5px var(--role);
   color: var(--role);
 }
 
-.cr-badge .pu-icon {
-  width: 1.5rem;
-  height: 1.5rem;
+.rb-item.is-empty .rb-pocket {
+  background: transparent;
+  box-shadow: none;
+  outline: 1.5px dashed var(--fill-strong);
+  outline-offset: -1.5px;
 }
 
-.cr-text {
+.rb-pocket .pu-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+.rb-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
   line-height: 1.25;
 }
 
-.cr-name {
+.rb-name {
   overflow: hidden;
   font-size: var(--text-md);
   font-weight: 650;
@@ -6464,7 +6468,7 @@ div.server-note {
   white-space: nowrap;
 }
 
-.cr-hint {
+.rb-hint {
   overflow: hidden;
   color: var(--text-2);
   font-size: var(--text-xs);
@@ -6473,7 +6477,7 @@ div.server-note {
   white-space: nowrap;
 }
 
-.cr-effects {
+.rb-effects {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -6481,7 +6485,7 @@ div.server-note {
   max-width: 100%;
 }
 
-.cr-chip {
+.rb-chip {
   --role: var(--accent);
   display: flex;
   align-items: center;
@@ -6493,15 +6497,15 @@ div.server-note {
   box-shadow: var(--shadow-raised);
 }
 
-.cr-chip.is-attack {
-  --role: var(--card-attack);
+.rb-chip.is-attack {
+  --role: var(--rumble-attack);
 }
 
-.cr-chip.is-guard {
-  --role: var(--card-guard);
+.rb-chip.is-guard {
+  --role: var(--rumble-guard);
 }
 
-.cr-ring {
+.rb-ring {
   position: relative;
   display: inline-grid;
   place-items: center;
@@ -6511,7 +6515,7 @@ div.server-note {
   color: var(--role);
 }
 
-.cr-ring > svg {
+.rb-ring > svg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -6519,28 +6523,28 @@ div.server-note {
   transform: rotate(-90deg);
 }
 
-.cr-ring-track,
-.cr-ring-fill {
+.rb-ring-track,
+.rb-ring-fill {
   fill: none;
   stroke-width: 2.6;
 }
 
-.cr-ring-track {
+.rb-ring-track {
   stroke: var(--fill-strong);
 }
 
-.cr-ring-fill {
+.rb-ring-fill {
   stroke: var(--role);
   stroke-linecap: round;
   transition: stroke-dashoffset 260ms linear;
 }
 
-.cr-ring .pu-icon {
+.rb-ring .pu-icon {
   width: 1rem;
   height: 1rem;
 }
 
-.cr-ring-dot {
+.rb-ring-dot {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 50%;
@@ -6548,7 +6552,63 @@ div.server-note {
   opacity: 0.6;
 }
 
-.cr-line {
+.rb-line.is-attack {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1.5px var(--rumble-attack);
+  color: var(--text);
+}
+
+/* A hit flying in from behind: a marker at the scene's back (left) edge, for a moment. */
+.rb-incoming {
+  position: absolute;
+  top: 40%;
+  left: var(--s-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1.5px var(--rumble-attack);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: rb-incoming-in 1.4s var(--ease) both;
+}
+
+.rb-incoming .pu-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--rumble-attack);
+}
+
+.rb-incoming-arrow {
+  color: var(--rumble-attack);
+  font-weight: 700;
+}
+
+@keyframes rb-incoming-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-0.5rem);
+  }
+  15%,
+  80% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.rb-line {
   margin: 0;
   padding: 0.15rem var(--s-2);
   border-radius: var(--r-pill);
@@ -6561,11 +6621,11 @@ div.server-note {
   white-space: nowrap;
 }
 
-.cr-middle .pu-challenge {
+.rb-middle .pu-challenge {
   width: 15rem;
 }
 
-.cr-notice {
+.rb-notice {
   position: absolute;
   top: var(--s-3);
   left: 50%;
@@ -6584,32 +6644,32 @@ div.server-note {
   text-overflow: ellipsis;
   white-space: nowrap;
   transform: translateX(-50%);
-  animation: cr-notice-in 4.5s var(--ease) both;
+  animation: rb-notice-in 4.5s var(--ease) both;
 }
 
-.cr-notice.is-attack {
+.rb-notice.is-attack {
   box-shadow:
     var(--shadow-raised),
-    inset 0 0 0 1.5px var(--card-attack);
+    inset 0 0 0 1.5px var(--rumble-attack);
 }
 
-.cr-notice.is-guard {
+.rb-notice.is-guard {
   box-shadow:
     var(--shadow-raised),
-    inset 0 0 0 1.5px var(--card-guard);
+    inset 0 0 0 1.5px var(--rumble-guard);
 }
 
-.cr-notice.is-boost {
+.rb-notice.is-boost {
   box-shadow:
     var(--shadow-raised),
     inset 0 0 0 1.5px var(--accent);
 }
 
-.cr-notice.is-quiet {
+.rb-notice.is-quiet {
   color: var(--text-2);
 }
 
-@keyframes cr-notice-in {
+@keyframes rb-notice-in {
   0% {
     opacity: 0;
     transform: translate(-50%, -0.4rem);
@@ -6627,28 +6687,28 @@ div.server-note {
 
 /* The scene's own corner labels (gradient) move out of the notice's way at the top. */
 @container scene-view (max-width: 620px) {
-  .cr-layer {
+  .rb-layer {
     padding: var(--s-2);
   }
 
-  .scene-view:has(.cr-layer) .scene-switch {
+  .scene-view:has(.rb-layer) .scene-switch {
     top: var(--s-2);
     left: var(--s-2);
   }
 
-  .scene-view:has(.cr-layer) .scene-brake {
+  .scene-view:has(.rb-layer) .scene-brake {
     top: calc(var(--s-2) + 2.4rem);
     left: var(--s-2);
   }
 
-  .cr-hand {
+  .rb-slots {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas: 'left right';
     gap: var(--s-2);
   }
 
   /* A small scene: what acts on the rider moves to the top right, off the rider. */
-  .cr-middle {
+  .rb-middle {
     position: absolute;
     top: 2.9rem;
     right: var(--s-2);
@@ -6656,64 +6716,70 @@ div.server-note {
     max-width: 55%;
   }
 
-  .cr-effects {
+  .rb-effects {
     flex-direction: column;
     align-items: flex-end;
     gap: var(--s-1);
   }
 
   /* The split is in the summary and the overlay; a small scene keeps to the essentials. */
-  .cr-line {
+  .rb-line {
     display: none;
   }
 
-  .cr-card {
+  .rb-item {
     gap: var(--s-2);
     min-height: 2.9rem;
     padding: var(--s-1) var(--s-2) var(--s-1) var(--s-1);
   }
 
-  .cr-card.cr-right {
+  .rb-item.rb-right {
     padding: var(--s-1) var(--s-1) var(--s-1) var(--s-2);
   }
 
-  .cr-badge {
-    width: 2.1rem;
-    height: 2.1rem;
+  .rb-pocket {
+    width: 2.2rem;
+    height: 2.2rem;
   }
 
-  .cr-badge .pu-icon {
-    width: 1.2rem;
-    height: 1.2rem;
+  .rb-pocket .pu-icon {
+    width: 1.25rem;
+    height: 1.25rem;
   }
 
-  .cr-name {
+  .rb-incoming {
+    top: 45%;
+    padding: 0.125rem var(--s-2) 0.125rem 0.35rem;
+    font-size: var(--text-xs);
+  }
+
+  .rb-name {
     font-size: var(--text-sm);
   }
 
-  .cr-hint,
-  .cr-empty-text {
+  .rb-hint,
+  .rb-empty-text {
     font-size: 0.6875rem;
   }
 
-  .cr-chip {
+  .rb-chip {
     padding: 0.125rem var(--s-2) 0.125rem 0.125rem;
   }
 
-  .cr-ring {
+  .rb-ring {
     width: 1.75rem;
     height: 1.75rem;
   }
 
-  .cr-chip .cr-name {
+  .rb-chip .rb-name {
     font-size: var(--text-xs);
   }
 
-  .cr-middle .pu-challenge {
+  .rb-middle .pu-challenge {
     width: 13rem;
   }
 
-  .cr-notice {
+  .rb-notice {
     top: var(--s-2);
     max-width: calc(100% - 15rem);
     padding: 0.125rem var(--s-3);
@@ -6721,7 +6787,7 @@ div.server-note {
   }
 }
 
-/* Group panel and start card: the mode, and riders whose app has no Card Race. */
+/* Group panel and start card: the mode, and riders whose app has no Freilauf Rumble. */
 .group-mode {
   display: flex;
   flex-wrap: wrap;
@@ -6735,7 +6801,7 @@ div.server-note {
   gap: 0.35rem;
   padding: 0.1rem var(--s-2) 0.1rem 0.35rem;
   border-radius: var(--r-pill);
-  background: var(--card-attack-soft);
+  background: var(--rumble-attack-soft);
   color: var(--text);
   font-size: var(--text-xs);
   font-weight: 650;
@@ -6745,7 +6811,7 @@ div.server-note {
 .mode-badge .pu-icon {
   width: 0.95rem;
   height: 0.95rem;
-  color: var(--card-attack);
+  color: var(--rumble-attack);
 }
 
 .mode-badge.is-normal {
@@ -6797,7 +6863,7 @@ div.server-note {
   box-shadow: none;
 }
 
-.riders .gap-fog {
+.riders .gap-hidden {
   color: var(--text-2);
   font-weight: 650;
 }
@@ -6809,12 +6875,13 @@ div.server-note {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cr-notice {
+  .rb-notice,
+  .rb-incoming {
     animation: none;
   }
 
-  .cr-card,
-  .cr-ring-fill {
+  .rb-item,
+  .rb-ring-fill {
     transition: none;
   }
 }

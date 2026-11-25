@@ -786,11 +786,14 @@ export class App {
         routeName: before.routeTrack?.name ?? null,
         rider: before.settings?.rider ?? null,
         powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
-        cards:
-          finished?.powerUps?.mode === 'cardRace'
+        rumble:
+          finished?.powerUps?.mode === 'rumble'
             ? { gainM: finished.powerUps.gainM ?? 0, lossM: finished.powerUps.lossM ?? 0 }
-            : before.live?.powerUps?.cards
-              ? { gainM: before.live.powerUps.cards.gainM, lossM: before.live.powerUps.cards.lossM }
+            : before.live?.powerUps?.rumble
+              ? {
+                  gainM: before.live.powerUps.rumble.gainM,
+                  lossM: before.live.powerUps.rumble.lossM,
+                }
               : null,
       });
       this.store.setState({
@@ -823,14 +826,14 @@ export class App {
 
   // ───────────── power-ups (docs/power-ups.md) ─────────────
 
-  /** Uses the held power-up (P key, the on-screen card). */
+  /** Uses the held power-up (P key, the on-screen item). */
   usePowerUp(source: ShiftSource = 'ui'): boolean {
     return this.#controller?.usePowerUp(source) ?? false;
   }
 
-  /** Card Race: plays the left (0) or right (1) card (P / L, the on-screen hand). */
-  playCard(slot: number, source: ShiftSource = 'ui'): boolean {
-    return this.#controller?.playCard(slot, source) ?? false;
+  /** Rumble: uses the left (0) or right (1) item (P / L, the on-screen slots). */
+  useItem(slot: number, source: ShiftSource = 'ui'): boolean {
+    return this.#controller?.useItem(slot, source) ?? false;
   }
 
   dismissPowerUpChallenge(): void {
@@ -844,7 +847,7 @@ export class App {
   }
 
   /**
-   * The host's choice of mode (docs/card-race.md): before creating the ride, for the ride to
+   * The host's choice of mode (docs/rumble.md): before creating the ride, for the ride to
    * be created; as the host of a ride, for everyone at once. Guests cannot change it.
    */
   setGroupMode(mode: GroupMode): void {

@@ -3,7 +3,7 @@ import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { isEditableTarget, useApp } from '../hooks';
 import { buildPalette } from './palette';
-import { PowerUpSceneState, cardsKey, powerUpAttributes } from './powerUpScene';
+import { PowerUpSceneState, powerUpAttributes, rumbleKey } from './powerUpScene';
 import { ProfileRenderer, SceneRenderer, type SceneFrame } from './sceneRender';
 import {
   crankRate,
@@ -54,8 +54,11 @@ export function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) 
       text2: v('--text-2'),
       text3: v('--text-3'),
       accent: v('--accent'),
-      attack: v('--card-attack'),
-      guard: v('--card-guard'),
+      attack: v('--rumble-attack'),
+      guard: v('--rumble-guard'),
+      water: v('--rumble-water'),
+      mud: v('--rumble-mud'),
+      hornet: v('--rumble-hornet'),
     },
     normalise,
   );
@@ -384,7 +387,7 @@ function startScene(
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
     frame.powerUps = boost.update(frame.distanceM, t);
-    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${cardsKey(frame.powerUps.cards)}`;
+    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${rumbleKey(frame.powerUps.rumble)}|${frame.others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}` : '')).join(',')}`;
 
     // Reduced motion: draw only when something visible changed.
     const changed =
@@ -434,7 +437,9 @@ function startScene(
       root.dataset.effect = pa.effect;
       root.dataset.effectPhase = pa.effectPhase;
       root.dataset.gateAhead = pa.gateAhead;
-      root.dataset.cards = pa.cards;
+      root.dataset.rumble = pa.rumble;
+      root.dataset.puddleAhead = pa.puddleAhead;
+      root.dataset.flying = pa.flying;
     }
     if (t - lastLabel >= LABEL_MS) {
       lastLabel = t;

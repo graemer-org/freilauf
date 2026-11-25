@@ -29,13 +29,18 @@ import { formatGrade, hash01, valueNoise } from './sceneMath';
 import type { GradeSign } from './routeSample';
 import { GATE_DRAW_M, type PowerUpSceneFrame, type RiderFx } from './powerUpScene';
 import {
-  drawGustsRoad,
-  drawHaze,
+  arcPoint,
+  drawBottle,
+  drawCape,
+  drawDrips,
+  drawFeedBag,
+  drawMudSpatter,
   drawProtection,
-  drawPulse,
+  drawPuddle,
   drawRiderFx,
-  drawShield,
-} from './cardFx';
+  drawSplash,
+  drawSwarm,
+} from './rumbleFx';
 
 const TAU = Math.PI * 2;
 /** Fog levels (each is one batch of fills). */
@@ -61,7 +66,7 @@ export interface RoadRider {
   gapM: number;
   stale: boolean;
   crank: number;
-  /** Card Race effects on that rider, if any. */
+  /** Rumble effects on that rider, if any. */
   fx?: RiderFx;
 }
 
@@ -88,7 +93,7 @@ export interface RoadFrame {
   reducedMotion: boolean;
   /** Power-up gates ahead and the effect in progress (absent: none). */
   powerUps?: PowerUpSceneFrame;
-  /** Card Race: Fog on the local rider hides the gaps in the name labels. */
+  /** Rumble: hornets around the local rider hide the gaps in the name labels. */
   hideGaps?: boolean;
 }
 
@@ -278,7 +283,9 @@ export class RoadRenderer {
 
     const pu = f.powerUps;
     if (pu) {
-      this.gatesAhead(f, pu, p);
+      if (pu.rumble) this.puddlesAhead(f, pu, p);
+      if (pu.feedBags) this.feedBagsAhead(f, pu, p);
+      else this.gatesAhead(f, pu, p);
       this.downhillChevrons(f, pu, p);
       if (pu.effect === 'slipstream' && pu.phase === 'active') this.slipstreamGhost(f, fog);
     }
@@ -286,7 +293,7 @@ export class RoadRenderer {
     if (pu) this.auraBehind(f, pu, p);
     this.localRider(f);
     if (pu) this.auraFront(f, pu, p);
-    if (pu?.cards) this.cardsLocal(f, pu, p);
+    if (pu?.rumble) this.rumbleLocal(f, pu, p);
     this.hud(f, p);
 
     if (f.state === 'paused') this.pill('Paused', p, true);
@@ -710,10 +717,9 @@ export class RoadRenderer {
           o.fx,
           this.a.x,
           this.a.y - 0.9 * ppm,
-          ppm,
+          ppm * 0.8,
           f.powerUps?.timeS ?? 0,
           f.reducedMotion,
-          'road',
         );
       }
       const label =
@@ -1155,28 +1161,167 @@ export class RoadRenderer {
   }
 
   /**
-   * Card Race on the local rider, seen from behind: Headwind's gusts coming out of the distance
-   * and parting around the rider, the Shield's bubble, the protection ring, the hit pulse, and
-   * Fog's haze over the view.
+   * Freilauf Rumble's pick-ups: a feed bag held out over the rider's lane from a slim stand on
+   * the right verge, at shoulder height, fading with distance.
    */
-  private cardsLocal(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
-    const c = pu.cards!;
+  private feedBagsAhead(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const postL = ROAD.halfWidthM + 0.45;
+    const hookL = ROAD.riderBaseM + 0.75;
+    for (let i = pu.gates.length - 1; i >= 0; i--) {
+      const g = pu.gates[i]!;
+      if (g < 0.5 || g > GATE_DRAW_M) continue;
+      const s = d + g;
+      const kBase = strip.pointAt(this.vp, f.camera, s, postL, 0, this.a);
+      const kTop = strip.pointAt(this.vp, f.camera, s, postL, 1.85, this.b);
+      const kHook = strip.pointAt(this.vp, f.camera, s, hookL, 1.6, this.c);
+      if (kBase === 0 || kTop === 0 || kHook === 0) continue;
+      const ppm = this.vp.focalPx / this.a.depth;
+      if (ppm * 1.85 < 3) continue;
+      const fade = Math.max(0.3, 1 - this.a.depth / (GATE_DRAW_M * 1.1));
+      const ax = this.a.x;
+      const ay = this.a.y;
+      const bx = this.b.x;
+      const by = this.b.y;
+      const hx = this.c.x;
+      const hy = this.c.y;
+      this.clipped(kBase, ay, by, () => {
+        ctx.save();
+        ctx.globalAlpha = (pu.holding ? 0.45 : 1) * fade;
+        ctx.strokeStyle = p.ink2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = Math.max(1.2, 0.05 * ppm);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(hx, hy - 0.1 * ppm);
+        ctx.lineTo(hx, hy);
+        ctx.stroke();
+        drawFeedBag(
+          ctx,
+          p,
+          hx,
+          hy,
+          0.48 * ppm,
+          f.reducedMotion ? 0 : Math.sin(pu.timeS * 1.6 + g) * 0.07,
+        );
+        ctx.restore();
+      });
+    }
+  }
+
+  /** Mud puddles lying on the rider's lane ahead (someone else's), fading with distance. */
+  private puddlesAhead(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const lane = ROAD.riderBaseM;
+    for (const pd of pu.rumble!.puddles) {
+      if (pd.aheadM < 1 || pd.aheadM > GATE_DRAW_M) continue;
+      const s = d + pd.aheadM;
+      const kC = strip.pointAt(this.vp, f.camera, s, lane, 0, this.a);
+      const kL = strip.pointAt(this.vp, f.camera, s, lane - 1.0, 0, this.b);
+      const kF = strip.pointAt(this.vp, f.camera, s + 0.7, lane, 0, this.c);
+      if (kC === 0 || kL === 0 || kF === 0 || strip.hiddenAt(kC, this.a.y)) continue;
+      const rx = Math.abs(this.a.x - this.b.x);
+      const ry = Math.max(0.8, Math.abs(this.a.y - this.c.y));
+      const fade = Math.max(0.35, 1 - this.a.depth / (GATE_DRAW_M * 1.1));
+      drawPuddle(this.ctx, p, this.a.x, this.a.y, rx, ry, (pd.own ? 0.8 : 1) * fade);
+    }
+  }
+
+  /**
+   * Freilauf Rumble on the local rider, seen from behind: water dripping, mud spattered or
+   * hornets round the head; the rain cape, the protection ring, the splash when a hit lands; a
+   * bottle or the swarm flying in from behind the camera; and this rider's own bottle arcing to
+   * the rider ahead, or the swarm flying up the road to the leader — towards the horizon when
+   * they are out of view.
+   */
+  private rumbleLocal(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const c = pu.rumble!;
     const ppm = this.riderPoint(f);
     if (ppm === 0) return;
     const ctx = this.ctx;
+    const reduced = f.reducedMotion;
     const x = this.c.x;
     const y = this.c.y - 0.9 * ppm;
-    const hy = horizonLine(this.vp, f.camera);
-    if (c.attack === 'fog') drawHaze(ctx, p, this.w, this.h, hy + (this.h - hy) * 0.35, 0.95);
-    if (c.attack === 'headwind') {
-      drawGustsRoad(ctx, p, x, y, ppm, pu.timeS, f.reducedMotion);
-    }
-    // Around the rider seen from behind: narrow and tall (shoulders to wheels).
     const cy = this.c.y - 0.82 * ppm;
-    if (c.shield) drawShield(ctx, p, x, cy, 0.6 * ppm, 0.95 * ppm);
+    if (c.hit === 'bottle') drawDrips(ctx, p, x, y, ppm * 0.9, pu.timeS, reduced);
+    if (c.hit === 'puddle') drawMudSpatter(ctx, p, x, y, ppm * 0.8);
+    if (c.hit === 'hornets') drawSwarm(ctx, p, x, y - 0.75 * ppm, 0.5 * ppm, pu.timeS, reduced);
+    // Around the rider seen from behind: narrow and tall (shoulders to wheels).
+    if (c.cape) drawCape(ctx, p, x, cy, 0.6 * ppm, 0.95 * ppm);
     if (c.protection >= 0) drawProtection(ctx, p, x, cy, 0.68 * ppm, 1.02 * ppm, c.protection);
     if (c.pulse >= 0 && c.pulseKind) {
-      drawPulse(ctx, p, x, cy, 0.75 * ppm, c.pulse, c.pulseKind, f.reducedMotion);
+      drawSplash(ctx, p, x, cy, 0.75 * ppm, c.pulse, c.pulseKind, c.pulseItem, reduced);
+    }
+    const inc = c.incoming;
+    if (inc) {
+      // From behind the camera: up from the bottom edge, onto the rider.
+      const t = reduced ? 0.8 : inc.t;
+      const x0 = x - this.w * 0.18;
+      const y0 = this.h + 0.3 * ppm;
+      if (inc.kind === 'bottle') {
+        const pt = arcPoint(x0, y0, x, cy - 0.3 * ppm, 0.9 * ppm, t);
+        drawBottle(ctx, p, pt.x, pt.y, 0.34 * ppm * (1.6 - 0.6 * t), reduced ? 0.6 : t * 9);
+      } else {
+        drawSwarm(
+          ctx,
+          p,
+          x0 + (x - x0) * t,
+          y0 + (y - 0.7 * ppm - y0) * t,
+          0.45 * ppm,
+          pu.timeS,
+          reduced,
+          6,
+        );
+      }
+    }
+    const th = c.throw;
+    if (!th) return;
+    const d = f.camera.distanceM;
+    const o = th.targetId ? f.others.find((r) => r.id === th.targetId) : undefined;
+    let tx = this.vp.cx;
+    let ty = horizonLine(this.vp, f.camera) + 4;
+    let tppm = ppm * 0.05;
+    let visible = false;
+    if (o && o.gapM > 1.5 && o.gapM <= 420) {
+      const k = this.strip.pointAt(this.vp, f.camera, d + o.gapM, otherLateralM(o.id), 0, this.a);
+      if (k !== 0 && !this.strip.hiddenAt(k, this.a.y - 1.6 * (this.vp.focalPx / this.a.depth))) {
+        tppm = this.vp.focalPx / this.a.depth;
+        tx = this.a.x;
+        ty = this.a.y - 0.9 * tppm;
+        visible = true;
+      }
+    }
+    if (th.splash < 0) {
+      const t = reduced ? 0.55 : th.t;
+      const size = 0.34 * (ppm + (tppm - ppm) * t);
+      if (th.kind === 'bottle') {
+        const y0 = y - 0.4 * ppm;
+        const lift = Math.max(
+          0.3 * ppm,
+          Math.min(0.8 * ppm + (y0 - ty) * 0.35, Math.min(y0, ty) - this.h * 0.08),
+        );
+        const pt = arcPoint(x + 0.2 * ppm, y0, tx, ty, lift, t);
+        drawBottle(ctx, p, pt.x, pt.y, size, reduced ? 0.6 : t * 10);
+      } else {
+        const r = 0.5 * (ppm + (tppm - ppm) * t);
+        drawSwarm(
+          ctx,
+          p,
+          x + (tx - x) * t,
+          y - 0.6 * ppm + (ty - 0.6 * tppm - (y - 0.6 * ppm)) * t,
+          r,
+          pu.timeS,
+          reduced,
+          6,
+        );
+      }
+    } else if (visible && th.splashKind) {
+      drawSplash(ctx, p, tx, ty, 0.75 * tppm, th.splash, th.splashKind, th.kind, reduced);
     }
   }
 

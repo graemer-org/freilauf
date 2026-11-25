@@ -11,11 +11,16 @@ import type {
   AttackOutcomeEvent,
   AttackPayload,
   AttackVerdict,
+  ClaimOutcomeEvent,
+  ClaimPayload,
+  ClaimVerdict,
   GroupRider,
   GroupRules,
   IncomingAttack,
-  RiderCards,
+  IncomingClaim,
+  RiderItems,
 } from '@freilauf/p2p';
+import { MAX_LIVE_PUDDLES, PuddleLedger, PuddleWatch, claimPosition } from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
 import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
 import type { EnergyTotals, RecordedRide, RideSnapshot } from '@freilauf/session';
@@ -41,10 +46,25 @@ import type {
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
-import type { GroupMode, PowerUpBlock, PowerUpKind, PowerUpLive } from '../../shared/powerUps';
+import type {
+  GroupMode,
+  PowerUpBlock,
+  PowerUpKind,
+  PowerUpLive,
+  PuddleLive,
+} from '../../shared/powerUps';
 import { isAttackKind } from '../../shared/powerUps';
-import type { LocalRace } from './cardRace';
-import { attackPosition, cardsWire, checkAttack, resolveTarget } from './cardRace';
+import type { LocalRace } from './rumble';
+import {
+  attackPosition,
+  checkAttack,
+  inRace,
+  itemsWire,
+  puddleDropAt,
+  puddleRace,
+  puddlesLive,
+  resolveTarget,
+} from './rumble';
 import { combineSteering, leverOutput } from './levers';
 import type { LeverOutput } from './levers';
 import { RateLimiter } from './logFormat';
@@ -71,18 +91,24 @@ export interface GroupLink {
     raceOffsetM?: number;
     /** The host's rules for the group (only the host sends them). */
     rules?: GroupRules;
-    /** Card Race support and, in a Card Race, this rider's cards (docs/adr/0007-card-race.md). */
-    cards?: RiderCards;
+    /** Rumble support and, in a Rumble, this rider's items (docs/adr/0008-rumble-items.md). */
+    items?: RiderItems;
   }): void;
   getRiders(): GroupRider[];
   /** The group's rules as the host set them; null when none were sent. */
   getRules?(): GroupRules | null;
-  /** Card Race: sends an attack to a peer (GroupRide.sendAttack); null when it cannot. */
+  /** Rumble: sends an attack to a peer (GroupRide.sendAttack); null when it cannot. */
   sendAttack?(to: string, payload: () => AttackPayload | null): string | null;
-  /** Card Race: one outcome per attack sent. */
+  /** Rumble: one outcome per attack sent. */
   onAttackResult?(listener: (outcome: AttackOutcomeEvent) => void): () => void;
-  /** Card Race: decides and applies attacks aimed at this rider (null removes it). */
+  /** Rumble: decides and applies attacks aimed at this rider (null removes it). */
   setAttackHandler?(handler: ((attack: IncomingAttack) => AttackVerdict) | null): void;
+  /** Rumble: claims the hit of a puddle the local rider rode through (GroupRide.claimPuddle). */
+  claimPuddle?(dropper: string, payload: () => ClaimPayload | null): string | null;
+  /** Rumble: one outcome per puddle claim sent. */
+  onClaimResult?(listener: (outcome: ClaimOutcomeEvent) => void): () => void;
+  /** Rumble: decides claims on the local rider's puddles (null removes it). */
+  setPuddleClaimHandler?(handler: ((claim: IncomingClaim) => ClaimVerdict) | null): void;
 }
 
 export interface RideControllerOptions {
@@ -107,8 +133,8 @@ export type ShiftSource = 'ui' | 'keyboard' | `button:${string}` | (string & {})
 
 const AUTOSAVE_INTERVAL_MS = 30_000;
 
-/** Buttons that play the right card in a Card Race when set to "Use power-up". */
-const RIGHT_CARD_BUTTONS: ReadonlySet<string> = new Set(['powerUpRight']);
+/** Buttons that use the right item in a Rumble when set to "Use power-up". */
+const RIGHT_ITEM_BUTTONS: ReadonlySet<string> = new Set(['powerUpRight']);
 
 /**
  * Route gradient → trainer (docs/adr/0004-routes.md): a new gradient is sent when it differs
@@ -176,7 +202,7 @@ export interface FinishedRide {
   ftpTest: FtpTestOutcome | null;
   /**
    * Power-ups of the ride (never part of `ride`): the race offset they added, and counts. In a
-   * Card Race also the split: metres gained from own cards and lost to attacks.
+   * Rumble also the split: metres gained from own items and lost to hits.
    */
   powerUps?: {
     raceOffsetM: number;
@@ -235,12 +261,20 @@ export class RideController {
   /** The rules this rider sets as the host of a group ride (null: a guest, or alone). */
   #hostRules: GroupRules | null = null;
   #groupCleanup: (() => void) | null = null;
-  /** Card Race attacks this rider sent and is waiting to hear about, by id. */
-  #attacks = new Map<string, { kind: PowerUpKind; target: string }>();
+  /** Rumble attacks this rider sent and is waiting to hear about, by id. */
+  #attacks = new Map<string, { kind: PowerUpKind; target: string; targetId: string }>();
+  /** Rumble puddle claims this rider sent, by id: whose puddle. */
+  #claims = new Map<string, { dropperName: string }>();
+  /** Rumble: this rider's own mud puddles on the road (it alone decides who they hit). */
+  #puddles = new PuddleLedger();
+  /** Rumble: the others' puddles, to notice riding through one. */
+  #watch = new PuddleWatch();
+  /** Rumble: puddles around this rider at the last tick (for the scene). */
+  #puddlesNear: PuddleLive[] = [];
   /** Where this rider was in the race at the last tick (attack payloads, plausibility). */
   #race: LocalRace = { distanceM: 0, offsetM: 0, route: null };
-  /** Whether the last tick was a Card Race (for the broadcast and the handler). */
-  #cardRace = false;
+  /** Whether the last tick was a Rumble (for the broadcast and the handlers). */
+  #rumble = false;
   /** A countdown before the ride starts or resumes (see requestStart); null when none runs. */
   #countdown: { kind: RideCountdown['kind']; endsAt: number; totalS: number } | null = null;
   /** The live state last published, to show a countdown change at once (between ticks). */
@@ -312,18 +346,28 @@ export class RideController {
     this.#groupCleanup?.();
     this.#groupCleanup = null;
     this.#group?.setAttackHandler?.(null);
+    this.#group?.setPuddleClaimHandler?.(null);
     this.#attacks.clear();
+    this.#claims.clear();
+    this.#puddles.clear();
+    this.#watch.clear();
     this.#group = group;
     if (!group) return;
     group.setAttackHandler?.((attack) => this.#onAttack(attack));
-    this.#groupCleanup = group.onAttackResult?.((o) => this.#onAttackResult(o)) ?? null;
+    group.setPuddleClaimHandler?.((claim) => this.#onClaim(claim));
+    const offAttack = group.onAttackResult?.((o) => this.#onAttackResult(o));
+    const offClaim = group.onClaimResult?.((o) => this.#onClaimResult(o));
+    this.#groupCleanup = () => {
+      offAttack?.();
+      offClaim?.();
+    };
   }
 
   /** The mode of the group ride: the host's own rules, else the host's as received. */
   get groupMode(): GroupMode {
     if (!this.#group) return 'normal';
     const rules = this.#hostRules ?? this.#group.getRules?.() ?? null;
-    return rules?.mode === 'cardRace' ? 'cardRace' : 'normal';
+    return rules?.mode === 'rumble' ? 'rumble' : 'normal';
   }
 
   updateSettings(settings: Settings): void {
@@ -485,7 +529,7 @@ export class RideController {
    * not running, or power-ups do not apply now (ERG step, FTP test, switched off).
    */
   usePowerUp(source: ShiftSource = 'ui'): boolean {
-    if (this.#powerUps?.mode === 'cardRace') return this.playCard(0, source);
+    if (this.#powerUps?.mode === 'rumble') return this.useItem(0, source);
     const engine = this.#powerUps;
     const kind = engine?.hand[0];
     const used = engine?.activate() ?? false;
@@ -497,37 +541,39 @@ export class RideController {
   }
 
   /**
-   * Card Race: plays the card in `slot` (0 = left button / P, 1 = right button / L). A boost or
-   * the shield acts on this rider at once; an attack goes to its target (resolved now from the
-   * latest positions) and is applied there. Returns false (the card stays) when it cannot be
-   * played now; in a normal ride the left slot is the held power-up.
+   * Rumble: uses the item in `slot` (0 = left button / P, 1 = right button / L). A boost or the
+   * rain cape acts on this rider at once; a water bottle or the hornets go to their target
+   * (resolved now from the latest positions) and are applied there; a mud puddle is dropped on
+   * the road behind this rider. Returns false (the item stays) when it cannot be used now; in
+   * a normal ride the left slot is the held power-up.
    */
-  playCard(slot: number, source: ShiftSource = 'ui'): boolean {
+  useItem(slot: number, source: ShiftSource = 'ui'): boolean {
     const engine = this.#powerUps;
     if (!engine) return false;
-    if (engine.mode !== 'cardRace') return slot === 0 ? this.usePowerUp(source) : false;
+    if (engine.mode !== 'rumble') return slot === 0 ? this.usePowerUp(source) : false;
     const kind = engine.slots[slot] ?? null;
     const side = slot === 0 ? 'left' : 'right';
     if (!kind) {
-      this.#log.info(`card not played: ${side} slot empty (${source})`, { source });
+      this.#log.info(`item not used: ${side} slot empty (${source})`, { source });
       return false;
     }
+    if (kind === 'puddle') return this.#dropPuddle(slot, side, source);
     if (!isAttackKind(kind)) {
       const used = engine.activate(slot);
-      this.#log.info(
-        used ? `card played: ${kind} (${side}, ${source})` : `card not played: ${kind}`,
-        { source, ...(used ? {} : { note: engine.playNote(slot) }) },
-      );
+      this.#log.info(used ? `item used: ${kind} (${side}, ${source})` : `item not used: ${kind}`, {
+        source,
+        ...(used ? {} : { note: engine.playNote(slot) }),
+      });
       return used;
     }
     const group = this.#group;
     const target = resolveTarget(kind, group?.getRiders() ?? []);
     const note = engine.playNote(slot) ?? (target.ok ? null : target.note);
     if (!target.ok || note !== null || !group?.sendAttack) {
-      this.#log.info(`card not played: ${kind} (${side}, ${source})`, { source, note });
+      this.#log.info(`item not used: ${kind} (${side}, ${source})`, { source, note });
       return false;
     }
-    if (engine.spendCard(slot) === null) return false;
+    if (engine.spendItem(slot) === null) return false;
     const id = group.sendAttack(target.peerId, () => {
       // Re-sends carry the latest positions (same id, applied once).
       const now = group.getRiders().find((r) => r.peerId === target.peerId);
@@ -535,18 +581,48 @@ export class RideController {
       return { kind, gapM, ...attackPosition(this.#race, now?.sameRoute ?? target.sameRoute) };
     });
     if (id === null) {
-      engine.returnCard(kind);
-      engine.noteOutgoing(kind, target.name, 'timeout');
-      this.#log.info(`card not sent: ${kind} to ${target.name}`, { source });
+      engine.returnItem(kind);
+      engine.noteOutgoing(kind, target.name, 'timeout', target.peerId);
+      this.#log.info(`item not sent: ${kind} to ${target.name}`, { source });
       return false;
     }
-    this.#attacks.set(id, { kind, target: target.name });
-    engine.noteOutgoing(kind, target.name, 'sent');
-    this.#log.info(`card played: ${kind} at ${target.name} (${side}, ${source})`, {
+    this.#attacks.set(id, { kind, target: target.name, targetId: target.peerId });
+    engine.noteOutgoing(kind, target.name, 'sent', target.peerId);
+    this.#log.info(`item used: ${kind} at ${target.name} (${side}, ${source})`, {
       source,
       gapM: round(target.gapM, 1),
     });
     return true;
+  }
+
+  /** Rumble: drops a mud puddle on the road behind this rider (a world object it broadcasts). */
+  #dropPuddle(slot: number, side: string, source: ShiftSource): boolean {
+    const engine = this.#powerUps!;
+    const note = engine.playNote(slot) ?? this.#puddleNote();
+    if (note !== null || engine.spendItem(slot) === null) {
+      this.#log.info(`item not used: puddle (${side}, ${source})`, { source, note });
+      return false;
+    }
+    const id = this.#puddles.drop(puddleDropAt(this.#race), this.#now());
+    if (id === null) {
+      engine.returnItem('puddle');
+      return false;
+    }
+    engine.noteOutgoing('puddle', '', 'sent');
+    this.#log.info(`item used: puddle dropped (${side}, ${source})`, {
+      source,
+      ...(this.#race.route ? { routeM: round(this.#race.route.m, 0) } : {}),
+    });
+    return true;
+  }
+
+  /** Why a puddle cannot be dropped now (besides the engine's reasons), or null. */
+  #puddleNote(): string | null {
+    if (!this.#group) return 'Only in a group ride';
+    if (this.#puddles.live(this.#now()) >= MAX_LIVE_PUDDLES) {
+      return `${MAX_LIVE_PUDDLES} puddles already down`;
+    }
+    return null;
   }
 
   /** Waves the effort challenge on offer away. */
@@ -793,11 +869,11 @@ export class RideController {
             raceOffsetM: powerUps.raceOffsetM,
             picked: powerUps.picked,
             used: powerUps.used,
-            ...(powerUps.cards
+            ...(powerUps.rumble
               ? {
-                  mode: 'cardRace' as const,
-                  gainM: powerUps.cards.gainM,
-                  lossM: powerUps.cards.lossM,
+                  mode: 'rumble' as const,
+                  gainM: powerUps.rumble.gainM,
+                  lossM: powerUps.rumble.lossM,
                 }
               : {}),
           }
@@ -823,9 +899,16 @@ export class RideController {
     const now = this.#now();
     const workout = this.#driveWorkout(ride);
     const mode = this.groupMode;
-    this.#cardRace = mode === 'cardRace';
+    const wasRumble = this.#rumble;
+    this.#rumble = mode === 'rumble';
+    if (wasRumble && !this.#rumble) {
+      // Back to a normal ride: puddles dry up at once, nothing is claimed any more.
+      this.#puddles.clear();
+      this.#watch.clear();
+      this.#puddlesNear = [];
+    }
     this.#powerUps?.setMode(mode);
-    const powerUps = this.#withTargets(this.#drivePowerUps(ride, workout, braking, routePosition));
+    const driven = this.#drivePowerUps(ride, workout, braking, routePosition);
 
     if (ride.state !== 'idle' && now - this.#lastAutosaveAt >= AUTOSAVE_INTERVAL_MS) {
       this.#lastAutosaveAt = now;
@@ -842,7 +925,7 @@ export class RideController {
         : null;
     this.#race = {
       distanceM: ride.distanceM,
-      offsetM: powerUps?.raceOffsetM ?? 0,
+      offsetM: driven?.raceOffsetM ?? 0,
       route:
         track && routeM !== null
           ? {
@@ -853,6 +936,8 @@ export class RideController {
             }
           : null,
     };
+    this.#drivePuddles();
+    const powerUps = this.#withTargets(driven);
     this.#group?.setLocalState({
       name: this.#settings.rider.name,
       distanceM: ride.distanceM,
@@ -863,7 +948,12 @@ export class RideController {
       gear: ride.gear,
       ...(powerUps && powerUps.raceOffsetM > 0 ? { raceOffsetM: powerUps.raceOffsetM } : {}),
       ...(this.#hostRules ? { rules: this.#hostRules } : {}),
-      cards: cardsWire(powerUps, this.#cardRace, ride.state === 'riding'),
+      items: itemsWire(
+        powerUps,
+        this.#rumble,
+        ride.state === 'riding',
+        this.#rumble ? this.#puddles.wire(now) : [],
+      ),
       // Riders on the same route are placed by where they are on it (docs/routes.md).
       ...(track && routeM !== null
         ? {
@@ -887,7 +977,7 @@ export class RideController {
         ? {
             roomCode: this.#group.roomCode,
             riders: this.#group.getRiders(),
-            ...(this.#cardRace ? { mode } : {}),
+            ...(this.#rumble ? { mode } : {}),
           }
         : null,
       localName: this.#settings.rider.name,
@@ -910,51 +1000,134 @@ export class RideController {
   }
 
   /**
-   * Card Race: adds, per attack card, whom it would hit now or why it waits (the engine knows
-   * the rider, the controller knows the group).
+   * Rumble: adds, per aimed item, whom it would hit now or why it waits (the engine knows the
+   * rider, the controller knows the group), why a puddle cannot be dropped, and the puddles on
+   * the road around this rider.
    */
   #withTargets(pu: PowerUpLive | null): PowerUpLive | null {
-    const c = pu?.cards;
+    const c = pu?.rumble;
     if (!pu || !c) return pu;
     const riders = this.#group?.getRiders() ?? [];
     const slotNotes = [...c.slotNotes];
     const slotTargets = [...c.slotTargets];
     c.slots.forEach((kind, i) => {
-      if (!kind || !isAttackKind(kind) || slotNotes[i] !== null) return;
+      if (!kind || slotNotes[i] !== null) return;
+      if (kind === 'puddle') {
+        slotNotes[i] = this.#puddleNote();
+        return;
+      }
+      if (!isAttackKind(kind)) return;
       const t = resolveTarget(kind, riders);
       if (t.ok) slotTargets[i] = t.name;
       else slotNotes[i] = t.note;
     });
     const canActivate = c.slots.some((k, i) => k !== null && slotNotes[i] === null);
-    return { ...pu, canActivate, cards: { ...c, slotNotes, slotTargets } };
+    return {
+      ...pu,
+      canActivate,
+      rumble: { ...c, slotNotes, slotTargets, puddles: this.#puddlesNear },
+    };
   }
 
-  /** Card Race: an attack aimed at this rider (already checked by the group link). */
+  /**
+   * Rumble: watches the others' puddles; one this rider just rode through is claimed from its
+   * dropper (who decides whom it hits) — unless a hit could not land now (protected, paused,
+   * ERG): then the rider rolls through and the puddle stays for the next one.
+   */
+  #drivePuddles(): void {
+    const group = this.#group;
+    const engine = this.#powerUps;
+    if (!this.#rumble || !group || !engine) {
+      this.#puddlesNear = [];
+      return;
+    }
+    const riders = group.getRiders().filter(inRace);
+    const me = puddleRace(this.#race);
+    const { crossed, near } = this.#watch.update(riders, me);
+    for (const c of crossed) {
+      const blocked = engine.hitCheck();
+      if (blocked !== null || !group.claimPuddle) {
+        this.#log.info(`rode through ${c.dropperName}’s puddle: ${blocked ?? 'no group'}`);
+        continue;
+      }
+      const at = c.puddle;
+      const id = group.claimPuddle(c.dropper, () => ({
+        puddle: at.id,
+        raceM: claimPosition(at, puddleRace(this.#race)),
+        ...(at.routeId ? { routeId: at.routeId } : {}),
+      }));
+      if (id !== null) this.#claims.set(id, { dropperName: c.dropperName });
+      this.#log.info(`rode through ${c.dropperName}’s puddle: claimed`, { sent: id !== null });
+    }
+    this.#puddlesNear = puddlesLive(
+      near,
+      this.#puddles.wire(this.#now()),
+      this.#race,
+      this.#settings.rider.name,
+    );
+  }
+
+  /** Rumble: an attack aimed at this rider (already checked by the group link). */
   #onAttack(attack: IncomingAttack): AttackVerdict {
     const engine = this.#powerUps;
-    if (!engine || engine.mode !== 'cardRace' || !this.#cardRace) return 'unavailable';
+    if (!engine || engine.mode !== 'rumble' || !this.#rumble) return 'unavailable';
     const refusal = checkAttack(attack, this.#race, this.#group?.getRiders() ?? []);
     if (refusal) {
-      this.#log.warn(`card attack refused: ${refusal}`, { kind: attack.kind });
+      this.#log.warn(`rumble attack refused: ${refusal}`, { kind: attack.kind });
       return 'refused';
     }
-    const result = engine.receiveAttack(attack.kind as PowerUpKind, attack.fromName);
-    this.#log.info(`card attack ${result}: ${attack.kind}`, {
+    const result = engine.receiveHit(attack.kind as PowerUpKind, attack.fromName);
+    this.#log.info(`rumble attack ${result}: ${attack.kind}`, {
       raceOffsetM: round(engine.raceOffsetM, 1),
     });
     return result;
   }
 
-  /** Card Race: the target answered (or did not): a card that could not land comes back. */
+  /** Rumble: the target answered (or did not): an item that could not land comes back. */
   #onAttackResult(o: AttackOutcomeEvent): void {
     const sent = this.#attacks.get(o.id);
     if (!sent) return;
     this.#attacks.delete(o.id);
     const engine = this.#powerUps;
     if (!engine) return;
-    if (o.result !== 'hit' && o.result !== 'blocked') engine.returnCard(sent.kind);
-    engine.noteOutgoing(sent.kind, sent.target, o.result);
-    this.#log.info(`card ${sent.kind} at ${sent.target}: ${o.result}`);
+    if (o.result !== 'hit' && o.result !== 'blocked') engine.returnItem(sent.kind);
+    engine.noteOutgoing(sent.kind, sent.target, o.result, sent.targetId);
+    this.#log.info(`item ${sent.kind} at ${sent.target}: ${o.result}`);
+  }
+
+  /**
+   * Rumble: someone claims they rode through one of this rider's puddles. This rider alone
+   * decides (PuddleLedger): the first plausible claim is the puddle's one hit.
+   */
+  #onClaim(claim: IncomingClaim): ClaimVerdict {
+    if (!this.#rumble) return 'gone';
+    // Only a rider in the race can be hit: an app without Freilauf Rumble, or one paused, in an
+    // ERG step or with items off, is refused (and the puddle stays for the next rider).
+    const claimer = this.#group?.getRiders().find((r) => r.peerId === claim.from);
+    if (!claimer || !inRace(claimer)) {
+      this.#log.warn('puddle claim refused: not in the race');
+      return 'refused';
+    }
+    const route = this.#race.route;
+    const shape = route && claim.routeId === route.id ? route : null;
+    const d = this.#puddles.decide(claim, this.#now(), shape);
+    if (d.first) this.#powerUps?.noteOutgoing('puddle', claim.fromName, 'hit', claim.from);
+    this.#log.info(`puddle claim: ${d.result}`, { first: d.first });
+    return d.result;
+  }
+
+  /** Rumble: the dropper's answer to this rider's claim; only 'granted' hits. */
+  #onClaimResult(o: ClaimOutcomeEvent): void {
+    const sent = this.#claims.get(o.id);
+    if (!sent) return;
+    this.#claims.delete(o.id);
+    const engine = this.#powerUps;
+    if (!engine || o.result !== 'granted') {
+      this.#log.info(`puddle claim: ${o.result}`);
+      return;
+    }
+    const result = engine.receiveHit('puddle', sent.dropperName);
+    this.#log.info(`puddle hit: ${result}`, { raceOffsetM: round(engine.raceOffsetM, 1) });
   }
 
   #newPowerUps(): PowerUpEngine {
@@ -983,9 +1156,8 @@ export class RideController {
     const w = workout ?? null;
     if (this.#ergActive || (w && w.started && !w.finished && w.mode === 'erg')) return 'erg';
     const rules = this.#hostRules ?? this.#group?.getRules?.() ?? null;
-    // The host's power-up switch belongs to a normal ride; a Card Race always has cards.
-    if (this.#group && rules && rules.powerUps === false && rules.mode !== 'cardRace')
-      return 'group';
+    // The host's power-up switch belongs to a normal ride; a Rumble always has items.
+    if (this.#group && rules && rules.powerUps === false && rules.mode !== 'rumble') return 'group';
     return null;
   }
 
@@ -1059,9 +1231,9 @@ export class RideController {
         return;
       }
       case 'usePowerUp':
-        // Card Race: the right grip's side button plays the right card, any other the left.
-        if (this.#powerUps?.mode === 'cardRace') {
-          this.playCard(RIGHT_CARD_BUTTONS.has(event.button) ? 1 : 0, source);
+        // Rumble: the right grip's side button uses the right item, any other the left.
+        if (this.#powerUps?.mode === 'rumble') {
+          this.useItem(RIGHT_ITEM_BUTTONS.has(event.button) ? 1 : 0, source);
         } else this.usePowerUp(source);
         return;
       case 'none':

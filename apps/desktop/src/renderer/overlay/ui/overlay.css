@@ -18,7 +18,7 @@
   --ov-accent: #4c9dff;
   --ov-local: #ffd66b;
   --ov-alert: #e5484d;
-  /* Card Race markers (an attack, the shield / protection); the words say it too. */
+  /* Freilauf Rumble markers (a hit, the rain cape / protection); the words say it too. */
   --ov-attack: #f0995c;
   --ov-guard: #4fcfbf;
   --ov-gap: clamp(3px, 0.9vmin + 1px, 14px);
@@ -631,7 +631,7 @@ body,
   font-weight: 650;
 }
 
-/* ───────── Card Race (docs/card-race.md) ───────── */
+/* ───────── Freilauf Rumble (docs/rumble.md) ───────── */
 
 .ov-powerup--attack::before {
   background: var(--ov-attack);

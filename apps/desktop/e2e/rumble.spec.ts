@@ -35,12 +35,12 @@ async function startSignalling(port: number): Promise<ChildProcess> {
   return child;
 }
 
-/** A fresh simulated install with a name and short card spacing (simulation mode only). */
+/** A fresh simulated install with a name and short feed bag spacing (simulation mode only). */
 async function rider(
   name: string,
-  cardPool: string[],
+  itemPool: string[],
 ): Promise<{ app: ElectronApplication; main: Page; dir: string; errors: string[] }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `freilauf-e2e-cards-${name}-`));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `freilauf-e2e-rumble-${name}-`));
   const app = await launch(dir);
   const { main } = await windows(app);
   const errors: string[] = [];
@@ -52,41 +52,42 @@ async function rider(
   await main.evaluate((pool) => {
     localStorage.setItem(
       'freilauf.powerUps.tuning',
-      JSON.stringify({ spacingM: [30, 40], cardPool: pool }),
+      JSON.stringify({ spacingM: [30, 40], itemPool: pool }),
     );
-  }, cardPool);
+  }, itemPool);
   return { app, main, dir, errors };
 }
 
 /**
- * The Card Race between two app instances over a local signalling server (each in simulation
- * mode, with its own user data): Anna creates a Card Race, Ben joins with the invite and is
- * ahead; Anna plays Headwind with P; it lands on Ben's screen and Ben's race position drops.
+ * Freilauf Rumble between two app instances over a local signalling server (each in simulation
+ * mode, with its own user data): Anna creates a Rumble, Ben joins with the invite and rides
+ * ahead. Anna throws a water bottle at Ben with P; it lands on Ben's screen and his race
+ * position drops. Then Ben drops a mud puddle behind him with P, and Anna — behind him — rides
+ * through it: it lands on her screen, once.
  */
-test('Card Race: two apps, a Headwind played with P lands on the rider ahead', async () => {
-  test.setTimeout(180_000);
+test('Freilauf Rumble: two apps, a bottle thrown at the rider ahead, a puddle ridden through', async () => {
+  test.setTimeout(240_000);
   const port = await freePort();
   const signalling = await startSignalling(port);
-  const anna = await rider('Anna', ['headwind']);
-  const ben = await rider('Ben', ['shield']);
+  const anna = await rider('Anna', ['bottle']);
+  const ben = await rider('Ben', ['puddle']);
   try {
-    // Anna: her own server, the Card Race, create.
+    // Anna: her own server, Freilauf Rumble, create.
     const a = anna.main;
     await a.getByTestId('with-group').click();
     await a.getByTestId('group-advanced').locator(':scope > summary').click();
     await a.getByTestId('group-server-input').fill(`ws://127.0.0.1:${port}`);
     await a.getByTestId('group-server-save').click();
-    await a.getByTestId('group-mode-create-cardRace').click();
-    await expect(a.getByTestId('group-mode-blurb')).toContainText('two cards');
+    await expect(a.getByTestId('group-mode-create-normal')).toHaveText('Normal');
+    await a.getByTestId('group-mode-create-rumble').click();
+    await expect(a.getByTestId('group-mode-create-rumble')).toHaveText('Freilauf Rumble');
+    await expect(a.getByTestId('group-mode-blurb')).toContainText('feed bags');
     await a.getByTestId('group-create').click();
     await expect(a.getByTestId('group-code')).toHaveText(/^[A-Z0-9]{3}-[A-Z0-9]{3}$/, {
       timeout: 15_000,
     });
-    await expect(a.getByTestId('group-mode')).toHaveAttribute('data-mode', 'cardRace');
-    await expect(a.getByTestId('group-mode-switch-cardRace')).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await expect(a.getByTestId('group-mode')).toHaveAttribute('data-mode', 'rumble');
+    await expect(a.getByTestId('group-mode-switch-rumble')).toHaveAttribute('aria-pressed', 'true');
     const link = (await a.getByTestId('group-link').textContent())!;
 
     // Ben joins with the link (it carries the server).
@@ -98,9 +99,10 @@ test('Card Race: two apps, a Headwind played with P lands on the rider ahead', a
       timeout: 30_000,
     });
     // Everyone sees the mode, from the host.
-    await expect(b.getByTestId('group-mode-badge')).toHaveAttribute('data-mode', 'cardRace', {
+    await expect(b.getByTestId('group-mode-badge')).toHaveAttribute('data-mode', 'rumble', {
       timeout: 10_000,
     });
+    await expect(b.getByTestId('group-mode-badge')).toContainText('Freilauf Rumble');
     await expect(b.getByTestId('group-mode')).toContainText('Chosen by the host');
 
     // Ben rides first and harder: he is ahead.
@@ -112,31 +114,67 @@ test('Card Race: two apps, a Headwind played with P lands on the rider ahead', a
     await a.getByTestId('sim-effort').fill('200');
     await a.getByTestId('ride-start').click();
 
-    // Anna's left card: a Headwind aimed at Ben, ready.
-    const left = a.getByTestId('card-left');
-    await expect(left).toHaveAttribute('data-kind', 'headwind', { timeout: 40_000 });
+    // 1) Anna's left slot: a water bottle aimed at Ben, ready. P throws it.
+    const left = a.getByTestId('item-left');
+    await expect(left).toHaveAttribute('data-kind', 'bottle', { timeout: 40_000 });
     await expect(left).toHaveAttribute('data-ready', 'true', { timeout: 20_000 });
-    await expect(a.getByTestId('card-left-hint')).toContainText('→ Ben');
+    await expect(a.getByTestId('item-left-hint')).toContainText('→ Ben');
     await a.getByTestId('stat-power').click(); // focus off the slider
     await a.keyboard.press('p');
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-flying', 'throw:bottle', {
+      timeout: 2_000,
+    });
 
     // Ben's screen: the notice, the effect, the scene; his race position drops.
-    await expect(b.getByTestId('card-notice')).toContainText('Anna played Headwind on you', {
+    await expect(b.getByTestId('rumble-notice')).toContainText('Anna got you with a water bottle', {
       timeout: 10_000,
     });
-    await expect(b.getByTestId('card-hand')).toHaveAttribute('data-attack', 'headwind');
-    await expect(b.getByTestId('card-attack')).toContainText('from Anna');
-    await expect(b.getByTestId('ride-scene')).toHaveAttribute('data-cards', /headwind/, {
+    await expect(b.getByTestId('item-slots')).toHaveAttribute('data-hit', 'bottle');
+    await expect(b.getByTestId('rumble-hit')).toContainText('from Anna');
+    await expect(b.getByTestId('ride-scene')).toHaveAttribute('data-rumble', /bottle/, {
       timeout: 5_000,
     });
-    await expect(a.getByTestId('card-notice')).toContainText('Headwind hit Ben', {
+    await expect(a.getByTestId('rumble-notice')).toContainText('Your water bottle got Ben', {
       timeout: 10_000,
     });
-    await expect(b.getByTestId('card-race-line')).toContainText('from attacks', {
+    await expect(b.getByTestId('rumble-race-line')).toContainText('from hits', {
       timeout: 20_000,
     });
     // Then protection.
-    await expect(b.getByTestId('card-protection')).toBeVisible({ timeout: 15_000 });
+    await expect(b.getByTestId('rumble-protection')).toBeVisible({ timeout: 15_000 });
+
+    // 2) Ben drops a mud puddle behind him (his left slot, P); Anna rides into it.
+    const benLeft = b.getByTestId('item-left');
+    await expect(benLeft).toHaveAttribute('data-kind', 'puddle', { timeout: 30_000 });
+    await expect(benLeft).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+    // Anna catches up a little faster from here, so she reaches the puddle well within its life.
+    await a.getByTestId('sim-effort').fill('360');
+    await b.getByTestId('stat-power').click();
+    await b.keyboard.press('p');
+    await expect(b.getByTestId('rumble-notice')).toContainText('Mud puddle dropped behind you', {
+      timeout: 5_000,
+    });
+    // Anna sees it on the road ahead of her, then rides through it.
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-puddle-ahead', /\d+/, {
+      timeout: 10_000,
+    });
+    await expect(a.getByTestId('rumble-notice')).toContainText(
+      'You rode through Ben’s mud puddle',
+      {
+        timeout: 45_000,
+      },
+    );
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-hit', 'puddle');
+    await expect(b.getByTestId('rumble-notice')).toContainText(
+      'Anna rode through your mud puddle',
+      {
+        timeout: 10_000,
+      },
+    );
+    // Used up: it is gone from Anna's road.
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-puddle-ahead', '', {
+      timeout: 5_000,
+    });
 
     expect(anna.errors).toEqual([]);
     expect(ben.errors).toEqual([]);
