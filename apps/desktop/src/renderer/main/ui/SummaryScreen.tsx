@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import type { RideBest } from '../appStore';
-import { formatRaceGain } from '../../../shared/powerUps';
+import {
+  CARD_RACE_NAME,
+  formatAttackLoss,
+  formatCardGain,
+  formatRaceGain,
+} from '../../../shared/powerUps';
 import { formatDistance, formatDuration } from './format';
 import { FtpOutcomeCard } from './FtpOutcome';
 import { useApp, useAppState } from './hooks';
@@ -109,7 +114,22 @@ export function SummaryScreen({ onDone, onAgain }: { onDone: () => void; onAgain
         </div>
       </dl>
 
-      {(summary.powerUpGainM ?? 0) > 0 && (
+      {summary.cards && (summary.cards.gainM > 0 || summary.cards.lossM < 0) ? (
+        <p className="hint summary-powerups" data-testid="summary-cards">
+          {summary.cards.gainM > 0 && (
+            <strong data-testid="summary-cards-gain">{formatCardGain(summary.cards.gainM)}</strong>
+          )}
+          {summary.cards.gainM > 0 && summary.cards.lossM < 0 && ' and '}
+          {summary.cards.lossM < 0 && (
+            <strong data-testid="summary-cards-loss">
+              {formatAttackLoss(summary.cards.lossM)}
+            </strong>
+          )}
+          {` in your race position (${CARD_RACE_NAME}). Time, distance, points and bests count your own riding only.`}
+        </p>
+      ) : null}
+
+      {!summary.cards && (summary.powerUpGainM ?? 0) > 0 && (
         <p className="hint summary-powerups" data-testid="summary-powerups">
           <strong>{formatRaceGain(summary.powerUpGainM ?? 0)}</strong> in your race position. Time,
           distance, points and bests count your own riding only.

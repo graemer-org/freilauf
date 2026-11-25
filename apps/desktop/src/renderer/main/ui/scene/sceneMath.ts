@@ -1,3 +1,5 @@
+import type { RiderCards } from '@freilauf/p2p';
+import { riderFx, type RiderFx } from './powerUpScene';
 /**
  * Pure maths behind the ride scene: easing, gradient exaggeration, wheel and
  * crank integration, parallax, the elevation history and lateral steering.
@@ -313,6 +315,8 @@ export interface PlacedRider {
   speedMps: number;
   cadenceRpm: number;
   stale: boolean;
+  /** Card Race effects on that rider (their shield, an attack, protection), if any. */
+  fx?: RiderFx;
 }
 
 /** Places other riders for the scene; nearest first so close riders draw on top. */
@@ -324,6 +328,7 @@ export function placeRiders(
     speedMps: number;
     cadenceRpm: number;
     stale: boolean;
+    cards?: RiderCards;
   }[],
 ): PlacedRider[] {
   const out: PlacedRider[] = [];
@@ -338,6 +343,7 @@ export function placeRiders(
       speedMps: r.speedMps,
       cadenceRpm: r.cadenceRpm,
       stale: r.stale,
+      ...(r.cards && riderFx(r.cards) ? { fx: riderFx(r.cards) } : {}),
     });
   }
   // Farthest first: drawn first, so nearer riders end up in front.

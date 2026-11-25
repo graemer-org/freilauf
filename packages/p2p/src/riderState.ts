@@ -1,5 +1,5 @@
 import { sanitizeName } from './signalling/channel';
-import type { GroupRider, GroupRules, RiderRoute, RiderState } from './types';
+import type { GroupRider, GroupRules, RiderCards, RiderRoute, RiderState } from './types';
 
 /** No update for this long -> `stale: true`. */
 export const STALE_AFTER_MS = 3_000;
@@ -26,7 +26,65 @@ export const RIDER_STATE_LIMITS = {
   routeM: [0, 1_000_000],
   /** Power-up gains are tens of metres per use; anything beyond this is not believable. */
   raceOffsetM: [0, 100_000],
+  /** Card Race: the signed offset (attacks cost tens of metres each). */
+  cardOffsetM: [-100_000, 100_000],
+  /** Card Race timers (attack, shield, protection), seconds. */
+  cardTimerS: [0, 600],
+  cardsHeld: [0, 8],
+  cardsVersion: [1, 1_000],
 } as const;
+
+/** Card kinds on the wire: a short camelCase word (the app checks it is one it knows). */
+export const CARD_KIND_PATTERN = /^[a-z][a-zA-Z]{0,23}$/;
+
+/** Validates the optional `cards` field; undefined when malformed (the packet is dropped). */
+function sanitizeCards(value: unknown): RiderCards | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const c = value as Record<string, unknown>;
+  const L = RIDER_STATE_LIMITS;
+  const v = c['v'];
+  if (!inRange(v, L.cardsVersion) || !Number.isInteger(v)) return undefined;
+  const out: RiderCards = { v };
+  const offsetM = c['offsetM'];
+  if (offsetM !== undefined) {
+    if (!inRange(offsetM, L.cardOffsetM)) return undefined;
+    out.offsetM = offsetM;
+  }
+  const attack = c['attack'];
+  if (attack !== undefined) {
+    if (typeof attack !== 'object' || attack === null || Array.isArray(attack)) return undefined;
+    const { kind, s } = attack as Record<string, unknown>;
+    if (typeof kind !== 'string' || !CARD_KIND_PATTERN.test(kind) || !inRange(s, L.cardTimerS)) {
+      return undefined;
+    }
+    out.attack = { kind, s };
+  }
+  for (const key of ['shieldS', 'protectedS'] as const) {
+    const t = c[key];
+    if (t === undefined) continue;
+    if (!inRange(t, L.cardTimerS)) return undefined;
+    out[key] = t;
+  }
+  const held = c['held'];
+  if (held !== undefined) {
+    if (!inRange(held, L.cardsHeld)) return undefined;
+    out.held = Math.round(held);
+  }
+  const away = c['away'];
+  if (away !== undefined) {
+    if (typeof away !== 'boolean') return undefined;
+    if (away) out.away = true;
+  }
+  return out;
+}
+
+/** A rider's race offset: the signed Card Race one when sent, else the power-up one (≥ 0). */
+export function raceOffsetOf(state: Pick<RiderState, 'raceOffsetM' | 'cards'>): number {
+  const signed = state.cards?.offsetM;
+  if (signed !== undefined && Number.isFinite(signed)) return signed;
+  const plain = state.raceOffsetM ?? 0;
+  return Number.isFinite(plain) ? Math.max(0, plain) : 0;
+}
 
 /** Route ids as @freilauf/routes makes them (and its codec accepts). */
 const ROUTE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -85,9 +143,16 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
   if (v['rules'] !== undefined) {
     const r = v['rules'];
     if (typeof r !== 'object' || r === null || Array.isArray(r)) return null;
-    const { powerUps } = r as Record<string, unknown>;
+    const { powerUps, mode } = r as Record<string, unknown>;
     if (typeof powerUps !== 'boolean') return null;
     rules = { powerUps };
+    // A mode this client does not know is treated as absent (a normal ride).
+    if (mode === 'normal' || mode === 'cardRace') rules.mode = mode;
+  }
+  let cards: RiderCards | undefined;
+  if (v['cards'] !== undefined) {
+    cards = sanitizeCards(v['cards']);
+    if (!cards) return null;
   }
   return {
     name: sanitizeName(v['name']) || 'Rider',
@@ -101,6 +166,7 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     ...(route ? { route } : {}),
     ...(raceOffsetM !== undefined && raceOffsetM > 0 ? { raceOffsetM } : {}),
     ...(rules ? { rules } : {}),
+    ...(cards ? { cards } : {}),
   };
 }
 
@@ -201,7 +267,8 @@ export class RemoteRiders {
   /**
    * Remote riders at local time `now`, leader first. `gapM` is measured along the route for
    * riders on `localRoute` (same id), otherwise relative to `localDistanceM` (ridden distance).
-   * Both sides count their race offset (power-ups): `localRaceOffsetM` and each rider's own.
+   * Both sides count their race offset (power-ups, cards): `localRaceOffsetM` and each rider's
+   * own (`raceOffsetOf`). Either may be negative in a Card Race.
    */
   getRiders(
     now: number,
@@ -210,13 +277,13 @@ export class RemoteRiders {
     localRaceOffsetM = 0,
   ): GroupRider[] {
     const riders: GroupRider[] = [];
-    const localRace = Number.isFinite(localRaceOffsetM) ? Math.max(0, localRaceOffsetM) : 0;
+    const localRace = Number.isFinite(localRaceOffsetM) ? localRaceOffsetM : 0;
     const raceRoute =
-      localRoute && localRace > 0 ? { ...localRoute, m: localRoute.m + localRace } : localRoute;
+      localRoute && localRace !== 0 ? { ...localRoute, m: localRoute.m + localRace } : localRoute;
     for (const [peerId, track] of this.#tracks) {
       const s = track.state;
       const distanceM = displayedDistance(track, now);
-      const race = s.raceOffsetM ?? 0;
+      const race = raceOffsetOf(s);
       const routeGap =
         raceRoute && s.route && s.route.id === raceRoute.id
           ? // The route position moves with the (extrapolated, smoothed) distance.
@@ -233,7 +300,8 @@ export class RemoteRiders {
         gear: s.gear,
         gapM: routeGap ?? distanceM + race - (localDistanceM + localRace),
         ...(routeGap !== null ? { sameRoute: true } : {}),
-        ...(race > 0 ? { raceOffsetM: race } : {}),
+        ...(race !== 0 ? { raceOffsetM: race } : {}),
+        ...(s.cards ? { cards: s.cards } : {}),
         stale: now - track.receivedAt > STALE_AFTER_MS,
       });
     }

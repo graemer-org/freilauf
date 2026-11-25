@@ -3,7 +3,16 @@ import type { ConnectionState, DeviceKind } from '@freilauf/devices';
 import type { RideSnapshot } from '@freilauf/session';
 import type { Bounds, LiveState } from '../../../shared/contract';
 import type { PowerUpKind } from '../../../shared/powerUps';
-import { POWER_UP_INFO, POWER_UP_KEY } from '../../../shared/powerUps';
+import {
+  CARD_KEYS,
+  CARD_RACE_NAME,
+  FOG_GAP,
+  POWER_UP_INFO,
+  POWER_UP_KEY,
+  formatSignedM,
+  gapsHidden,
+} from '../../../shared/powerUps';
+import { formatGap } from '../../main/ui/format';
 
 export const MIN_WIDTH = 160;
 export const MIN_HEIGHT = 80;
@@ -127,6 +136,8 @@ export interface GroupRow {
   key: string;
   name: string;
   gapM: number;
+  /** The gap as shown: "+12 m", or "?" while Fog lies on the local rider (Card Race). */
+  gapText: string;
   powerW: number;
   heartRateBpm: number | null;
   stale: boolean;
@@ -139,10 +150,12 @@ export interface GroupRow {
  */
 export function groupRows(live: LiveState, max = MAX_GROUP_ROWS): GroupRow[] {
   const riders = live.group?.riders ?? [];
+  const fog = gapsHidden(live.powerUps);
   const rows: GroupRow[] = riders.map((r) => ({
     key: r.peerId,
     name: r.name,
     gapM: Number.isFinite(r.gapM) ? r.gapM : 0,
+    gapText: fog ? FOG_GAP : formatGap(Number.isFinite(r.gapM) ? r.gapM : 0),
     powerW: r.powerW,
     heartRateBpm: r.heartRateBpm,
     stale: r.stale,
@@ -152,6 +165,7 @@ export function groupRows(live: LiveState, max = MAX_GROUP_ROWS): GroupRow[] {
     key: '__local__',
     name: live.localName,
     gapM: 0,
+    gapText: formatGap(0),
     powerW: live.ride.powerW,
     heartRateBpm: live.ride.heartRateBpm,
     stale: false,
@@ -264,18 +278,108 @@ export function routeStrip(route: LiveState['route']): RouteStrip | null {
 
 /** One compact power-up line for the overlay: what is held, running or asked for. */
 export interface PowerUpPill {
-  key: 'challenge' | 'effect' | 'held';
+  key: 'challenge' | 'effect' | 'held' | 'attack' | 'hand' | 'guard';
   kind: PowerUpKind | null;
   text: string;
   /** Quieter second part, e.g. "212 W now", "+38 m". */
   detail: string;
   /** Highlighted (a power-up ready to use, a target being met). */
   active: boolean;
+  /** Card Race: the colour of the marker (the text says what it is too). */
+  tone?: 'attack' | 'guard';
+}
+
+/** The group panel's heading in a Card Race (absent in a normal ride). */
+export function groupModeLabel(live: LiveState | null): string | null {
+  return live?.group?.mode === 'cardRace' ? CARD_RACE_NAME : null;
+}
+
+/**
+ * The Card Race in the overlay (at most four pills): an attack acting on the rider, the hand
+ * ("L Headwind · R Shield", with the keys when one can be played), the own boost or the
+ * challenge, and the shield or protection; the race offset rides along once.
+ */
+export function cardPills(pu: LiveState['powerUps']): PowerUpPill[] {
+  const c = pu?.cards;
+  if (!pu || !c) return [];
+  const out: PowerUpPill[] = [];
+  if (c.attack) {
+    const name = POWER_UP_INFO[c.attack.kind].label;
+    out.push({
+      key: 'attack',
+      kind: c.attack.kind,
+      text: `${name} from ${c.attack.by}`,
+      detail: c.attack.kind === 'fog' ? 'gaps hidden' : `${Math.ceil(c.attack.remainingS)} s`,
+      active: true,
+      tone: 'attack',
+    });
+  }
+  const label = (k: PowerUpKind | null) => (k ? POWER_UP_INFO[k].label : '–');
+  const ready = c.slots.map((k, i) => k !== null && c.slotNotes[i] === null);
+  out.push({
+    key: 'hand',
+    kind: c.slots[0] ?? c.slots[1] ?? null,
+    text: `L ${label(c.slots[0] ?? null)} · R ${label(c.slots[1] ?? null)}`,
+    detail:
+      ready[0] && ready[1]
+        ? `${CARD_KEYS.left} / ${CARD_KEYS.right}`
+        : ready[0]
+          ? CARD_KEYS.left
+          : ready[1]
+            ? CARD_KEYS.right
+            : '',
+    active: ready.some(Boolean),
+  });
+  const offset = Math.round(pu.raceOffsetM) !== 0 ? formatSignedM(pu.raceOffsetM) : '';
+  const guard: PowerUpPill | null = c.shield
+    ? {
+        key: 'guard',
+        kind: 'shield',
+        text: `Shield up · ${Math.ceil(c.shield.remainingS)} s`,
+        detail: '',
+        active: true,
+        tone: 'guard',
+      }
+    : c.protection
+      ? {
+          key: 'guard',
+          kind: null,
+          text: `Protected · ${Math.ceil(c.protection.remainingS)} s`,
+          detail: '',
+          active: true,
+          tone: 'guard',
+        }
+      : null;
+  if (pu.challenge) {
+    out.push({
+      key: 'challenge',
+      kind: null,
+      text: `Hold ${pu.challenge.targetW} W · ${Math.ceil(pu.challenge.remainingS)} s`,
+      detail: `${pu.challenge.powerW} W now`,
+      active: pu.challenge.powerW >= pu.challenge.targetW * 0.95,
+    });
+  } else if (pu.effect) {
+    out.push({
+      key: 'effect',
+      kind: pu.effect.kind,
+      text:
+        pu.effect.phase === 'armed'
+          ? `${POWER_UP_INFO[pu.effect.kind].label} · armed`
+          : `${POWER_UP_INFO[pu.effect.kind].label} · ${Math.ceil(pu.effect.remainingS)} s`,
+      detail: offset,
+      active: pu.effect.phase === 'active',
+    });
+  } else if (offset && !guard) {
+    out.push({ key: 'effect', kind: null, text: 'Race', detail: offset, active: false });
+  }
+  if (guard) out.push({ ...guard, detail: out.some((p) => p.detail === offset) ? '' : offset });
+  return out.slice(0, 4);
 }
 
 /** What the overlay shows about power-ups (at most two pills); [] without any. */
 export function powerUpPills(pu: LiveState['powerUps']): PowerUpPill[] {
   if (!pu) return [];
+  if (pu.cards) return cardPills(pu);
   const out: PowerUpPill[] = [];
   const ch = pu.challenge;
   if (ch) {

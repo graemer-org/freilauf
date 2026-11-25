@@ -27,7 +27,15 @@ import {
 } from './roadMath';
 import { formatGrade, hash01, valueNoise } from './sceneMath';
 import type { GradeSign } from './routeSample';
-import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
+import { GATE_DRAW_M, type PowerUpSceneFrame, type RiderFx } from './powerUpScene';
+import {
+  drawGustsRoad,
+  drawHaze,
+  drawProtection,
+  drawPulse,
+  drawRiderFx,
+  drawShield,
+} from './cardFx';
 
 const TAU = Math.PI * 2;
 /** Fog levels (each is one batch of fills). */
@@ -53,6 +61,8 @@ export interface RoadRider {
   gapM: number;
   stale: boolean;
   crank: number;
+  /** Card Race effects on that rider, if any. */
+  fx?: RiderFx;
 }
 
 export interface RoadFrame {
@@ -78,6 +88,8 @@ export interface RoadFrame {
   reducedMotion: boolean;
   /** Power-up gates ahead and the effect in progress (absent: none). */
   powerUps?: PowerUpSceneFrame;
+  /** Card Race: Fog on the local rider hides the gaps in the name labels. */
+  hideGaps?: boolean;
 }
 
 interface FogColours {
@@ -274,6 +286,7 @@ export class RoadRenderer {
     if (pu) this.auraBehind(f, pu, p);
     this.localRider(f);
     if (pu) this.auraFront(f, pu, p);
+    if (pu?.cards) this.cardsLocal(f, pu, p);
     this.hud(f, p);
 
     if (f.state === 'paused') this.pill('Paused', p, true);
@@ -690,7 +703,21 @@ export class RoadRenderer {
         this.riderFromBehind(this.a.x, this.a.y, ppm, 0, o.crank, 0, 0, colours, false);
       });
       ctx.globalAlpha = 1;
-      const label = o.gapM >= 100 ? `${o.name} · ${Math.round(o.gapM)} m` : o.name;
+      if (o.fx) {
+        drawRiderFx(
+          ctx,
+          p,
+          o.fx,
+          this.a.x,
+          this.a.y - 0.9 * ppm,
+          ppm,
+          f.powerUps?.timeS ?? 0,
+          f.reducedMotion,
+          'road',
+        );
+      }
+      const label =
+        o.gapM >= 100 ? `${o.name} · ${f.hideGaps ? '?' : `${Math.round(o.gapM)} m`}` : o.name;
       this.labels.push({ x: this.a.x, y: headY - 4, text: label, stale: o.stale });
     }
     // Names above the heads, nearest first; a name that would overlap a nearer one is left out.
@@ -1124,6 +1151,32 @@ export class RoadRenderer {
         ctx.stroke();
       }
       ctx.restore();
+    }
+  }
+
+  /**
+   * Card Race on the local rider, seen from behind: Headwind's gusts coming out of the distance
+   * and parting around the rider, the Shield's bubble, the protection ring, the hit pulse, and
+   * Fog's haze over the view.
+   */
+  private cardsLocal(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const c = pu.cards!;
+    const ppm = this.riderPoint(f);
+    if (ppm === 0) return;
+    const ctx = this.ctx;
+    const x = this.c.x;
+    const y = this.c.y - 0.9 * ppm;
+    const hy = horizonLine(this.vp, f.camera);
+    if (c.attack === 'fog') drawHaze(ctx, p, this.w, this.h, hy + (this.h - hy) * 0.35, 0.95);
+    if (c.attack === 'headwind') {
+      drawGustsRoad(ctx, p, x, y, ppm, pu.timeS, f.reducedMotion);
+    }
+    // Around the rider seen from behind: narrow and tall (shoulders to wheels).
+    const cy = this.c.y - 0.82 * ppm;
+    if (c.shield) drawShield(ctx, p, x, cy, 0.6 * ppm, 0.95 * ppm);
+    if (c.protection >= 0) drawProtection(ctx, p, x, cy, 0.68 * ppm, 1.02 * ppm, c.protection);
+    if (c.pulse >= 0 && c.pulseKind) {
+      drawPulse(ctx, p, x, cy, 0.75 * ppm, c.pulse, c.pulseKind, f.reducedMotion);
     }
   }
 

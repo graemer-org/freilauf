@@ -21,6 +21,9 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
     setLocalState: ({ name: _name, ...state }) => void ride.setLocalState(state),
     getRiders: () => ride.getRiders(),
     getRules: () => ride.getRules(),
+    sendAttack: (to, payload) => ride.sendAttack(to, payload),
+    onAttackResult: (listener) => ride.onAttackResult(listener),
+    setAttackHandler: (handler) => ride.setAttackHandler(handler),
     leave: () => ride.leave(),
 
     shareWorkout: (text) => {

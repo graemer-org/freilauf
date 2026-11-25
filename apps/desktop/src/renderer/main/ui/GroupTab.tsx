@@ -22,7 +22,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatGap, formatSpeed } from './format';
 import { startTogetherAction } from './groupShare';
 import { useApp, useAppState } from './hooks';
-import { GroupPowerUps } from './PowerUpSettings';
+import { GroupModeRow, ModeChoice } from './GroupMode';
+import { FOG_GAP, POWER_UP_INFO, gapsHidden } from '../../../shared/powerUps';
+import type { RiderCards } from '@freilauf/p2p';
 
 /**
  * Where the group UI is shown: its own page (`full`), compact on the start screen (`start`), or
@@ -73,10 +75,23 @@ interface Row {
   speedMps: number;
   stale: boolean;
   local: boolean;
+  cards?: RiderCards;
+}
+
+/** What acts on a rider in a Card Race, in a word or two (from their own broadcast). */
+function fxTag(cards: RiderCards | undefined): string | null {
+  if (!cards) return null;
+  const k = cards.attack?.kind;
+  if (k === 'headwind' || k === 'fog') return POWER_UP_INFO[k].label;
+  if ((cards.shieldS ?? 0) > 0) return 'Shield';
+  if ((cards.protectedS ?? 0) > 0) return 'Protected';
+  return null;
 }
 
 function RiderTable() {
   const riders = useAppState((s) => s.live?.group?.riders ?? null);
+  // Card Race: Fog on this rider hides the gaps (their own screen only).
+  const fog = useAppState((s) => gapsHidden(s.live?.powerUps));
   // One shallow-compared object instead of the whole (4 Hz) ride snapshot.
   const me = useAppState(
     useShallow((s) => ({
@@ -96,6 +111,7 @@ function RiderTable() {
       speedMps: r.speedMps,
       stale: r.stale,
       local: false,
+      ...(r.cards ? { cards: r.cards } : {}),
     }));
     list.push({ key: '__local', ...me, gapM: 0, stale: false, local: true });
     // Ahead first; the local rider goes before others at an equal gap.
@@ -103,7 +119,7 @@ function RiderTable() {
   }, [riders, me]);
 
   return (
-    <table className="riders" data-testid="group-riders">
+    <table className="riders" data-testid="group-riders" data-fog={fog ? 'true' : undefined}>
       <thead>
         <tr>
           <th scope="col" className="num">
@@ -136,8 +152,15 @@ function RiderTable() {
               {r.name}
               {r.local && <span className="tag">you</span>}
               {r.stale && <span className="tag">no signal</span>}
+              {fxTag(r.cards) && (
+                <span className="rider-fx" data-testid="group-rider-fx">
+                  {fxTag(r.cards)}
+                </span>
+              )}
             </td>
-            <td className="num">{formatGap(r.gapM)}</td>
+            <td className={fog && !r.local ? 'num gap-fog' : 'num'} data-testid="group-rider-gap">
+              {fog && !r.local ? FOG_GAP : formatGap(r.gapM)}
+            </td>
             <td className="num">{Math.round(r.powerW)} W</td>
             <td className="num">
               {r.heartRateBpm === null ? '–' : `${Math.round(r.heartRateBpm)}`}
@@ -452,6 +475,7 @@ function GroupStart({ ownServer, variant }: { ownServer: string | null; variant:
         )}
         <div className="group-start-row">
           <div className="group-start-create">
+            <ModeChoice />
             <button
               type="button"
               className="btn btn-primary"
@@ -481,6 +505,7 @@ function GroupStart({ ownServer, variant }: { ownServer: string | null; variant:
           Rides you create use your own server, <code>{serverLabel(ownServer)}</code>.
         </p>
       )}
+      <ModeChoice />
       <button
         type="button"
         className="btn btn-primary btn-big"
@@ -737,8 +762,8 @@ export function GroupTab({
             roomCode={group.roomCode}
             transport={group.transport}
           />
+          <GroupModeRow role={group.role} />
           {variant !== 'start' && <RiderTable />}
-          {variant !== 'start' && <GroupPowerUps role={group.role} />}
           {variant !== 'full' && <StartTogether />}
         </section>
       )}

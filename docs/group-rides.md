@@ -13,6 +13,7 @@ account. This page is for riders; the protocol and the code are described in
 
 - [Start a ride and invite friends](#start-a-ride-and-invite-friends)
 - [Join a friend's ride](#join-a-friends-ride)
+- [Card Race](#card-race)
 - [How it works](#how-it-works)
 - [Privacy: what the relay servers see](#privacy-what-the-relay-servers-see)
 - [When it does not work](#when-it-does-not-work)
@@ -53,6 +54,17 @@ are not changed.
 
 Clicking the link does not open Freilauf yet — copy it and paste it under **Group ride** on the
 start screen.
+
+## Card Race
+
+Whoever creates the ride can make it a **Card Race** instead of a normal ride: choose **Card
+Race** above **Create group ride**. Everyone then holds two cards, played with the left and
+right side buttons (P and L): boosts for yourself, a **Headwind** for the rider directly ahead,
+**Fog** for the leader, a **Shield**. Attacks are short, every hit is followed by protection, and
+only race positions move — recorded rides and the trainer's resistance never change. Everyone
+in the room sees the mode; the host can switch it at any time. A rider whose app has no Card
+Race is named in the room and rides along with normal power-ups. All about it:
+[card-race.md](card-race.md).
 
 ## How it works
 

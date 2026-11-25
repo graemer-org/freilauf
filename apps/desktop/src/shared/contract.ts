@@ -11,7 +11,7 @@ import type {
 import type { GroupRider } from '@freilauf/p2p';
 import type { RoutePosition } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
-import type { PowerUpLive } from './powerUps';
+import type { GroupMode, PowerUpLive } from './powerUps';
 
 export type StatId =
   | 'power'
@@ -298,7 +298,8 @@ export interface DeviceStatus {
 export interface LiveState {
   ride: RideSnapshot;
   devices: Record<DeviceKind, DeviceStatus | null>;
-  group: { roomCode: string; riders: GroupRider[] } | null;
+  /** `mode`: how the group ride plays (the host's choice; absent = normal). */
+  group: { roomCode: string; riders: GroupRider[]; mode?: GroupMode } | null;
   localName: string;
   /** Present while a structured workout is loaded for the current ride. */
   workout?: WorkoutLive | null;

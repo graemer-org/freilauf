@@ -1,10 +1,11 @@
 import { memo, type CSSProperties, type PointerEventHandler } from 'react';
 import type { DeviceKind } from '@freilauf/devices';
 import type { LiveState, OverlaySettings, OverlayTile, StatId } from '../../../shared/contract';
-import { formatGap, statLabel, statUnit, statValue } from '../../main/ui/format';
+import { statLabel, statUnit, statValue } from '../../main/ui/format';
 import {
   PLACEHOLDER_LIVE,
   deviceWarnings,
+  groupModeLabel,
   groupRows,
   powerUpPills,
   routeStrip,
@@ -67,10 +68,15 @@ function fmtNum(n: number | null): string {
   return n == null || !Number.isFinite(n) ? PLACEHOLDER : String(Math.round(n));
 }
 
-function GroupPanel({ rows }: { rows: GroupRow[] }) {
+function GroupPanel({ rows, mode }: { rows: GroupRow[]; mode: string | null }) {
   return (
     <div className="ov-group" data-testid="overlay-group">
       <div className="ov-backdrop" aria-hidden="true" />
+      {mode ? (
+        <div className="ov-g-mode ov-text" data-testid="overlay-group-mode">
+          {mode}
+        </div>
+      ) : null}
       <ol className="ov-group-list">
         {rows.map((r) => (
           <li
@@ -83,7 +89,7 @@ function GroupPanel({ rows }: { rows: GroupRow[] }) {
             data-local={r.local ? 'true' : undefined}
           >
             <span className="ov-g-name ov-text">{r.name}</span>
-            <span className="ov-g-gap ov-text">{formatGap(r.gapM)}</span>
+            <span className="ov-g-gap ov-text">{r.gapText}</span>
             <span className="ov-g-num ov-text">
               {fmtNum(r.powerW)}
               <small>W</small>
@@ -215,7 +221,7 @@ export function OverlayView({
             {pills.map((pill) => (
               <div
                 key={pill.key}
-                className={`ov-powerup${pill.active ? ' ov-powerup--active' : ''}`}
+                className={`ov-powerup${pill.active ? ' ov-powerup--active' : ''}${pill.tone ? ` ov-powerup--${pill.tone}` : ''}`}
                 data-testid={`overlay-powerup-${pill.key}`}
                 data-kind={pill.kind ?? undefined}
               >
@@ -246,7 +252,7 @@ export function OverlayView({
           </div>
         ) : null}
 
-        {rows ? <GroupPanel rows={rows} /> : null}
+        {rows ? <GroupPanel rows={rows} mode={groupModeLabel(live)} /> : null}
       </div>
 
       {editMode ? (
