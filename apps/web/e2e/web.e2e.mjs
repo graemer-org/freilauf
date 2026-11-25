@@ -167,10 +167,22 @@ async function rideAndExport(browser, base) {
   results.push(`INFO  Bluetooth notice on ${base}: ${noticeReason}`);
 
   await page.getByTestId('start-riding').click();
+  // The countdown before the start (default 3 s), then the ride records on its own.
+  const counted = await page
+    .getByTestId('ride-countdown')
+    .waitFor({ timeout: 2_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('Start riding: the countdown before the start shows', counted);
+  const riding = await page
+    .locator('[data-testid="ride-state"][data-state="riding"]')
+    .waitFor({ timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
   const power = await waitForText(page, 'stat-power', /[1-9]\d+/);
   check(
-    'Start riding: one click to a running ride with live power',
-    (await page.getByTestId('ride-state').getAttribute('data-state')) === 'riding',
+    'Start riding: one click to a running ride with live power (after the countdown)',
+    riding && (await page.getByTestId('ride-countdown').count()) === 0,
     power.replace(/\s+/g, ' '),
   );
   check(

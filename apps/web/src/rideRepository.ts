@@ -55,6 +55,7 @@ export function summarize(ride: RecordedRide, finished: boolean): RideListItem {
     durationS: summary.durationS,
     distanceM: summary.distanceM,
     avgPowerW: summary.avgPowerW,
+    ...(summary.caloriesKcal > 0 ? { kcal: Math.round(summary.caloriesKcal) } : {}),
     finished,
   };
 }

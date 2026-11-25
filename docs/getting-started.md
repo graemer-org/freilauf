@@ -62,21 +62,36 @@ Freilauf opens on the **start screen**, which asks one question: _What are you r
   ([Ride with friends](group-rides.md)).
 - **Devices:** one line at the bottom shows trainer, heart rate and controllers; click it for
   pairing. Without a trainer a warning says so — you can still start, power then reads 0.
-- **Start riding** starts the ride at once. Someone who changes nothing presses only this.
+- **Start riding** starts the ride. Someone who changes nothing presses only this.
 
 **The first time only**, the start screen also asks for your **name** (other riders see it in
 group rides), your **weight** and your **FTP** (workouts are scaled by it). _I don't know my
 FTP_ keeps 200 W and points to the FTP test card. Answer or skip — it is never asked again; the
 same values (and the bike's mass) are in **Settings → Rider**.
 
+**A countdown before the ride starts** gives you a moment to sit down properly: after **Start
+riding** (and **Start** or **Resume** in the ride view, <kbd>Space</kbd>, the controller's
+start/pause button, **Ride again**) big digits count down 3, 2, 1 in the ride view and on the
+overlay, and only at zero do time and recording begin — a workout's first step, an ERG target
+and the route start then too. Meanwhile the trainer keeps its current resistance, so you can
+pedal to warm up. Pausing is immediate; resuming counts down again. Pressing Start again,
+<kbd>Space</kbd> or <kbd>Esc</kbd> cancels the countdown. Its length — off, 3, 5 or 10 seconds
+— is in **Settings → Ride**. In a group ride, **Start together** shows the same countdown for
+everyone and starts the ride at zero without a second one.
+
 **After Finish** a short summary shows time, distance, average power, the points of this ride and
 of the week, new personal bests, and — after an FTP test — the result with **Save as my FTP**.
 **Export .fit**, **Ride again** or **Done** (back to the start screen).
 
+**Calories** count up live under the power and are in the summary, the ride list and the `.fit`
+file: kcal from your measured power, plus a heart-rate cross-check when you add your (optional)
+age and sex in **Settings → Rider**, and a rough fat / carbohydrate split. How they are computed
+and how accurate they are: [Energy: calories, fat and carbohydrate](energy.md).
+
 Two quiet places are linked at the top of the start screen: **Activity** (your rides with
 `.fit` export, and the [community](community.md): week, leaderboard, challenges, friends) and
-**Settings** (rider, overlay, group options, route difficulty, diagnostics, and an _Advanced_
-section for rarely needed details).
+**Settings** (rider, the countdown before the start, overlay, group options, route difficulty,
+diagnostics, and an _Advanced_ section for rarely needed details).
 
 ## 4. Pair your devices
 

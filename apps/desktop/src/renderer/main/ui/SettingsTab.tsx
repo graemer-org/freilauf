@@ -1,8 +1,10 @@
 import { useId } from 'react';
 import type { OverlayTile, StatId } from '../../../shared/contract';
 import { ALL_STATS } from '../../../shared/contract';
+import { RiderEnergyFields } from './EnergyUi';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { PowerUpSettings } from './PowerUpSettings';
+import { RideSettings } from './RideSettings';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
 import { routeDifficultyOf, setRouteDifficulty } from './routesApi';
@@ -256,8 +258,11 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
             }
             onCommit={(v) => v !== null && update({ rider: { ftpW: Math.round(v) } })}
           />
+          <RiderEnergyFields rider={rider} />
         </div>
       </section>
+
+      <RideSettings />
 
       <section className="settings-section" aria-labelledby="set-overlay">
         <h2 id="set-overlay" className="section-title section-head">

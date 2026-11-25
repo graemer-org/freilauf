@@ -18,7 +18,7 @@ import type {
 } from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
 import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
-import type { RecordedRide, RideSnapshot } from '@freilauf/session';
+import type { EnergyTotals, RecordedRide, RideSnapshot } from '@freilauf/session';
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
 import { DEFAULT_BIKE, SoftwareShifter } from '@freilauf/sim';
@@ -34,7 +34,9 @@ import {
 import type {
   DeviceStatus,
   FtpTestOutcome,
+  LiveEnergy,
   LiveState,
+  RideCountdown,
   RouteControl,
   Settings,
   WorkoutLive,
@@ -93,7 +95,12 @@ export interface RideControllerOptions {
   onError?: (message: string) => void;
   /** Diagnostic log (source "ride"). */
   log?: ScopedLog;
+  /** Called right before a new ride starts (not on resume), whichever way it was started. */
+  onRideStart?: () => void;
 }
+
+/** What `requestStart` did. */
+export type StartRequest = 'counting' | 'started' | 'cancelled' | 'ignored';
 
 /** Where a gear change came from, for the diagnostic log. */
 export type ShiftSource = 'ui' | 'keyboard' | `button:${string}` | (string & {});
@@ -234,6 +241,10 @@ export class RideController {
   #race: LocalRace = { distanceM: 0, offsetM: 0, route: null };
   /** Whether the last tick was a Card Race (for the broadcast and the handler). */
   #cardRace = false;
+  /** A countdown before the ride starts or resumes (see requestStart); null when none runs. */
+  #countdown: { kind: RideCountdown['kind']; endsAt: number; totalS: number } | null = null;
+  /** The live state last published, to show a countdown change at once (between ticks). */
+  #lastLive: LiveState | null = null;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -595,11 +606,94 @@ export class RideController {
     return true;
   }
 
+  /**
+   * Start / Resume as the rider asks for it (buttons, Space, the controller): with a countdown
+   * set (Settings.ride.countdownS) the ride starts or resumes when it reaches zero; asked again
+   * while any countdown runs (also a group's), the countdown is cancelled instead.
+   */
+  requestStart(): StartRequest {
+    if (this.#countdown) {
+      this.cancelCountdown();
+      return 'cancelled';
+    }
+    const state = this.#session.state;
+    if (state === 'riding') return 'ignored';
+    const seconds = this.#settings.ride?.countdownS ?? 0;
+    if (seconds <= 0) {
+      this.start();
+      return 'started';
+    }
+    this.#beginCountdown(state === 'paused' ? 'resume' : 'start', seconds * 1000);
+    return 'counting';
+  }
+
+  /** Start/pause as one action (Space, the controller's start/pause button). */
+  toggleStartPause(): StartRequest | 'paused' {
+    if (this.#session.state === 'riding') {
+      this.pause();
+      return 'paused';
+    }
+    return this.requestStart();
+  }
+
+  /**
+   * A synchronised group start in `ms` milliseconds: replaces a local countdown (they never
+   * stack) and starts the ride at zero without a countdown of its own. Only before a ride.
+   */
+  startGroupCountdown(ms: number): boolean {
+    if (this.#session.state !== 'idle') return false;
+    if (!(ms > 0)) {
+      this.start();
+      return true;
+    }
+    this.#beginCountdown('group', ms);
+    return true;
+  }
+
+  /** Stops a running countdown; nothing starts. Returns whether one was running. */
+  cancelCountdown(): boolean {
+    const countdown = this.#countdown;
+    if (!countdown) return false;
+    this.#countdown = null;
+    this.#log.info(`${countdown.kind} countdown cancelled`);
+    this.#republish();
+    return true;
+  }
+
+  /** The running countdown, as shown (null when none runs). */
+  get countdown(): RideCountdown | null {
+    const c = this.#countdown;
+    if (!c) return null;
+    const remainingS = Math.max(0, Math.round((c.endsAt - this.#now()) / 10) / 100);
+    return { kind: c.kind, remainingS, totalS: c.totalS };
+  }
+
+  #beginCountdown(kind: RideCountdown['kind'], ms: number): void {
+    this.#countdown = { kind, endsAt: this.#now() + ms, totalS: Math.ceil(ms / 1000) };
+    this.#log.info(`${kind} countdown`, { seconds: Math.ceil(ms / 1000) });
+    this.#republish();
+  }
+
+  /** Publishes the last live state again with the current countdown (no tick, no advance). */
+  #republish(): void {
+    const last = this.#lastLive;
+    if (!last) return;
+    const live: LiveState = { ...last };
+    delete live.countdown;
+    const countdown = this.countdown;
+    if (countdown) live.countdown = countdown;
+    this.#lastLive = live;
+    this.#options.onLive(live);
+  }
+
+  /** Starts (or resumes) the ride now, without a countdown. */
   start(): void {
+    this.#countdown = null;
     if (this.#session.state === 'paused') {
       this.#session.resume();
       this.#log.info('ride resumed');
     } else if (this.#session.state === 'idle') {
+      this.#options.onRideStart?.();
       this.#log.info('ride started', {
         workout: this.#plan?.workout.name ?? null,
         route: this.#route?.track.name ?? null,
@@ -641,14 +735,20 @@ export class RideController {
     }
   }
 
+  /** Pauses at once; a running countdown is cancelled instead. */
   pause(): void {
+    if (this.cancelCountdown()) return;
     if (this.#session.state === 'riding') this.#log.info('ride paused');
     this.#session.pause();
   }
 
   /** Ends the ride and saves it. Returns null if it was too short to keep. */
   async finish(): Promise<FinishedRide | null> {
-    if (this.#session.state === 'idle') return null;
+    this.#countdown = null;
+    if (this.#session.state === 'idle') {
+      this.#republish();
+      return null;
+    }
     const ride = this.#session.finish();
     const plan = this.#plan;
     const powerUps = this.#powerUps?.toLive() ?? null;
@@ -665,6 +765,9 @@ export class RideController {
     // The workout is done with; the next ride is a free ride unless one is chosen again.
     this.#plan = null;
     this.#shifter.resync(); // leave ERG: back to the simulated road
+    // Publish the finished (idle) state at once: the summary, shown as soon as the ride is
+    // saved, must not see a ride (or a countdown) still in progress from the last tick.
+    if (this.#lastLive) this.tick();
     const last = ride.samples.at(-1);
     const avg =
       ride.samples.length > 0
@@ -704,6 +807,9 @@ export class RideController {
 
   /** Advances the ride and publishes the live state. */
   tick(): LiveState {
+    // A countdown that reached zero starts (or resumes) the ride before this tick's advance,
+    // so time and distance count from zero; until then nothing advances or is recorded.
+    if (this.#countdown && this.#now() >= this.#countdown.endsAt) this.start();
     this.#session.setGear(this.#shifter.gear, this.#shifter.gearCount);
     const routePosition = this.#driveRoute();
     this.#session.setGradient(this.#gradePercent);
@@ -790,7 +896,11 @@ export class RideController {
       braking,
       ...(this.#route ? { route: routePosition, routeControl: this.#routeControl() } : {}),
       ...(powerUps ? { powerUps } : {}),
+      ...(ride.state !== 'idle' ? { energy: liveEnergy(this.#session.energy()) } : {}),
     };
+    const countdown = this.countdown;
+    if (countdown) live.countdown = countdown;
+    this.#lastLive = live;
     this.#options.onLive(live);
     return live;
   }
@@ -936,8 +1046,7 @@ export class RideController {
         this.setGradient(this.#gradePercent - 0.5);
         return;
       case 'startPause':
-        if (this.#session.state === 'riding') this.pause();
-        else this.start();
+        this.toggleStartPause();
         return;
       case 'workoutSkip':
         return this.skipWorkoutSegment();
@@ -1024,6 +1133,13 @@ export class RideController {
       riderMassKg: this.#settings.rider.massKg,
       now: this.#now,
       name,
+      // Energy estimates (docs/energy.md): FTP for the fat/carbohydrate split, age and sex for
+      // the heart-rate estimate.
+      energy: {
+        ftpW: this.#settings.rider.ftpW,
+        ageYears: this.#settings.rider.ageYears ?? null,
+        sex: this.#settings.rider.sex ?? null,
+      },
     });
   }
 
@@ -1292,4 +1408,16 @@ function round(n: number, digits: number): number {
 
 function status(device: Device | undefined): DeviceStatus | null {
   return device ? { name: device.name, state: device.state } : null;
+}
+
+/** The energy estimates as published in the live state (docs/energy.md). */
+function liveEnergy(e: EnergyTotals): LiveEnergy {
+  return {
+    kcal: e.kcal,
+    source: e.source,
+    kcalPower: e.kcalPower,
+    kcalHr: e.kcalHr,
+    fatG: e.fatG,
+    carbG: e.carbG,
+  };
 }

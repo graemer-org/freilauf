@@ -37,7 +37,8 @@ export function WorkoutBanner() {
   const ftpTest = useAppState((s) => s.live?.workout?.ftpTest);
   const rideIdle = useAppState((s) => s.live?.ride.state === 'idle');
   const inGroup = useAppState((s) => s.group.phase === 'joined');
-  const countdown = useAppState((s) => s.groupCountdownS);
+  // No "Start together" while any countdown runs (a group's or the local one before Start).
+  const countdown = useAppState((s) => s.live?.countdown ?? null);
   const startTogether = useMemo(() => startTogetherAction(app), [app]);
   if (name === null) return null;
   return (
@@ -70,25 +71,6 @@ export function WorkoutBanner() {
           Clear
         </button>
       </div>
-    </div>
-  );
-}
-
-/** Synchronised group start: a big, calm countdown. */
-export function GroupCountdown() {
-  const seconds = useAppState((s) => s.groupCountdownS);
-  if (seconds === null) return null;
-  const n = Math.max(0, Math.ceil(seconds));
-  return (
-    <div
-      className="wo-countdown card"
-      data-testid="group-countdown"
-      role="timer"
-      aria-live="polite"
-    >
-      <span className="tile-label">Starting together in</span>
-      <span className="wo-countdown-number">{n}</span>
-      <span className="hint">The ride starts on its own for everyone in the group.</span>
     </div>
   );
 }

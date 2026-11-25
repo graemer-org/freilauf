@@ -41,6 +41,11 @@ export interface RecordedRide {
   /** Unix epoch milliseconds. */
   startedAt: number;
   riderMassKg: number;
+  /**
+   * The rider's FTP (W) when the ride was recorded, for the fat/carbohydrate estimate
+   * (energy.ts). Absent in rides recorded before it was stored.
+   */
+  ftpW?: number;
   samples: RideSample[];
 }
 

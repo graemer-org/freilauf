@@ -28,7 +28,9 @@ export type StatId =
   | 'intervalRemaining'
   | 'routeRemaining'
   | 'ascentRemaining'
-  | 'elevation';
+  | 'elevation'
+  | 'calories'
+  | 'fatGrams';
 
 export const ALL_STATS: readonly StatId[] = [
   'power',
@@ -46,6 +48,8 @@ export const ALL_STATS: readonly StatId[] = [
   'routeRemaining',
   'ascentRemaining',
   'elevation',
+  'calories',
+  'fatGrams',
 ];
 
 export interface OverlayTile {
@@ -153,6 +157,9 @@ export const DEFAULT_LEVERS: LeverSettings = {
   deadzone: 0.05,
 };
 
+/** Rider sex for the heart-rate energy estimate; 'undisclosed' = prefer not to say. */
+export type RiderSex = 'female' | 'male' | 'undisclosed';
+
 export interface Settings {
   rider: {
     name: string;
@@ -160,6 +167,12 @@ export interface Settings {
     bikeMassKg: number;
     /** Functional threshold power in watts; workouts are scaled by it. */
     ftpW: number;
+    /**
+     * Optional, only for the heart-rate energy estimate (docs/energy.md): age in years
+     * (10–100) and sex. null = not given; then that estimate is not shown.
+     */
+    ageYears?: number | null;
+    sex?: RiderSex | null;
   };
   /** Devices to reconnect to on start. */
   devices: Partial<Record<DeviceKind, RememberedDevice>>;
@@ -195,6 +208,11 @@ export interface Settings {
   };
   /** Power-ups (docs/power-ups.md): never change the recording, only the race position. */
   powerUps: { enabled: boolean; challenges: boolean };
+  /** Riding: the countdown before a ride starts or resumes (docs/getting-started.md). */
+  ride: {
+    /** Seconds counted down after Start / Resume before time and recording begin; 0 = off. */
+    countdownS: CountdownSeconds;
+  };
   /** Share with my watch: publish the live values as Bluetooth sensors (docs/watch-relay.md). */
   watchRelay: WatchRelaySettings;
 }
@@ -235,7 +253,7 @@ export type WatchRelayStatus =
   | { state: 'error'; message: string; retrying: boolean };
 
 export const DEFAULT_SETTINGS: Settings = {
-  rider: { name: 'Rider', massKg: 75, bikeMassKg: 8, ftpW: 200 },
+  rider: { name: 'Rider', massKg: 75, bikeMassKg: 8, ftpW: 200, ageYears: null, sex: null },
   devices: {},
   shifting: {
     physicalRatio: 2.4,
@@ -273,6 +291,7 @@ export const DEFAULT_SETTINGS: Settings = {
   group: { useOwnServer: false, signallingUrl: '', relayUrls: [] },
   route: { difficulty: 100 },
   powerUps: { enabled: true, challenges: true },
+  ride: { countdownS: 3 },
   watchRelay: DEFAULT_WATCH_RELAY,
 };
 
@@ -292,6 +311,23 @@ export type DeepPartial<T> = T extends readonly unknown[]
 export interface DeviceStatus {
   name: string;
   state: ConnectionState;
+}
+
+/** The countdown lengths offered in Settings (0 = off). */
+export const COUNTDOWN_CHOICES = [0, 3, 5, 10] as const;
+export type CountdownSeconds = (typeof COUNTDOWN_CHOICES)[number];
+
+/**
+ * A countdown before the ride starts ('start'), resumes after a pause ('resume') or starts for
+ * everyone in a group ('group', the synchronised "Start together"). Nothing is recorded while
+ * it runs; the ride starts (or resumes) when it reaches zero.
+ */
+export interface RideCountdown {
+  kind: 'start' | 'resume' | 'group';
+  /** Seconds left (fractional; the digit shown is its ceiling). */
+  remainingS: number;
+  /** Seconds the countdown started from. */
+  totalS: number;
 }
 
 /** Everything the overlay renders; published by the main window ~4×/s. */
@@ -316,6 +352,23 @@ export interface LiveState {
   braking?: number;
   /** Power-ups of the current ride (docs/power-ups.md); absent before the ride starts. */
   powerUps?: PowerUpLive | null;
+  /** Energy estimates of the current ride so far (docs/energy.md); absent before the ride. */
+  energy?: LiveEnergy | null;
+  /** Present while a countdown runs before the ride starts or resumes. */
+  countdown?: RideCountdown | null;
+}
+
+/**
+ * Energy of the ride so far (EnergyTotals of @freilauf/session). `kcal` is the number to show
+ * (from power, else from heart rate); null = nothing to show.
+ */
+export interface LiveEnergy {
+  kcal: number | null;
+  source: 'power' | 'heartRate' | null;
+  kcalPower: number | null;
+  kcalHr: number | null;
+  fatG: number | null;
+  carbG: number | null;
 }
 
 /** How a loaded route drives the trainer. */
@@ -392,6 +445,11 @@ export interface RideListItem {
   durationS: number;
   distanceM: number;
   avgPowerW: number;
+  /**
+   * Energy from power in kcal (docs/energy.md); absent in lists saved before it existed and
+   * for rides without power.
+   */
+  kcal?: number;
   /** False while the ride is still an autosave of a session in progress or crashed. */
   finished: boolean;
 }

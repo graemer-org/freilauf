@@ -365,6 +365,8 @@ describe('RideController with the simulated rig', () => {
           ...DEFAULT_SETTINGS.shifting,
           buttons: { a: 'startPause', b: 'workoutSkip', y: 'intensityUp', z: 'intensityDown' },
         },
+        // The countdown has its own tests (rideController.countdown.test.ts).
+        ride: { countdownS: 0 },
       },
       onLive: (state) => (live = state),
       saveRide: async () => undefined,

@@ -32,7 +32,12 @@ test('cold start: one click from launch to riding; first-run asked until answere
       await expect(main.getByTestId('first-run')).toBeVisible();
       const clicks = await countClicks(main);
       await main.getByTestId('start-riding').click();
-      await expect(main.getByTestId('ride-state')).toHaveAttribute('data-state', 'riding');
+      // The countdown before the start (default 3 s), then riding without another click.
+      await expect(main.getByTestId('ride-countdown')).toBeVisible();
+      await expect(main.getByTestId('ride-state')).toHaveAttribute('data-state', 'riding', {
+        timeout: 8_000,
+      });
+      await expect(main.getByTestId('ride-countdown')).toHaveCount(0);
       await expect(main.getByTestId('stat-power')).toContainText(/[1-9]\d+/, { timeout: 15_000 });
       expect(await clicks()).toBe(1);
       await main.getByTestId('ride-pause').click();

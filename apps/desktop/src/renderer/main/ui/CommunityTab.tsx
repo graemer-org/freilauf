@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from 'react';
 import { useMemo, useRef } from 'react';
 import type { TotalsMetric } from '@freilauf/community';
+import { kcalFromWorkKj } from '@freilauf/session';
 import type { ContactView, LeaderboardPeriod } from '../../core/communityService';
 import { LEADERBOARD_PERIODS } from '../../core/communityService';
 import { DEFAULT_SETTINGS } from '../../../shared/contract';
@@ -78,16 +79,25 @@ export function Segmented<T extends string>({
 
 // ───────────── your week ─────────────
 
+/** Mechanical work → `≈ 1,234 kcal` (kJ ÷ (4.184 × 0.24), docs/energy.md). */
+function weekKcal(energyKj: number): string {
+  return `≈ ${KCAL_FORMAT.format(Math.round(kcalFromWorkKj(energyKj)))} kcal`;
+}
+const KCAL_FORMAT = new Intl.NumberFormat('en-GB');
+
 function Fact({
   label,
   metric,
   value,
   testId,
+  note,
 }: {
   label: string;
   metric: TotalsMetric;
   value: number;
   testId?: string;
+  /** A quiet second line, e.g. the energy in kcal. */
+  note?: { text: string; testId: string };
 }) {
   const p = metricParts(metric, value);
   return (
@@ -97,6 +107,11 @@ function Fact({
         <span className="cm-fact-number">{p.number}</span>
         {metric !== 'rides' && <span className="cm-fact-unit">{p.unit}</span>}
       </dd>
+      {note && (
+        <dd className="hint cm-fact-note" data-testid={note.testId}>
+          {note.text}
+        </dd>
+      )}
     </div>
   );
 }
@@ -131,7 +146,12 @@ function YourWeek({ onOpenFtpTests }: { onOpenFtpTests: (() => void) | undefined
           <Fact label="Distance" metric="distanceM" value={t.distanceM} />
           <Fact label="Time" metric="movingS" value={t.movingS} />
           <Fact label="Elevation" metric="elevationGainM" value={t.elevationGainM} />
-          <Fact label="Energy" metric="energyKj" value={t.energyKj} />
+          <Fact
+            label="Energy"
+            metric="energyKj"
+            value={t.energyKj}
+            note={{ text: weekKcal(t.energyKj), testId: 'community-week-kcal' }}
+          />
           <Fact label="Rides" metric="rides" value={t.rides} testId="community-week-rides" />
         </dl>
       </div>
@@ -139,6 +159,9 @@ function YourWeek({ onOpenFtpTests }: { onOpenFtpTests: (() => void) | undefined
         {monthName(month.startsAt)} so far: {metricParts('points', m.points).number} points ·{' '}
         {metricParts('distanceM', m.distanceM).number} km · {m.rides}{' '}
         {m.rides === 1 ? 'ride' : 'rides'}
+        {m.energyKj > 0 && (
+          <span data-testid="community-month-kcal"> · {weekKcal(m.energyKj)}</span>
+        )}
       </p>
       <div className="cm-explain">
         <p>

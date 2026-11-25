@@ -1,5 +1,7 @@
 import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
+import type { EnergyTotals } from './energy';
+import { EnergyAccumulator } from './energy';
 import type { RecordedRide, RideSample, RideSnapshot, RoutePositionFix } from './types';
 
 export interface RideSessionOptions {
@@ -10,6 +12,11 @@ export interface RideSessionOptions {
   now?: () => number;
   id?: string;
   name?: string;
+  /**
+   * For the energy estimates (energy.ts): FTP (stored with the ride), and age and sex for the
+   * heart-rate estimate (not stored). Absent = power-based kcal only, no fat/carbohydrate split.
+   */
+  energy?: { ftpW?: number | null; ageYears?: number | null; sex?: string | null };
 }
 
 /** Sensor values older than this are treated as "no signal" (device dropped). */
@@ -57,6 +64,8 @@ export class RideSession {
   #sampleTimeS = 0;
   #samples: RideSample[] = [];
   #positionAt: ((distanceM: number) => RoutePositionFix | null) | null = null;
+  readonly #ftpW: number | null;
+  readonly #energy: EnergyAccumulator;
 
   constructor(options: RideSessionOptions) {
     this.#bike = options.bike;
@@ -64,6 +73,19 @@ export class RideSession {
     this.#now = options.now ?? Date.now;
     this.id = options.id ?? `ride-${new Date(this.#now()).toISOString().replace(/[:.]/g, '-')}`;
     this.name = options.name ?? 'Free ride';
+    const ftpW = options.energy?.ftpW;
+    this.#ftpW = typeof ftpW === 'number' && Number.isFinite(ftpW) && ftpW > 0 ? ftpW : null;
+    this.#energy = new EnergyAccumulator({
+      massKg: options.riderMassKg,
+      ageYears: options.energy?.ageYears ?? null,
+      sex: options.energy?.sex ?? null,
+      ftpW: this.#ftpW,
+    });
+  }
+
+  /** Energy estimates over the samples recorded so far (the same as rideEnergy of the ride). */
+  energy(): EnergyTotals {
+    return this.#energy.totals();
   }
 
   setPower(watts: number): void {
@@ -151,6 +173,7 @@ export class RideSession {
       name: this.name,
       startedAt: this.#startedAt || this.#now(),
       riderMassKg: this.#riderMassKg,
+      ...(this.#ftpW !== null ? { ftpW: this.#ftpW } : {}),
       samples: [...this.#samples],
     };
   }
@@ -185,6 +208,7 @@ export class RideSession {
       remaining -= slice;
       if (slice >= untilNextSecond - 1e-9) {
         this.#elapsedS = Math.round(this.#elapsedS);
+        const prevElapsedS = this.#samples.at(-1)?.elapsedS ?? 0;
         this.#samples.push({
           timestamp: Math.round(now - remaining * 1000),
           elapsedS: this.#elapsedS,
@@ -196,6 +220,12 @@ export class RideSession {
           gradePercent: this.#gradePercent,
           gear: this.#gear,
           ...this.#position(),
+        });
+        const sample = this.#samples.at(-1)!;
+        this.#energy.add({
+          powerW: sample.powerW,
+          heartRateBpm: sample.heartRateBpm,
+          dtS: sample.elapsedS - prevElapsedS,
         });
         this.#sampleEnergyJ = 0;
         this.#sampleTimeS = 0;

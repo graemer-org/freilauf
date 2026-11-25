@@ -7,6 +7,7 @@ import {
   formatRaceGain,
 } from '../../../shared/powerUps';
 import { formatDistance, formatDuration } from './format';
+import { SummaryEnergy } from './EnergyUi';
 import { FtpOutcomeCard } from './FtpOutcome';
 import { useApp, useAppState } from './hooks';
 
@@ -113,6 +114,8 @@ export function SummaryScreen({ onDone, onAgain }: { onDone: () => void; onAgain
           </dd>
         </div>
       </dl>
+
+      <SummaryEnergy energy={summary.energy} />
 
       {summary.cards && (summary.cards.gainM > 0 || summary.cards.lossM < 0) ? (
         <p className="hint summary-powerups" data-testid="summary-cards">

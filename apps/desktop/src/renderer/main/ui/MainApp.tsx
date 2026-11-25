@@ -155,7 +155,9 @@ function Shell({
   };
   const toRide = (): void => reset('ride');
   const startRiding = (): void => {
-    if ((app.store.getState().live?.ride.state ?? 'idle') === 'idle') app.startRide();
+    const live = app.store.getState().live;
+    // Starts after the countdown (Settings → Ride); one that already runs is not cancelled.
+    if ((live?.ride.state ?? 'idle') === 'idle' && !live?.countdown) app.startRide();
     reset('ride');
   };
 
@@ -179,8 +181,8 @@ function Shell({
     if (screenRef.current === 'start') reset('ride');
   }, [app, rideState]);
 
-  // A group countdown begins: the ride view is where it is shown.
-  const countdown = useAppState((s) => s.groupCountdownS !== null);
+  // A countdown begins (group start, the controller's start button): the ride view shows it.
+  const countdown = useAppState((s) => (s.live?.countdown ?? null) !== null);
   useEffect(() => {
     if (countdown && (screenRef.current === 'start' || screenRef.current === 'summary'))
       reset('ride');

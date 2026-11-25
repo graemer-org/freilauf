@@ -596,9 +596,21 @@ describe('Ride tab with a workout (SSR)', () => {
     expect(html).toMatch(/data-testid="workout-skip"[^>]*disabled/);
   });
 
-  it('shows a pending group countdown', () => {
-    const html = renderTab(withWorkouts({ groupCountdownS: 6.4 }), 'ride');
-    expect(html).toMatch(/data-testid="group-countdown"[\s\S]*?>7</);
+  it('shows a pending group countdown, in the same look as the local one', () => {
+    const idle = liveState({ ride: { ...liveState().ride, state: 'idle' } });
+    const html = renderTab(
+      withWorkouts({
+        groupCountdownS: 7,
+        live: { ...idle, countdown: { kind: 'group', remainingS: 6.4, totalS: 10 } },
+      }),
+      'ride',
+    );
+    expect(html).toMatch(/data-testid="ride-countdown" data-kind="group"/);
+    expect(html).toMatch(/data-testid="countdown-digit">7</);
+    expect(html).toContain('Starting together');
+    // No second, local countdown is offered meanwhile: no "Start together", Start cancels.
+    expect(html).not.toContain('data-testid="workout-start-together"');
+    expect(html).toMatch(/data-testid="ride-start" data-countdown="true">Cancel</);
   });
 });
 
@@ -736,5 +748,65 @@ describe('Devices, Activity (SSR)', () => {
     const community = renderTab(withWorkouts(), 'community');
     expect(community).toContain('data-testid="panel-community"');
     expect(community).toMatch(/data-testid="tab-community"[^>]*|aria-selected="true"/);
+  });
+});
+
+describe('Countdown before the ride starts or resumes (SSR)', () => {
+  const idle = liveState({ ride: { ...liveState().ride, state: 'idle', elapsedS: 0 } });
+
+  it('shows big digits, "Get ready" and the ring over the ride view; Start becomes Cancel', () => {
+    const html = renderScreen(
+      {
+        ...baseState(),
+        simMode: true,
+        live: { ...idle, countdown: { kind: 'start', remainingS: 2.3, totalS: 3 } },
+      },
+      'ride',
+    );
+    expect(html).toMatch(/data-testid="ride-countdown" data-kind="start" role="timer"/);
+    expect(html).toMatch(/data-testid="countdown-digit">3</);
+    expect(html).toContain('Get ready');
+    expect(html).toContain('Space or Esc cancels');
+    expect(html).toContain('class="cd-ring"');
+    // The ring shows what is left: 2.3 of 3 s, i.e. 23.3 % gone.
+    expect(html).toContain('stroke-dashoffset:23.3');
+    expect(html).toMatch(/data-testid="ride-start" data-countdown="true">Cancel</);
+    expect(html).toMatch(/data-testid="ride-state"[^>]*>Get ready</);
+    // Nothing recorded yet: the ride is still idle and the time reads zero.
+    expect(html).toContain('data-state="idle" data-countdown="true" data-testid="ride-state"');
+  });
+
+  it('says it resumes after a pause', () => {
+    const paused = liveState({ ride: { ...liveState().ride, state: 'paused' } });
+    const html = renderScreen(
+      {
+        ...baseState(),
+        simMode: true,
+        live: { ...paused, countdown: { kind: 'resume', remainingS: 4.9, totalS: 5 } },
+      },
+      'ride',
+    );
+    expect(html).toMatch(/data-kind="resume"/);
+    expect(html).toMatch(/data-testid="countdown-digit">5</);
+    expect(html).toContain('The ride resumes at zero');
+    expect(html).toContain('data-testid="ride-finish"');
+  });
+
+  it('shows no countdown without one, and Start / Resume as usual', () => {
+    const html = renderScreen({ ...baseState(), simMode: true, live: idle }, 'ride');
+    expect(html).not.toContain('data-testid="ride-countdown"');
+    expect(html).toMatch(/data-testid="ride-start">Start</);
+  });
+
+  it('offers the countdown length in Settings → Ride (Off, 3, 5, 10 s)', () => {
+    const state = { ...baseState(), live: idle };
+    state.settings!.ride.countdownS = 5;
+    const html = renderScreen(state, 'settings');
+    expect(html).toContain('data-testid="settings-ride"');
+    for (const v of ['0', '3', '5', '10']) {
+      expect(html).toContain(`data-testid="settings-countdown-${v}"`);
+    }
+    expect(html).toMatch(/aria-checked="true"[^>]*data-testid="settings-countdown-5"/);
+    expect(html).toMatch(/data-testid="settings-countdown-0">Off</);
   });
 });
