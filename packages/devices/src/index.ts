@@ -4,6 +4,8 @@ export * from './uuids';
 export * from './ftms';
 export * from './cyclingPower';
 export * from './heartRate';
+export * from './cyclingSpeedCadence';
+export * from './relay';
 export * from './managedDevice';
 export * from './ftmsTrainer';
 export * from './heartRateSensor';

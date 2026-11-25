@@ -10,3 +10,6 @@ playwright-report/
 
 # Real GPX files used locally as test input; not published without their owner's consent
 packages/routes/fixtures/local/
+
+# Rust build output of the sensor relay helper
+apps/desktop/native/sensor-relay/target/
