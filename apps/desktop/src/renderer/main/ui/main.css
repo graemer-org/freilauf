@@ -909,7 +909,8 @@ output {
   min-width: 0;
 }
 
-.field-text > label {
+.field-text > label,
+.field-text > .field-label {
   font-weight: 500;
 }
 
@@ -2865,22 +2866,100 @@ div.server-note {
   font-weight: 650;
 }
 
-.wo-countdown {
-  flex: none;
-  display: grid;
-  justify-items: center;
-  gap: var(--s-1);
-  padding: var(--s-4);
-  text-align: center;
+/* ───────── countdown before the ride starts or resumes (and the group start) ───────── */
+
+/* Over the scene and the numbers; the buttons below stay reachable (Cancel). */
+.ride-stats:has(> .cd) {
+  position: relative;
 }
 
-.wo-countdown-number {
+.cd--ride {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* Light: the scene and the rider stay recognisable behind it. */
+  backdrop-filter: blur(3px);
+  text-align: center;
+  animation: cd-show var(--t-med) var(--ease);
+}
+
+.cd-dial {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(7rem, min(46cqh, 32cqw), 19rem);
+  aspect-ratio: 1;
+  container-type: size;
+}
+
+.cd-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.cd-ring circle {
+  fill: none;
+  stroke-width: 5;
+}
+
+.cd-ring-track {
+  stroke: var(--fill-strong);
+}
+
+.cd-ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  /* The live state comes 4× a second: glide between the steps. */
+  transition: stroke-dashoffset 260ms linear;
+}
+
+.cd-digit {
+  position: relative;
   font-family: var(--font-display);
-  font-size: clamp(3rem, 12vh, 8rem);
+  font-size: 50cqh;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
+  animation: cd-tick 480ms var(--ease);
+}
+
+.cd-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.cd-hint {
+  max-width: 28rem;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+@keyframes cd-show {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Each new second settles in gently. */
+@keyframes cd-tick {
+  from {
+    opacity: 0.25;
+    transform: scale(1.12);
+  }
 }
 
 .wo-panel {
@@ -6738,4 +6817,26 @@ div.server-note {
   .cr-ring-fill {
     transition: none;
   }
+}
+
+/* Energy estimates (EnergyUi.tsx, docs/energy.md). */
+.summary-energy > .section-title {
+  padding: var(--s-5) var(--s-6) 0;
+}
+
+.summary-energy-note {
+  margin: 0;
+  padding: 0 var(--s-6) var(--s-4);
+}
+
+.energy-info-body {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-6) var(--s-5);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.energy-info-body p {
+  margin: 0;
 }

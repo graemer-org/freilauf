@@ -295,7 +295,9 @@ describe('rideSummary', () => {
     expect(s.avgPowerW).toBe(200);
     expect(s.maxPowerW).toBe(200);
     expect(s.workKj).toBeCloseTo(20, 6);
-    expect(s.caloriesKcal).toBeCloseTo(20, 6);
+    // 20 kJ / (4.184 × 0.24) — docs/energy.md
+    expect(s.caloriesKcal).toBeCloseTo(20 / 1.00416, 6);
+    expect(s.fatCaloriesKcal).toBeNull(); // no FTP stored with the ride
     expect(s.avgHeartRateBpm).not.toBeNull();
     expect(s.distanceM).toBeGreaterThan(0);
   });
@@ -589,5 +591,47 @@ describe('normalized power', () => {
     const msgs = decode(encodeFit(ride));
     expect(msgs.lapMesgs!.map((l) => l.normalizedPower)).toEqual([150, 250]);
     expect(decode(encodeFit(makeRide(20))).sessionMesgs![0]!.normalizedPower).toBeUndefined();
+  });
+});
+
+describe('energy in the FIT file', () => {
+  it('writes total_calories as kJ / (4.184 × 0.24) and no fat calories without FTP', () => {
+    const ride = makeRide(600, () => ({ powerW: 200 })); // 120 kJ
+    const msgs = decode(encodeFit(ride));
+    expect(msgs.sessionMesgs?.[0]?.totalCalories).toBe(Math.round(120 / 1.00416)); // 120
+    expect(msgs.lapMesgs?.[0]?.totalCalories).toBe(120);
+    expect(msgs.sessionMesgs?.[0]?.totalFatCalories).toBeUndefined();
+    expect(msgs.lapMesgs?.[0]?.totalFatCalories).toBeUndefined();
+  });
+
+  it('writes total_fat_calories from the FTP stored with the ride', () => {
+    // 1 h at 150 W with FTP 300 (50 % FTP → 40 % VO2max → 70 % fat).
+    const ride = { ...makeRide(3600, () => ({ powerW: 150 })), ftpW: 300 };
+    const kcal = 540 / 1.00416;
+    const msgs = decode(encodeFit(ride));
+    expect(msgs.sessionMesgs?.[0]?.totalCalories).toBe(Math.round(kcal)); // 538
+    expect(msgs.sessionMesgs?.[0]?.totalFatCalories).toBe(Math.round(0.7 * kcal)); // 376
+    expect(msgs.lapMesgs?.[0]?.totalFatCalories).toBe(Math.round(0.7 * kcal));
+  });
+
+  it('per lap when the ride has jumps: the laps add up to the session', () => {
+    const ride = {
+      ...makeRide(600, (i) => ({
+        powerW: 150,
+        lat: 47 + i * 1e-5,
+        lon: 8,
+        altitudeM: 400,
+        segment: i < 300 ? 0 : 1,
+      })),
+      ftpW: 300,
+    };
+    const msgs = decode(encodeFit(ride));
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(2);
+    const sum = laps.reduce((a, l) => a + (l.totalCalories as number), 0);
+    expect(Math.abs(sum - (msgs.sessionMesgs?.[0]?.totalCalories as number))).toBeLessThanOrEqual(
+      1,
+    );
+    for (const l of laps) expect(l.totalFatCalories).toBe(Math.round(0.7 * (45 / 1.00416)));
   });
 });

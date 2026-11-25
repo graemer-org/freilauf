@@ -89,6 +89,8 @@ export const PLACEHOLDER_LIVE: LiveState = {
     ],
   },
   localName: 'You',
+  // Sample energy so calorie / fat tiles show something while arranging the overlay.
+  energy: { kcal: 612, source: 'power', kcalPower: 612, kcalHr: null, fatG: 31, carbG: 79 },
 };
 
 const DEVICE_LABEL: Record<DeviceKind, string> = {

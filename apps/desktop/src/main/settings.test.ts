@@ -78,6 +78,8 @@ describe('sanitizeSettings', () => {
       massKg: DEFAULT_SETTINGS.rider.massKg,
       bikeMassKg: 9,
       ftpW: DEFAULT_SETTINGS.rider.ftpW,
+      ageYears: null,
+      sex: null,
     });
     expect(s.overlay.backdropOpacity).toBe(DEFAULT_SETTINGS.overlay.backdropOpacity);
     expect(s.overlay.bounds).toBeNull();

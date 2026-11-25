@@ -418,8 +418,6 @@ export class App {
   #rig: SimulatedRig | null = null;
   #group: JoinedGroup | null = null;
   #groupCleanup: (() => void)[] = [];
-  /** Local clock time of a pending synchronised start. */
-  #startAt: number | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
   #noticeId = 0;
   #cleanup: (() => void)[] = [];
@@ -481,8 +479,18 @@ export class App {
       settings,
       log: this.#logger.scope('ride'),
       onLive: (live) => {
-        this.store.setState({ live });
+        // The group's "Start together" countdown runs in the controller like the local one.
+        const groupCountdownS =
+          live.countdown?.kind === 'group' ? Math.ceil(live.countdown.remainingS) : null;
+        if (groupCountdownS !== this.store.getState().groupCountdownS) {
+          this.store.setState({ live, groupCountdownS });
+        } else this.store.setState({ live });
         this.#api.live.publish(live);
+      },
+      onRideStart: () => {
+        // Every new ride, however it was started (button, Space, controller, group countdown).
+        this.#rideHadCompany = false;
+        this.#controller?.setPowerUpTuning(this.#powerUpTuning());
       },
       saveRide: (ride, finished) => this.#api.rides.save(ride, finished),
       onError: (message) => this.notify('error', message),
@@ -504,7 +512,6 @@ export class App {
     );
 
     this.#timer = setInterval(() => {
-      this.#tickCountdown();
       this.#controller?.tick();
       this.#tickDiagnostics();
       this.#refreshPeers(); // "connecting" turns into "trouble" after a while
@@ -741,16 +748,22 @@ export class App {
 
   // ───────────── ride ─────────────
 
+  /**
+   * Start / Resume: after the countdown in Settings.ride (0 = at once). Asked again while a
+   * countdown runs (also a group's), it cancels the countdown instead.
+   */
   startRide(): void {
-    if (this.#controller?.rideState === 'idle') {
-      this.#rideHadCompany = false;
-      this.#controller?.setPowerUpTuning(this.#powerUpTuning());
-    }
-    this.#controller?.start();
+    this.#controller?.requestStart();
   }
 
+  /** Pauses at once; during a countdown, cancels it. */
   pauseRide(): void {
     this.#controller?.pause();
+  }
+
+  /** Cancels a running countdown (Escape); false when none runs. */
+  cancelCountdown(): boolean {
+    return this.#controller?.cancelCountdown() ?? false;
   }
 
   async finishRide(): Promise<void> {
@@ -771,6 +784,7 @@ export class App {
         previous: Object.values(rides),
         workoutName: before.live?.workout?.name ?? null,
         routeName: before.routeTrack?.name ?? null,
+        rider: before.settings?.rider ?? null,
         powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
         cards:
           finished?.powerUps?.mode === 'cardRace'
@@ -1158,7 +1172,7 @@ export class App {
     this.#community.detach();
     this.#group?.leave();
     this.#group = null;
-    this.#startAt = null;
+    this.#cancelGroupCountdown();
     this.#controller?.setGroup(null);
     this.#controller?.setGroupRules(null);
     this.#sharedRouteTracks = new Map();
@@ -1211,29 +1225,18 @@ export class App {
       this.notify('error', 'Could not announce the start to the group.');
       return;
     }
-    this.#startAt = Date.now() + ms;
-    this.#tickCountdown();
+    // Replaces a local countdown; at zero the ride starts at once (no second countdown).
+    this.#controller?.startGroupCountdown(ms);
   }
 
   cancelGroupStart(): void {
     // Only cancels locally; the others still start.
-    this.#startAt = null;
-    this.store.setState({ groupCountdownS: null });
+    this.#cancelGroupCountdown();
   }
 
-  #tickCountdown(): void {
-    if (this.#startAt === null) return;
-    const remainingMs = this.#startAt - Date.now();
-    if (remainingMs > 0) {
-      const groupCountdownS = Math.ceil(remainingMs / 1000);
-      if (groupCountdownS !== this.store.getState().groupCountdownS) {
-        this.store.setState({ groupCountdownS });
-      }
-      return;
-    }
-    this.#startAt = null;
+  #cancelGroupCountdown(): void {
+    if (this.#controller?.countdown?.kind === 'group') this.#controller.cancelCountdown();
     this.store.setState({ groupCountdownS: null });
-    if (this.#controller?.rideState === 'idle') this.startRide();
   }
 
   #refreshSharedWorkouts(): void {
@@ -1314,9 +1317,8 @@ export class App {
         group.onStart((startsInMs, peerName) => {
           // A start only makes sense for someone who is not riding yet.
           if (this.#controller?.rideState !== 'idle') return;
-          this.#startAt = Date.now() + Math.max(0, startsInMs);
           this.notify('info', `${peerName} started a group countdown.`);
-          this.#tickCountdown();
+          this.#controller?.startGroupCountdown(Math.max(0, startsInMs));
         }),
         group.onPeersChange(() => this.#refreshPeers()),
         group.onLog?.((line) => this.#logger.log(line.level, 'p2p', line.message, line.data)) ??
@@ -1366,6 +1368,7 @@ export class App {
     this.#community.detach();
     group.leave();
     this.#group = null;
+    this.#cancelGroupCountdown();
     this.#controller?.setGroup(null);
     this.#groupPeers = new Set();
     this.#peerFirstSeen = new Map();

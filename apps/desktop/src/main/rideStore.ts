@@ -130,6 +130,7 @@ export class RideStore {
           durationS: summary.durationS,
           distanceM: summary.distanceM,
           avgPowerW: summary.avgPowerW,
+          ...(summary.caloriesKcal > 0 ? { kcal: Math.round(summary.caloriesKcal) } : {}),
           finished,
         });
       } catch (e) {

@@ -1,5 +1,6 @@
 import { DEFAULT_BIKE, steadyStateSpeed } from '@freilauf/sim';
 import { describe, expect, it } from 'vitest';
+import { rideEnergy } from './energy';
 import { RideSession } from './rideSession';
 
 function setup() {
@@ -232,5 +233,46 @@ describe('RideSession', () => {
     session.start();
     ride(3, 200);
     expect(Object.keys(session.toRecordedRide().samples[0]!)).not.toContain('lat');
+  });
+});
+
+describe('RideSession energy', () => {
+  it('accumulates live what rideEnergy computes from the recorded ride, and stores the FTP', () => {
+    let now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const session = new RideSession({
+      bike: DEFAULT_BIKE,
+      riderMassKg: 75,
+      now: () => now,
+      energy: { ftpW: 250, ageYears: 40, sex: 'male' },
+    });
+    expect(session.energy().kcal).toBeNull();
+    session.start();
+    for (let i = 0; i < 600 * 4; i++) {
+      now += 250;
+      session.setPower(i < 1200 ? 150 : 260);
+      session.setCadence(90);
+      session.setHeartRate(130);
+      session.tick();
+    }
+    const ride = session.toRecordedRide();
+    expect(ride.ftpW).toBe(250);
+    const live = session.energy();
+    expect(live).toEqual(rideEnergy(ride, { ageYears: 40, sex: 'male' }));
+    // 300 s × 150 W + 300 s × 260 W = 123 kJ
+    expect(live.kcalPower).toBeCloseTo(123 / 1.00416, 6);
+    expect(live.kcalHr).toBeCloseTo(
+      (10 * (-55.0969 + 0.6309 * 130 + 0.1988 * 75 + 0.2017 * 40)) / 4.184,
+      6,
+    );
+    expect(live.fatG).toBeGreaterThan(0);
+  });
+
+  it('without an FTP the ride stores none and has no split', () => {
+    const { session, ride } = setup();
+    session.start();
+    ride(60, 200);
+    expect(session.toRecordedRide().ftpW).toBeUndefined();
+    expect(session.energy().fatG).toBeNull();
+    expect(session.energy().kcal).toBeCloseTo(12 / 1.00416, 6);
   });
 });

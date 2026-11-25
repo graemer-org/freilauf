@@ -11,17 +11,23 @@
 import type { ControllerButton, DeviceKind, RelayServiceKind } from '@freilauf/devices';
 import type {
   Bounds,
+  CountdownSeconds,
   DeepPartial,
   LeverFunction,
   LeverSettings,
   OverlayTile,
   RememberedDevice,
+  RiderSex,
   Settings,
   ShiftAction,
   StatId,
   WatchRelaySettings,
 } from '../shared/contract';
-import { DEFAULT_SETTINGS, LEGACY_DEFAULT_SIGNALLING_URL } from '../shared/contract';
+import {
+  COUNTDOWN_CHOICES,
+  DEFAULT_SETTINGS,
+  LEGACY_DEFAULT_SIGNALLING_URL,
+} from '../shared/contract';
 
 // Records (not arrays) so the compiler flags a missing/extra member when the
 // union types change.
@@ -83,7 +89,13 @@ const STAT_IDS: Record<StatId, true> = {
   routeRemaining: true,
   ascentRemaining: true,
   elevation: true,
+  calories: true,
+  fatGrams: true,
 };
+const RIDER_SEXES: Record<RiderSex, true> = { female: true, male: true, undisclosed: true };
+/** Accepted rider age (years) for the heart-rate energy estimate. */
+export const MIN_RIDER_AGE = 10;
+export const MAX_RIDER_AGE = 100;
 const TILE_SIZES: Record<OverlayTile['size'], true> = { s: true, m: true, l: true };
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -408,6 +420,7 @@ export function sanitizeSettings(
   const group = obj(root.group, 'group', problems);
   const route = obj(root.route, 'route', problems);
   const powerUps = obj(root.powerUps, 'powerUps', problems);
+  const ride = obj(root.ride, 'ride', problems);
 
   let trainerMassKg = fallback.shifting.trainerMassKg;
   if (shifting.trainerMassKg === null) trainerMassKg = null;
@@ -462,6 +475,7 @@ export function sanitizeSettings(
         60,
       ),
       ftpW: Math.round(num(rider.ftpW, fallback.rider.ftpW, 'rider.ftpW', problems, 50, 600)),
+      ...sanitizeAgeSex(rider, fallback.rider, problems),
     },
     devices: sanitizeDevices(root.devices, fallback.devices, problems),
     shifting: {
@@ -525,8 +539,51 @@ export function sanitizeSettings(
         problems,
       ),
     },
+    ride: { countdownS: sanitizeCountdown(ride.countdownS, fallback.ride.countdownS, problems) },
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
   };
+}
+
+/** One of the offered countdown lengths (COUNTDOWN_CHOICES), else the fallback. */
+function sanitizeCountdown(
+  raw: unknown,
+  fallback: CountdownSeconds,
+  problems: Problems,
+): CountdownSeconds {
+  if (raw === undefined) return fallback;
+  const choice = COUNTDOWN_CHOICES.find((c) => c === raw);
+  if (choice === undefined) {
+    problems.push(`ride.countdownS: expected one of ${COUNTDOWN_CHOICES.join(', ')}`);
+    return fallback;
+  }
+  return choice;
+}
+
+/** Optional rider age (whole years, 10–100) and sex; null = not given (the default). */
+function sanitizeAgeSex(
+  rider: Record<string, unknown>,
+  fallback: Settings['rider'],
+  problems: Problems,
+): { ageYears: number | null; sex: RiderSex | null } {
+  let ageYears = fallback.ageYears ?? null;
+  if (rider.ageYears === null) ageYears = null;
+  else if (rider.ageYears !== undefined) {
+    const a = rider.ageYears;
+    if (typeof a === 'number' && Number.isFinite(a) && a >= MIN_RIDER_AGE && a <= MAX_RIDER_AGE) {
+      ageYears = Math.round(a);
+    } else {
+      problems.push(
+        `rider.ageYears: expected a number in [${MIN_RIDER_AGE}, ${MAX_RIDER_AGE}] or null`,
+      );
+    }
+  }
+  let sex = fallback.sex ?? null;
+  if (rider.sex === null) sex = null;
+  else if (rider.sex !== undefined) {
+    if (has(RIDER_SEXES, rider.sex)) sex = rider.sex;
+    else problems.push('rider.sex: expected "female", "male", "undisclosed" or null');
+  }
+  return { ageYears, sex };
 }
 
 /** `settings.update(patch)`: deep-merge (arrays replace), then validate against the current value. */

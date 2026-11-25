@@ -2,6 +2,7 @@ import { memo, type CSSProperties, type PointerEventHandler } from 'react';
 import type { DeviceKind } from '@freilauf/devices';
 import type { LiveState, OverlaySettings, OverlayTile, StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from '../../main/ui/format';
+import { CountdownView } from '../../main/ui/Countdown';
 import {
   PLACEHOLDER_LIVE,
   deviceWarnings,
@@ -33,7 +34,7 @@ export interface OverlayViewProps {
 function safeValue(stat: StatId, live: LiveState | null): string {
   if (!live) return PLACEHOLDER;
   try {
-    return statValue(stat, live.ride, live.workout, live.route);
+    return statValue(stat, live.ride, live.workout, live.route, live.energy);
   } catch {
     return PLACEHOLDER;
   }
@@ -178,6 +179,8 @@ export function OverlayView({
   const classes = ['ov-root'];
   if (editMode) classes.push('ov-root--edit');
   if (rideState === 'idle') classes.push('ov-root--idle');
+  const countdown = !editMode ? (live?.countdown ?? null) : null;
+  if (countdown) classes.push('ov-root--countdown');
 
   return (
     <div className={classes.join(' ')} style={style} data-testid="overlay-root">
@@ -254,6 +257,9 @@ export function OverlayView({
 
         {rows ? <GroupPanel rows={rows} mode={groupModeLabel(live)} /> : null}
       </div>
+
+      {/* Before the ride starts or resumes: big over everything, seen over a fullscreen video. */}
+      {countdown ? <CountdownView countdown={countdown} variant="overlay" /> : null}
 
       {editMode ? (
         <div

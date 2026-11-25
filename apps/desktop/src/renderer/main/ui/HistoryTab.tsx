@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { RideListItem } from '../../../shared/contract';
-import { formatDistance, formatDuration } from './format';
+import { formatDistance, formatDuration, formatKcal } from './format';
 import { useApp, useAppState } from './hooks';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -37,6 +37,9 @@ function HistoryRow({ ride }: { ride: RideListItem }) {
       <td className="num">{formatDistance(ride.distanceM)}</td>
       <td className="num">
         {Number.isFinite(ride.avgPowerW) ? `${Math.round(ride.avgPowerW)} W` : '–'}
+      </td>
+      <td className="num" data-testid="history-kcal">
+        {formatKcal(ride.kcal)}
       </td>
       <td className="actions">
         {confirmDelete ? (
@@ -136,6 +139,9 @@ export function HistoryTab() {
                 </th>
                 <th scope="col" className="num">
                   Avg power
+                </th>
+                <th scope="col" className="num" title="Energy from power (docs/energy.md)">
+                  Calories
                 </th>
                 <th scope="col">
                   <span className="visually-hidden">Actions</span>

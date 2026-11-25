@@ -160,6 +160,8 @@ function summaryValues(
     totalTimerTime: s.durationS,
     totalDistance: s.distanceM,
     totalCalories: s.caloriesKcal,
+    // Invalid (omitted by readers) when the ride has no FTP stored or no power.
+    totalFatCalories: s.fatCaloriesKcal,
     avgSpeed: s.avgSpeedMps,
     maxSpeed: s.maxSpeedMps,
     enhancedAvgSpeed: s.avgSpeedMps,

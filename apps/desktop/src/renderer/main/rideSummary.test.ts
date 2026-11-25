@@ -66,6 +66,7 @@ describe('summarizeRide', () => {
       workoutName: 'Openers',
       routeName: null,
       powerUpGainM: 0,
+      energy: null,
     });
   });
 
@@ -116,5 +117,86 @@ describe('summarizeRide', () => {
       previous: [],
     });
     expect(s.bests).toEqual([]);
+  });
+});
+
+describe('summarizeRide energy (docs/energy.md)', () => {
+  const steady = (n: number, w: number, hr: number | null): RecordedRide => {
+    const r = ride(
+      'e1',
+      Array.from({ length: n }, () => w),
+    );
+    r.samples = r.samples.map((s, i) => ({ ...s, elapsedS: i + 1, heartRateBpm: hr }));
+    return r;
+  };
+
+  it('kcal from power, the heart-rate cross-check and the split', () => {
+    // 1 h at 150 W = 540 kJ; FTP 300 stored with the ride → 70 % from fat.
+    const r = { ...steady(3600, 150, 130), ftpW: 300 };
+    const s = summarizeRide({
+      ...base,
+      live: null,
+      ride: r,
+      facts: null,
+      previous: [],
+      rider: { ageYears: 40, sex: 'male' },
+    });
+    const kcal = 540 / (4.184 * 0.24);
+    expect(s.energy?.source).toBe('power');
+    expect(s.energy?.kcal).toBeCloseTo(kcal, 6);
+    expect(s.energy?.kcalPower).toBeCloseTo(kcal, 6);
+    expect(s.energy?.kcalHr).toBeCloseTo(
+      (60 * (-55.0969 + 0.6309 * 130 + 0.1988 * 75 + 0.2017 * 40)) / 4.184,
+      6,
+    );
+    expect(s.energy?.fatG).toBeCloseTo((0.7 * kcal) / 9.4, 6);
+    expect(s.energy?.carbG).toBeCloseTo((0.3 * kcal) / 4.1, 6);
+  });
+
+  it('no heart-rate estimate without age and sex; no split without FTP', () => {
+    const s = summarizeRide({
+      ...base,
+      live: null,
+      ride: steady(600, 200, 140),
+      facts: null,
+      previous: [],
+      rider: { ageYears: null, sex: 'undisclosed' },
+    });
+    expect(s.energy?.kcal).toBeCloseTo(120 / 1.00416, 6);
+    expect(s.energy?.kcalHr).toBeNull();
+    expect(s.energy?.fatG).toBeNull();
+    // The current FTP stands in for a ride recorded before rides stored it.
+    const withFtp = summarizeRide({
+      ...base,
+      live: null,
+      ride: steady(600, 200, 140),
+      facts: null,
+      previous: [],
+      rider: { ftpW: 400 },
+    });
+    expect(withFtp.energy?.fatG).toBeCloseTo((0.7 * (120 / 1.00416)) / 9.4, 6);
+  });
+
+  it('heart rate only (no power): heart-rate kcal; neither: nothing', () => {
+    const hrOnly = summarizeRide({
+      ...base,
+      live: null,
+      ride: steady(600, 0, 140),
+      facts: null,
+      previous: [],
+      rider: { ageYears: 30, sex: 'female' },
+    });
+    expect(hrOnly.energy?.source).toBe('heartRate');
+    expect(hrOnly.energy?.kcalPower).toBeNull();
+    expect(hrOnly.energy?.fatG).toBeNull();
+    const none = summarizeRide({
+      ...base,
+      live: null,
+      ride: steady(600, 0, null),
+      facts: null,
+      previous: [],
+      rider: { ageYears: 30, sex: 'female' },
+    });
+    expect(none.energy).toBeNull();
   });
 });

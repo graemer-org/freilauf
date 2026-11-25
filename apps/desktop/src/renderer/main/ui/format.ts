@@ -78,6 +78,8 @@ const LABELS: Record<StatId, string> = {
   routeRemaining: 'Route left',
   ascentRemaining: 'Climb left',
   elevation: 'Elevation',
+  calories: 'Calories',
+  fatGrams: 'Fat (est.)',
 };
 
 const UNITS: Record<StatId, string> = {
@@ -96,6 +98,8 @@ const UNITS: Record<StatId, string> = {
   routeRemaining: 'km',
   ascentRemaining: 'm',
   elevation: 'm',
+  calories: 'kcal',
+  fatGrams: 'g',
 };
 
 export function statLabel(stat: StatId): string {
@@ -116,6 +120,8 @@ export function statValue(
   ride: RideSnapshot,
   workout?: { targetPowerW: number | null; segmentRemainingS: number; finished: boolean } | null,
   route?: { remainingM: number; ascentRemainingM: number; elevationM: number } | null,
+  /** Energy estimates of the ride so far (docs/energy.md); null = nothing to show. */
+  energy?: { kcal: number | null; fatG: number | null } | null,
 ): string {
   switch (stat) {
     case 'power':
@@ -157,5 +163,19 @@ export function statValue(
       return route ? round(route.ascentRemainingM) : MISSING;
     case 'elevation':
       return route ? round(route.elevationM) : MISSING;
+    case 'calories':
+      return energy?.kcal != null ? round(energy.kcal) : MISSING;
+    case 'fatGrams':
+      return energy?.fatG != null ? round(energy.fatG) : MISSING;
   }
+}
+
+/** `612 kcal`; `–` when unknown. */
+export function formatKcal(kcal: number | null | undefined): string {
+  return isFiniteNumber(kcal) ? `${fixed(Math.round(kcal), 0)} kcal` : MISSING;
+}
+
+/** Grams, whole: `38 g`; `–` when unknown. */
+export function formatGrams(grams: number | null | undefined): string {
+  return isFiniteNumber(grams) ? `${fixed(Math.round(grams), 0)} g` : MISSING;
 }

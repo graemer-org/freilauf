@@ -1,6 +1,8 @@
 import type { BestEfforts, RideFacts } from '@freilauf/community';
 import { BEST_EFFORT_KEYS } from '@freilauf/community';
 import type { RecordedRide } from '@freilauf/session';
+import { rideEnergy } from '@freilauf/session';
+import type { LiveEnergy } from '../../shared/contract';
 
 /** A best effort this ride improved on (over the rides the community ledger still holds). */
 export interface RideBest {
@@ -33,6 +35,12 @@ export interface RideSummary {
    * attacks (≤ 0), each shown on its own line ("+38 m from cards", "−24 m from attacks").
    */
   cards?: { gainM: number; lossM: number } | null;
+  /**
+   * Energy estimates (docs/energy.md): kcal from power, the heart-rate cross-check and the
+   * fat/carbohydrate split. null when the ride was not kept or has neither power nor a
+   * heart-rate estimate (nothing is shown then).
+   */
+  energy?: LiveEnergy | null;
 }
 
 export interface SummarizeInput {
@@ -50,6 +58,8 @@ export interface SummarizeInput {
   powerUpGainM?: number;
   /** Card Race: gain from cards and loss to attacks at the finish (m). */
   cards?: { gainM: number; lossM: number } | null;
+  /** Age and sex for the heart-rate estimate (Settings.rider); absent = none. */
+  rider?: { ageYears?: number | null; sex?: string | null; ftpW?: number | null } | null;
 }
 
 /** Pure: builds the post-ride summary. */
@@ -81,6 +91,18 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
       if (prev !== null && now > prev) bests.push({ key, powerW: now, previousW: prev });
     }
   }
+  const e = ride ? rideEnergy(ride, input.rider ?? {}) : null;
+  const energy: LiveEnergy | null =
+    e && e.kcal !== null
+      ? {
+          kcal: e.kcal,
+          source: e.source,
+          kcalPower: e.kcalPower,
+          kcalHr: e.kcalHr,
+          fatG: e.fatG,
+          carbG: e.carbG,
+        }
+      : null;
   return {
     rideId: ride?.id ?? null,
     durationS,
@@ -103,5 +125,6 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
           },
         }
       : {}),
+    energy,
   };
 }

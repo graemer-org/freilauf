@@ -135,6 +135,7 @@ const summaryFields = (n: {
   sport: number;
   subSport: number;
   totalCalories: number;
+  totalFatCalories: number;
   avgSpeed: number;
   maxSpeed: number;
   avgHeartRate: number;
@@ -156,6 +157,7 @@ const summaryFields = (n: {
   f('totalTimerTime', 8, UINT32, 1000),
   f('totalDistance', 9, UINT32, 100),
   f('totalCalories', n.totalCalories, UINT16),
+  f('totalFatCalories', n.totalFatCalories, UINT16),
   f('avgSpeed', n.avgSpeed, UINT16, 1000),
   f('maxSpeed', n.maxSpeed, UINT16, 1000),
   f('enhancedAvgSpeed', n.enhancedAvgSpeed, UINT32, 1000),
@@ -178,6 +180,7 @@ export const LAP: MesgSpec = {
       sport: 25,
       subSport: 39,
       totalCalories: 11,
+      totalFatCalories: 12,
       avgSpeed: 13,
       maxSpeed: 14,
       avgHeartRate: 15,
@@ -202,6 +205,7 @@ export const SESSION: MesgSpec = {
       sport: 5,
       subSport: 6,
       totalCalories: 11,
+      totalFatCalories: 13,
       avgSpeed: 14,
       maxSpeed: 15,
       avgHeartRate: 16,

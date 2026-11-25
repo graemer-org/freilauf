@@ -1,3 +1,4 @@
+import { energyOfSamples, kcalFromWorkKj } from '../energy';
 import type { RecordedRide, RideSample } from '../types';
 
 /** Aggregates of a recorded ride, used for the FIT lap/session and the ride list. */
@@ -30,11 +31,15 @@ export interface RideSummary {
   /** Mechanical work in kJ (sum of power × sample interval). */
   workKj: number;
   /**
-   * Estimated energy expenditure in kcal. Uses the common cycling approximation
-   * kcal ≈ kJ of mechanical work: gross efficiency (~24 %) and the kJ→kcal
-   * factor (1 / 4.184) roughly cancel out.
+   * Estimated energy expenditure in kcal from the mechanical work: kJ / (4.184 × 0.24), i.e.
+   * a gross efficiency of 24 % (energy.ts, docs/energy.md). 0 without power.
    */
   caloriesKcal: number;
+  /**
+   * Of caloriesKcal, the kcal estimated to come from fat (energy.ts); null when the ride does
+   * not carry the rider's FTP (`RecordedRide.ftpW`) or has no power.
+   */
+  fatCaloriesKcal: number | null;
   sampleCount: number;
 }
 
@@ -148,7 +153,11 @@ export function rideSummary(ride: RecordedRide): RideSummary {
     maxHeartRateBpm: hrN > 0 ? maxHr : null,
     normalizedPowerW: normalizedPower(samples),
     workKj,
-    caloriesKcal: workKj,
+    caloriesKcal: kcalFromWorkKj(workKj),
+    fatCaloriesKcal:
+      typeof ride.ftpW === 'number' && Number.isFinite(ride.ftpW) && ride.ftpW > 0
+        ? energyOfSamples(samples, { massKg: ride.riderMassKg, ftpW: ride.ftpW }).fatKcal
+        : null,
     sampleCount: samples.length,
   };
 }

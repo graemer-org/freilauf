@@ -6,7 +6,8 @@ import type { StatId } from '../../../shared/contract';
 import { statLabel, statUnit, statValue } from './format';
 import { rangeFill } from './fields';
 import { isEditableTarget, useApp, useAppState } from './hooks';
-import { GroupCountdown, WorkoutBanner, WorkoutPanel } from './WorkoutPanel';
+import { WorkoutBanner, WorkoutPanel } from './WorkoutPanel';
+import { CountdownView } from './Countdown';
 import { RideScene } from './scene/SceneView';
 import { RideRoute } from './RideRoute';
 import { routeTrackOf } from './routesApi';
@@ -73,6 +74,10 @@ function useRideShortcuts(app: App): void {
           if (e.repeat || !app.store.getState().live?.powerUps?.cards) return;
           app.playCard(1, 'keyboard');
           break;
+        case 'Escape':
+          // Cancels a countdown before the ride starts or resumes; otherwise not ours.
+          if (!app.cancelCountdown()) return;
+          break;
         case ' ': {
           // Let a focused button handle its own Space activation.
           const tag = (e.target as HTMLElement | null)?.tagName;
@@ -137,7 +142,7 @@ const STAT_CLASS: Record<StatVariant, string> = {
 
 function StatTile({ stat, variant = 'tile' }: { stat: StatId; variant?: StatVariant }) {
   const value = useAppState((s) =>
-    s.live ? statValue(stat, s.live.ride, s.live.workout, s.live.route) : '–',
+    s.live ? statValue(stat, s.live.ride, s.live.workout, s.live.route, s.live.energy) : '–',
   );
   const unit = statUnit(stat);
   return (
@@ -159,6 +164,11 @@ function PowerHero() {
       <div className="hero-subs">
         <StatTile stat="power3s" variant="sub" />
         <StatTile stat="wattsPerKg" variant="sub" />
+      </div>
+      {/* Energy so far (docs/energy.md): kcal from power, fat as a rough estimate. */}
+      <div className="hero-subs hero-energy">
+        <StatTile stat="calories" variant="sub" />
+        <StatTile stat="fatGrams" variant="sub" />
       </div>
     </section>
   );
@@ -205,9 +215,16 @@ function TrainerHint() {
   );
 }
 
+/** The countdown before the ride starts or resumes (or a group start), over the stats. */
+function RideCountdown() {
+  const countdown = useAppState((s) => s.live?.countdown ?? null);
+  return <CountdownView countdown={countdown} variant="ride" />;
+}
+
 function RideButtons({ onFinished }: { onFinished: (() => void) | undefined }) {
   const app = useApp();
   const state = useAppState((s) => s.live?.ride.state ?? 'idle');
+  const counting = useAppState((s) => (s.live?.countdown ?? null) !== null);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     if (state === 'idle') setConfirming(false);
@@ -237,14 +254,16 @@ function RideButtons({ onFinished }: { onFinished: (() => void) | undefined }) {
 
   return (
     <div className="ride-buttons" role="group" aria-label="Ride">
-      {state === 'idle' && (
+      {state !== 'riding' && (
+        // One button for Start, Resume and, during the countdown, Cancel (it keeps the focus).
         <button
           type="button"
-          className="btn btn-primary btn-big"
+          className={`btn btn-big${counting ? '' : ' btn-primary'}`}
           data-testid="ride-start"
+          data-countdown={counting ? 'true' : undefined}
           onClick={() => app.startRide()}
         >
-          Start
+          {counting ? 'Cancel' : state === 'idle' ? 'Start' : 'Resume'}
         </button>
       )}
       {state === 'riding' && (
@@ -257,16 +276,6 @@ function RideButtons({ onFinished }: { onFinished: (() => void) | undefined }) {
           Pause
         </button>
       )}
-      {state === 'paused' && (
-        <button
-          type="button"
-          className="btn btn-primary btn-big"
-          data-testid="ride-start"
-          onClick={() => app.startRide()}
-        >
-          Resume
-        </button>
-      )}
       {state !== 'idle' && (
         <button
           type="button"
@@ -277,8 +286,19 @@ function RideButtons({ onFinished }: { onFinished: (() => void) | undefined }) {
           Finish
         </button>
       )}
-      <span className="ride-state" data-state={state} data-testid="ride-state">
-        {state === 'idle' ? 'Ready' : state === 'riding' ? 'Recording' : 'Paused'}
+      <span
+        className="ride-state"
+        data-state={state}
+        data-countdown={counting ? 'true' : undefined}
+        data-testid="ride-state"
+      >
+        {counting && state !== 'riding'
+          ? 'Get ready'
+          : state === 'idle'
+            ? 'Ready'
+            : state === 'riding'
+              ? 'Recording'
+              : 'Paused'}
       </span>
     </div>
   );
@@ -532,7 +552,6 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
       >
         {toolbar}
         <TrainerHint />
-        <GroupCountdown />
         {phase === 'pending' && <WorkoutBanner />}
         {phase === 'none' && <FreeRideHint onOpenWorkouts={onOpenWorkouts} />}
         {phase !== 'none' && phase !== 'pending' && <WorkoutPanel />}
@@ -542,6 +561,7 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
           under the scene. Placement is pure CSS grid (see .ride-grid).
         */}
         <div className="ride-stats">
+          <RideCountdown />
           <div className={`ride-grid${onRoute ? ' has-route' : ''}`}>
             <PowerHero />
             <RideScene />
