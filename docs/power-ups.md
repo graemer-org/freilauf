@@ -66,12 +66,14 @@ Power-ups never change the trainer's resistance either.
 - **Group rides**: allowed by default. The host can switch them off for everyone under
   **Group → Power-ups in this ride**; guests then see "The host has switched power-ups off".
 
-## In a Card Race
+## In Freilauf Rumble
 
-A group ride can be a [Card Race](card-race.md): power-ups become **cards**, you hold two
-(left and right side button, or P and L), and next to the four boosts there are gentle attacks
-(Headwind on the rider directly ahead, Fog on the leader) and a Shield. The fairness rule stays:
-only race positions move — there, after attacks, also backwards ("−24 m from attacks").
+A group ride can be a [Freilauf Rumble](rumble.md): the gates become **feed bags** at the
+roadside (same spacing, same spots for everyone on a route), each gives a random **item**, and
+you hold two (left and right side button, or P and L). Next to the four boosts there are a water
+bottle for the rider directly ahead, a mud puddle to drop behind you, hornets for the leader and
+a rain cape. The fairness rule stays: only race positions move — there, after hits, also
+backwards ("−24 m from hits").
 
 ## Settings
 

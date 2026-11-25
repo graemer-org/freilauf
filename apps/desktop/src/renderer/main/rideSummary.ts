@@ -31,10 +31,10 @@ export interface RideSummary {
    */
   powerUpGainM?: number;
   /**
-   * Card Race only: the race offset split into metres gained from own cards (≥ 0) and lost to
-   * attacks (≤ 0), each shown on its own line ("+38 m from cards", "−24 m from attacks").
+   * Freilauf Rumble only: the race offset split into metres gained from own items (≥ 0) and lost
+   * to hits (≤ 0), each shown on its own line ("+38 m from items", "−24 m from hits").
    */
-  cards?: { gainM: number; lossM: number } | null;
+  rumble?: { gainM: number; lossM: number } | null;
   /**
    * Energy estimates (docs/energy.md): kcal from power, the heart-rate cross-check and the
    * fat/carbohydrate split. null when the ride was not kept or has neither power nor a
@@ -56,8 +56,8 @@ export interface SummarizeInput {
   routeName: string | null;
   /** Race offset from power-ups at the finish (m); absent = 0. */
   powerUpGainM?: number;
-  /** Card Race: gain from cards and loss to attacks at the finish (m). */
-  cards?: { gainM: number; lossM: number } | null;
+  /** Rumble: gain from items and loss to hits at the finish (m). */
+  rumble?: { gainM: number; lossM: number } | null;
   /** Age and sex for the heart-rate estimate (Settings.rider); absent = none. */
   rider?: { ageYears?: number | null; sex?: string | null; ftpW?: number | null } | null;
 }
@@ -113,14 +113,14 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
     workoutName: input.workoutName,
     routeName: input.routeName,
     powerUpGainM: gain > 0 && Number.isFinite(gain) ? Math.round(gain) : 0,
-    ...(input.cards
+    ...(input.rumble
       ? {
-          cards: {
-            gainM: Number.isFinite(input.cards.gainM)
-              ? Math.max(0, Math.round(input.cards.gainM))
+          rumble: {
+            gainM: Number.isFinite(input.rumble.gainM)
+              ? Math.max(0, Math.round(input.rumble.gainM))
               : 0,
-            lossM: Number.isFinite(input.cards.lossM)
-              ? Math.min(0, Math.round(input.cards.lossM))
+            lossM: Number.isFinite(input.rumble.lossM)
+              ? Math.min(0, Math.round(input.rumble.lossM))
               : 0,
           },
         }

@@ -6,7 +6,7 @@ import type {
   PowerUpLive,
 } from '../../../shared/powerUps';
 import { POWER_UP_HINT, POWER_UP_INFO, formatRaceGain } from '../../../shared/powerUps';
-import { CardHand } from './CardHand';
+import { ItemSlots } from './ItemSlots';
 import { useApp, useAppState } from './hooks';
 import { PowerUpIcon } from './PowerUpIcon';
 
@@ -254,8 +254,8 @@ export function PowerUpHud() {
   const riding = useAppState((s) => s.live?.ride.state === 'riding');
   const cue = useCue(pu?.event ?? null);
   if (!pu) return null;
-  // Card Race: the two-card hand instead of the single card (docs/card-race.md).
-  if (pu.cards) return <CardHand />;
+  // Freilauf Rumble: the two item slots instead of the single power-up (docs/rumble.md).
+  if (pu.rumble) return <ItemSlots />;
   return (
     <PowerUpDockView
       pu={pu}

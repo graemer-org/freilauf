@@ -1,11 +1,18 @@
 # ADR 0007 — Card Race: attacks as events, signed race offset, compatibility
 
-Status: accepted · 2026-11-25
+Status: **superseded** by [ADR 0008](0008-rumble-items.md) · 2026-11-25
+
+> This ADR records the first version of the battle mode, built as a hand of cards ("Card
+> Race") from a misheard request — the maintainer asked for a mode like go-kart racing games.
+> ADR 0008 keeps its mechanics (attacks as events with ids and acks, exactly-once delivery,
+> validation, protection, the signed race offset, marking old apps) and replaces the
+> presentation, the items and the wire format (v2: `items`, `rumble-*`, `puddle-*`). The text
+> below is kept as it was decided.
 
 ## Context
 
 The maintainer agreed to a battle mode for group rides, built on power-ups
-([ADR 0006](0006-power-ups.md)), rider guide [card-race.md](../card-race.md):
+([ADR 0006](0006-power-ups.md)), rider guide then `card-race.md` (now [rumble.md](../rumble.md)):
 
 - a separate mode chosen by whoever creates the ride ("Normal" or "Card Race"), visible to
   everyone in the room; the display name lives in one constant (`CARD_RACE_NAME`);

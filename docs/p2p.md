@@ -32,23 +32,23 @@ A ride uses one of the two; the invite says which (see "Invites").
 
 Layers inside `@freilauf/p2p`:
 
-| Module                     | Responsibility                                                                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `roomCode.ts`              | Room codes, invite secrets, `freilauf://join/…` links, parsing incl. typos                                                            |
-| `transport.ts`             | `GroupTransport`: what `GroupRide` needs from the network; `GroupError`                                                               |
-| `transports/relay.ts`      | `RelayTransport` (default): a Trystero room; `DEFAULT_RELAY_URLS`, app id                                                             |
-| `transports/selfHosted.ts` | `SignallingMeshTransport` (fallback): signalling channel + `PeerMesh`                                                                 |
-| `ice.ts`                   | Default STUN servers                                                                                                                  |
-| `signalling/channel.ts`    | Fallback: `SignallingChannel` interface (pluggable)                                                                                   |
-| `signalling/websocket.ts`  | Fallback: `WebSocketSignalling`, reconnects                                                                                           |
-| `signalling/protocol.ts`   | Fallback: client copy of the wire protocol (see "Protocol source of truth")                                                           |
-| `webrtc.ts`                | Fallback: structural WebRTC types, default factory                                                                                    |
-| `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                 |
-| `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                  |
-| `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                               |
-| `cardRace.ts`              | Card Race attacks: messages, `AttackInbox` (exactly once, checks), `AttackOutbox` (retries)                                           |
-| `group.ts`                 | `GroupRide`: the API the app uses                                                                                                     |
-| `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`) |
+| Module                     | Responsibility                                                                                                                            |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `roomCode.ts`              | Room codes, invite secrets, `freilauf://join/…` links, parsing incl. typos                                                                |
+| `transport.ts`             | `GroupTransport`: what `GroupRide` needs from the network; `GroupError`                                                                   |
+| `transports/relay.ts`      | `RelayTransport` (default): a Trystero room; `DEFAULT_RELAY_URLS`, app id                                                                 |
+| `transports/selfHosted.ts` | `SignallingMeshTransport` (fallback): signalling channel + `PeerMesh`                                                                     |
+| `ice.ts`                   | Default STUN servers                                                                                                                      |
+| `signalling/channel.ts`    | Fallback: `SignallingChannel` interface (pluggable)                                                                                       |
+| `signalling/websocket.ts`  | Fallback: `WebSocketSignalling`, reconnects                                                                                               |
+| `signalling/protocol.ts`   | Fallback: client copy of the wire protocol (see "Protocol source of truth")                                                               |
+| `webrtc.ts`                | Fallback: structural WebRTC types, default factory                                                                                        |
+| `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                     |
+| `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                      |
+| `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                                   |
+| `rumble.ts`                | Freilauf Rumble: attack and puddle-claim messages (v2), inboxes (exactly once, checks), outboxes (retries), `PuddleLedger`, `PuddleWatch` |
+| `group.ts`                 | `GroupRide`: the API the app uses                                                                                                         |
+| `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`)     |
 
 All host dependencies (Trystero, `WebSocket`, `RTCPeerConnection`, timers, clock) are
 injectable; the defaults use the renderer's globals. Trystero is loaded with a dynamic
@@ -289,26 +289,45 @@ rule. The `state` decoder rejects every `doc-*` message (wrong `type`), the docu
 rejects `state`, so old clients that only know `state` interoperate with new ones (they simply
 never see documents), and new clients do not send any `doc-*` traffic until something is shared.
 
-### Card Race (`cards`, `card-attack`, `card-ack`)
+### Freilauf Rumble (`items`, `rumble-*`, `puddle-*`) — version 2
 
-Additive, for the Card Race ([ADR 0007](adr/0007-card-race.md)). The host's `rules` may carry
-`"mode": "cardRace"` (unknown modes count as normal). Every capable client adds
-`"cards": { "v": 1, … }` to its state — the capability marker; in a Card Race it also carries the
-signed race offset (`offsetM`, −100 km … 100 km; the plain `raceOffsetM` stays ≥ 0 for old
-clients), the attack acting on the rider (`attack: { kind, s }`), `shieldS`, `protectedS`,
-`held` and `away`. Attacks are messages to one peer, answered by an ack:
+Additive, for Freilauf Rumble ([ADR 0008](adr/0008-rumble-items.md); version 1, the `cards`
+field and `card-*` messages of [ADR 0007](adr/0007-card-race.md), is superseded and no longer
+read — an app that sends it counts as one without the Rumble). The host's `rules` may carry
+`"mode": "rumble"` (unknown modes, including ADR 0007's old one, count as normal). Every
+capable client adds `"items": { "v": 2, … }` to its state — the capability marker; in a Rumble
+it also carries the signed race offset (`offsetM`, −100 km … 100 km; the plain `raceOffsetM`
+stays ≥ 0 for old clients), the hit slowing the rider (`hit: { kind, s }`), `capeS`,
+`protectedS`, `held`, `away`, and the rider's mud puddles:
 
 ```jsonc
-{ "v": 1, "type": "card-attack", "id": "k3j2a9x1.4", "to": "<peer id>", "kind": "headwind",
-  "gapM": 38.5, "raceM": 4231.0, "routeId": "isar-loop" } // routeId optional
-{ "v": 1, "type": "card-ack", "id": "k3j2a9x1.4", "result": "hit" } // blocked | protected | unavailable | refused
+"puddles": [ { "id": "q8x2m1zz.3", "routeId": "isar-loop", "m": 4213.5, "s": 41.2 },
+             { "id": "q8x2m1zz.2", "m": 3990.0, "s": 0, "used": true } ] // ≤ 4, distinct ids
 ```
 
-`GroupRide.sendAttack(to, payload)` re-sends on the mesh every 400 ms until acknowledged (once on
-the relay transport) and reports one outcome per attack (`onAttackResult`, or `timeout` after
-5 s). The receiver checks target, membership, replays (the last 64 ids per sender are
-remembered and re-acknowledged with their first verdict) and a rate limit (3 per 30 s, 1 s
-apart) before calling the app's handler (`setAttackHandler`) at most once per id. ≤ 512 bytes.
+A puddle lies at a race position: route metres + race offset on `routeId`, or (without
+`routeId`) ridden metres + race offset; `s` is the seconds until it dries up; `used` marks one
+that hit someone (sent for 3 s, then left out). Aimed attacks and puddle claims are messages to
+one peer, answered by an ack:
+
+```jsonc
+{ "v": 2, "type": "rumble-attack", "id": "k3j2a9x1.4", "to": "<peer id>", "kind": "bottle",
+  "gapM": 38.5, "raceM": 4231.0, "routeId": "isar-loop" } // routeId optional; kind bottle | hornets
+{ "v": 2, "type": "rumble-ack", "id": "k3j2a9x1.4", "result": "hit" } // blocked | protected | unavailable | refused
+{ "v": 2, "type": "puddle-claim", "id": "c7d1p0aa.2", "to": "<dropper>", "puddle": "q8x2m1zz.3",
+  "raceM": 4214.0, "routeId": "isar-loop" }
+{ "v": 2, "type": "puddle-ack", "id": "c7d1p0aa.2", "result": "granted" } // taken | gone | refused
+```
+
+`GroupRide.sendAttack(to, payload)` and `GroupRide.claimPuddle(dropper, payload)` re-send on the
+mesh every 400 ms until acknowledged (once on the relay transport) and report one outcome per
+event (`onAttackResult` / `onClaimResult`, or `timeout` after 5 s). The receiver checks target,
+membership, replays (the last 64 ids per sender are remembered and re-acknowledged with their
+first verdict) and a rate limit (attacks 3 per 30 s and 1 s apart, claims 6 per 30 s) before
+calling the app's handler (`setAttackHandler` / `setPuddleClaimHandler`) at most once per id.
+The dropper decides its own puddles with `PuddleLedger` (the first plausible claim is
+`granted`, later ones `taken`, a repeat by the same claimer `granted` again); each rider finds
+the puddles it rode through with `PuddleWatch`. ≤ 512 bytes per message.
 
 ### Shared-document messages (`doc-*`)
 
@@ -528,8 +547,9 @@ Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front and use the
 
 Trust-based, among friends: no anti-cheat, no authentication. Anyone with the whole invite
 (relays) or the room code (own server) can join. Peers can lie about their speed, but they cannot crash or corrupt other clients' UIs —
-every incoming packet is validated and bounded. Card Race attacks are additionally checked for
-target, membership, replays, rate and plausibility, so nobody can be pinned down.
+every incoming packet is validated and bounded. Freilauf Rumble attacks and puddle claims are
+additionally checked for target, membership, replays, rate and plausibility, so nobody can be
+pinned down, and a puddle hits one rider at most.
 
 ## Testing
 

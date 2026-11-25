@@ -65,14 +65,14 @@ function useRideShortcuts(app: App): void {
         case 'p':
         case 'P':
           if (e.repeat) return;
-          // In a Card Race: the left card (docs/card-race.md); otherwise the held power-up.
+          // In a Rumble: the left item (docs/rumble.md); otherwise the held power-up.
           app.usePowerUp('keyboard');
           break;
         case 'l':
         case 'L':
-          // Card Race only: the right card.
-          if (e.repeat || !app.store.getState().live?.powerUps?.cards) return;
-          app.playCard(1, 'keyboard');
+          // Rumble only: the right item.
+          if (e.repeat || !app.store.getState().live?.powerUps?.rumble) return;
+          app.useItem(1, 'keyboard');
           break;
         case 'Escape':
           // Cancels a countdown before the ride starts or resumes; otherwise not ours.
@@ -544,7 +544,7 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
   const onRoute = useAppState((s) => routeTrackOf(s) !== null);
   const gradientLocked = useAppState((s) => onRouteOrLocked(s));
   const powerUpsOn = useAppState((s) => s.settings?.powerUps?.enabled !== false);
-  const cardRace = useAppState((s) => s.live?.group?.mode === 'cardRace');
+  const rumble = useAppState((s) => s.live?.group?.mode === 'rumble');
   return (
     <>
       <div
@@ -597,10 +597,10 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
           <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) · <kbd>Space</kbd> start /
           pause
           {powerUpsOn &&
-            (cardRace ? (
+            (rumble ? (
               <>
                 {' '}
-                · <kbd>P</kbd> <kbd>L</kbd> play left / right card
+                · <kbd>P</kbd> <kbd>L</kbd> use left / right item
               </>
             ) : (
               <>

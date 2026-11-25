@@ -24,6 +24,9 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
     sendAttack: (to, payload) => ride.sendAttack(to, payload),
     onAttackResult: (listener) => ride.onAttackResult(listener),
     setAttackHandler: (handler) => ride.setAttackHandler(handler),
+    claimPuddle: (dropper, payload) => ride.claimPuddle(dropper, payload),
+    onClaimResult: (listener) => ride.onClaimResult(listener),
+    setPuddleClaimHandler: (handler) => ride.setPuddleClaimHandler(handler),
     leave: () => ride.leave(),
 
     shareWorkout: (text) => {

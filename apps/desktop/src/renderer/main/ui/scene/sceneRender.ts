@@ -8,13 +8,18 @@
 import type { ScenePalette } from './palette';
 import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
 import {
-  drawGustsSide,
-  drawHaze,
+  arcPoint,
+  drawBottle,
+  drawCape,
+  drawDrips,
+  drawFeedBag,
+  drawMudSpatter,
   drawProtection,
-  drawPulse,
+  drawPuddle,
   drawRiderFx,
-  drawShield,
-} from './cardFx';
+  drawSplash,
+  drawSwarm,
+} from './rumbleFx';
 import { BIKE, BODY, computePose, createPose, type Point, type Pose } from './riderPose';
 import {
   formatGrade,
@@ -218,8 +223,10 @@ export class SceneRenderer {
     this.others(f, slope, otherLat);
     if (pu) this.boostAura(f, pu, slope, p);
     if (localLat >= otherLat) this.localRider(f, slope);
-    if (pu) this.gates(pu, slope, p, true);
-    if (pu?.cards) this.cardsLocal(f, pu, slope, p);
+    if (pu && !pu.feedBags) this.gates(pu, slope, p, true);
+    // The feed bag hangs over the lane: drawn over the riders, who ride past it.
+    if (pu?.feedBags) this.feedBags(pu, slope, p);
+    if (pu?.rumble) this.rumbleLocal(f, pu, slope, p);
 
     this.gradeLabel(f.gradeLabel, slope, p);
     if (pu) this.gateTag(pu, slope, p);
@@ -592,18 +599,22 @@ export class SceneRenderer {
     ctx.roundRect(x, y, pw, ph, ph / 2);
     ctx.fill();
     ctx.stroke();
-    // A small arch glyph, then the distance.
+    // A small glyph (an arch, or the feed bag in a Rumble), then the distance.
     const gx = x + fs * 0.75;
     const gy = y + ph / 2;
-    ctx.strokeStyle = p.boost;
-    ctx.lineWidth = 1.6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(gx, gy + chev * 0.45);
-    ctx.lineTo(gx, gy - chev * 0.1);
-    ctx.quadraticCurveTo(gx + chev * 0.5, gy - chev * 0.75, gx + chev, gy - chev * 0.1);
-    ctx.lineTo(gx + chev, gy + chev * 0.45);
-    ctx.stroke();
+    if (pu.feedBags) {
+      drawFeedBag(ctx, p, gx + chev / 2, gy - chev * 0.62, chev * 0.62);
+    } else {
+      ctx.strokeStyle = p.boost;
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(gx, gy + chev * 0.45);
+      ctx.lineTo(gx, gy - chev * 0.1);
+      ctx.quadraticCurveTo(gx + chev * 0.5, gy - chev * 0.75, gx + chev, gy - chev * 0.1);
+      ctx.lineTo(gx + chev, gy + chev * 0.45);
+      ctx.stroke();
+    }
     ctx.fillStyle = p.ink;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -611,9 +622,13 @@ export class SceneRenderer {
     ctx.restore();
   }
 
-  /** On the road: the far halves of gates, and Downhill momentum's chevrons while armed/active. */
+  /**
+   * On the road: the far halves of gates (or, in a Rumble, the feed bags and the mud puddles),
+   * and Downhill momentum's chevrons while armed/active.
+   */
   private boostRoad(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
-    this.gates(pu, slope, p, false);
+    if (!pu.feedBags) this.gates(pu, slope, p, false);
+    if (pu.rumble) this.puddles(pu, slope, p);
     if (pu.effect !== 'downhill' || pu.phase === null) return;
     const ctx = this.ctx;
     const k = this.px;
@@ -692,23 +707,152 @@ export class SceneRenderer {
   }
 
   /**
-   * Card Race on the local rider: Headwind's gusts arriving from ahead, the Shield's bubble,
-   * the protection ring with its countdown, a pulse when an attack lands or is blocked, and
-   * Fog's haze over the whole view (the gaps are hidden in the panels, not here).
+   * Freilauf Rumble's pick-ups: a feed bag held out over the lane from a slim stand at the far
+   * road edge, at shoulder height, so the rider rides past and takes it. Quieter while both
+   * slots are full (riding past it then takes nothing).
    */
-  private cardsLocal(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
-    const c = pu.cards!;
+  private feedBags(pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
     const ctx = this.ctx;
     const k = this.px;
+    const reach = (this.w - this.riderX) / k + 1;
+    const back = this.riderX / k + 1;
+    for (const g of pu.gates) {
+      if (g > reach || g < -back) continue;
+      const x = this.aheadX(g);
+      const yRoad = this.roadY(x, slope);
+      const yFar = yRoad - this.halfDepth;
+      const postX = x + 0.35 * k;
+      const top = yFar - 1.75 * k;
+      const hookX = x - 0.05 * k;
+      const hookY = yRoad - 1.55 * k;
+      ctx.save();
+      ctx.globalAlpha = pu.holding ? 0.45 : 1;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      // The stand and its arm reaching over the lane.
+      ctx.strokeStyle = p.ink2;
+      ctx.lineWidth = Math.max(1.5, 0.045 * k);
+      ctx.beginPath();
+      ctx.moveTo(postX, yFar);
+      ctx.lineTo(postX, top);
+      ctx.lineTo(hookX, hookY - 0.12 * k);
+      ctx.lineTo(hookX, hookY);
+      ctx.stroke();
+      // A soft marker on the road where to ride past.
+      ctx.fillStyle = p.boostFaint;
+      ctx.beginPath();
+      ctx.ellipse(x, yRoad + 0.1 * this.halfDepth, 0.6 * k, this.halfDepth * 0.35, 0, 0, TAU);
+      ctx.fill();
+      drawFeedBag(ctx, p, hookX, hookY, 0.55 * k, Math.sin(pu.timeS * 1.6 + g) * 0.06);
+      ctx.restore();
+    }
+  }
+
+  /** Mud puddles on the road (own ones behind the rider, others' ahead), lying across the lane. */
+  private puddles(pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const reach = (this.w - this.riderX) / this.px + 1;
+    const back = this.riderX / this.px + 1;
+    for (const pd of pu.rumble!.puddles) {
+      if (pd.aheadM > reach || pd.aheadM < -back) continue;
+      const x = this.aheadX(pd.aheadM);
+      const y = this.roadY(x, slope) + 0.12 * this.halfDepth;
+      drawPuddle(this.ctx, p, x, y, 0.8 * this.px, this.halfDepth * 0.42, pd.own ? 0.8 : 1);
+    }
+  }
+
+  /** Where another rider is drawn (contact point) and their scale, or null when not on screen. */
+  private otherPoint(
+    f: SceneFrame,
+    id: string | null,
+    slope: number,
+  ): { x: number; y: number; k: number } | null {
+    if (!id) return null;
+    const o = f.others.find((r) => r.id === id);
+    if (!o || !o.onRoad) return null;
+    const ahead = this.w - this.riderX - this.px * 0.9;
+    const behind = this.riderX - this.px * 0.9;
+    const x = this.riderX + o.offset * (o.offset >= 0 ? ahead : behind);
+    if (x < 0 || x > this.w) return null;
+    const pt = { x: 0, y: 0 };
+    const scale = this.place(x, -0.62, slope, pt) * 0.94;
+    return {
+      x: pt.x + 0.05 * this.px * scale,
+      y: pt.y - 0.85 * this.px * scale,
+      k: this.px * scale,
+    };
+  }
+
+  /**
+   * Freilauf Rumble on the local rider: what slows it (water dripping off, mud spattered,
+   * hornets buzzing round the head), the rain cape, the protection ring with its countdown, the
+   * splash when a hit lands; a bottle or the swarm flying in from behind (the left); and this
+   * rider's own bottle arcing to the rider ahead, or the swarm flying along the road to the
+   * leader — out of the frame ahead when they are further than the view.
+   */
+  private rumbleLocal(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const c = pu.rumble!;
+    const ctx = this.ctx;
+    const k = this.px;
+    const reduced = f.reducedMotion;
     const x = this.riderX + 0.05 * k;
     const y = this.roadY(this.riderX, slope) + f.lateral * this.halfDepth * 0.62 - 0.85 * k;
-    if (c.attack === 'headwind') drawGustsSide(ctx, p, x, y, k, pu.timeS, f.reducedMotion);
-    if (c.shield) drawShield(ctx, p, x, y, 1.2 * k, 1.08 * k);
+    if (c.hit === 'bottle') drawDrips(ctx, p, x, y, k, pu.timeS, reduced);
+    if (c.hit === 'puddle') drawMudSpatter(ctx, p, x, y, k);
+    if (c.hit === 'hornets')
+      drawSwarm(ctx, p, x + 0.1 * k, y - 0.8 * k, 0.6 * k, pu.timeS, reduced);
+    if (c.cape) drawCape(ctx, p, x, y, 1.2 * k, 1.08 * k);
     if (c.protection >= 0) drawProtection(ctx, p, x, y, 1.25 * k, 1.12 * k, c.protection);
     if (c.pulse >= 0 && c.pulseKind) {
-      drawPulse(ctx, p, x, y, 1.15 * k, c.pulse, c.pulseKind, f.reducedMotion);
+      drawSplash(ctx, p, x, y - 0.2 * k, 1.0 * k, c.pulse, c.pulseKind, c.pulseItem, reduced);
     }
-    if (c.attack === 'fog') drawHaze(ctx, p, this.w, this.h, this.horizonY);
+    const inc = c.incoming;
+    if (inc) {
+      // From behind: in from the left edge.
+      const t = reduced ? 0.8 : inc.t;
+      if (inc.kind === 'bottle') {
+        const y0 = y - 0.6 * k;
+        const pt = arcPoint(-0.4 * k, y0, x, y - 0.3 * k, this.arcLift(y0, k), t);
+        drawBottle(ctx, p, pt.x, pt.y, 0.36 * k, reduced ? 0.6 : t * 9);
+      } else {
+        const sx = -0.6 * k + (x + 0.6 * k) * t;
+        drawSwarm(ctx, p, sx, y - 0.8 * k, 0.45 * k, pu.timeS, reduced, 6);
+      }
+    }
+    const th = c.throw;
+    if (th) {
+      const target = this.otherPoint(f, th.targetId, slope);
+      const tx = target?.x ?? this.w + 1.5 * k;
+      const ty = target?.y ?? y - 1.2 * k;
+      if (th.splash < 0) {
+        const t = reduced ? 0.55 : th.t;
+        if (th.kind === 'bottle') {
+          const y0 = y - 0.5 * k;
+          const pt = arcPoint(x + 0.3 * k, y0, tx, ty, this.arcLift(Math.min(y0, ty), k), t);
+          drawBottle(ctx, p, pt.x, pt.y, 0.36 * k, reduced ? 0.6 : t * 10);
+        } else {
+          const sx = x + (tx - x) * t;
+          const sy = y - 0.9 * k + (ty - 0.6 * (target?.k ?? k) - (y - 0.9 * k)) * t;
+          drawSwarm(ctx, p, sx, sy, 0.45 * k, pu.timeS, reduced, 6);
+        }
+      } else if (target && th.splashKind) {
+        drawSplash(
+          ctx,
+          p,
+          tx,
+          ty - 0.2 * target.k,
+          target.k,
+          th.splash,
+          th.splashKind,
+          th.kind,
+          reduced,
+        );
+      }
+    }
+  }
+
+  /** How high a thrown bottle arcs: about a metre, but its top stays inside the scene. */
+  private arcLift(fromY: number, k: number): number {
+    return Math.max(0.2 * k, Math.min(1.0 * k, fromY - this.h * 0.1));
   }
 
   /** Slipstream: a faint rider just ahead, as if riding in their wheel. */
@@ -784,7 +928,6 @@ export class SceneRenderer {
           k,
           f.powerUps?.timeS ?? 0,
           f.reducedMotion,
-          'side',
         );
       }
       // Name above the head.

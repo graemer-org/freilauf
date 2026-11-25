@@ -1,13 +1,13 @@
 /**
- * How a group ride plays (docs/card-race.md): chosen by whoever creates it — normal power-ups,
- * or the Card Race — and shown to everyone in the room. Riders whose app has no Card Race are
- * named.
+ * How a group ride plays (docs/rumble.md): chosen by whoever creates it — normal power-ups, or
+ * Freilauf Rumble — and shown to everyone in the room. Riders whose app has no Freilauf Rumble
+ * are named.
  */
 import type { GroupRider } from '@freilauf/p2p';
 import { useShallow } from 'zustand/react/shallow';
 import type { GroupMode } from '../../../shared/powerUps';
-import { CARD_RACE_NAME, GROUP_MODE_LABEL } from '../../../shared/powerUps';
-import { incompatibleNote, incompatibleRiders } from '../../core/cardRace';
+import { GROUP_MODE_LABEL, RUMBLE_NAME } from '../../../shared/powerUps';
+import { incompatibleNote, incompatibleRiders } from '../../core/rumble';
 import type { AppState } from '../appStore';
 import { useApp, useAppState } from './hooks';
 import { PowerUpIcon } from './PowerUpIcon';
@@ -16,7 +16,7 @@ import { GroupPowerUps } from './PowerUpSettings';
 /** One line on what each mode is. */
 export const MODE_BLURB: Record<GroupMode, string> = {
   normal: 'Power-ups as usual: each rider helps only themselves.',
-  cardRace: `Hold two cards, play them with the side buttons. Slow the rider ahead with a headwind, fog the leader, raise a shield. Only race positions move; recorded rides stay your own.`,
+  rumble: `Grab items from feed bags and use them with the side buttons: throw a water bottle at the rider ahead, drop a mud puddle behind you, send hornets after the leader, pull on a rain cape. Only race positions move; recorded rides stay your own.`,
 };
 
 /** The mode that applies: the host's own choice, or the host's as received. */
@@ -25,11 +25,11 @@ export function groupModeOf(s: AppState): GroupMode {
   return s.live?.group?.mode ?? 'normal';
 }
 
-/** A small label: "Card Race" (with its icon) or "Normal". */
+/** A small label: "Freilauf Rumble" (with its icon) or "Normal". */
 export function ModeBadge({ mode }: { mode: GroupMode }) {
   return (
     <span className={`mode-badge is-${mode}`} data-testid="group-mode-badge" data-mode={mode}>
-      <PowerUpIcon kind={mode === 'cardRace' ? 'headwind' : 'tailwind'} />
+      <PowerUpIcon kind={mode === 'rumble' ? 'feedBag' : 'tailwind'} />
       {GROUP_MODE_LABEL[mode]}
     </span>
   );
@@ -46,7 +46,7 @@ function ModeSwitch({
 }) {
   return (
     <div className="seg" role="group" aria-label="Mode of the group ride" data-testid={testId}>
-      {(['normal', 'cardRace'] as const).map((m) => (
+      {(['normal', 'rumble'] as const).map((m) => (
         <button
           key={m}
           type="button"
@@ -76,11 +76,11 @@ export function ModeChoice() {
   );
 }
 
-/** Names of riders in the room whose app does not speak the Card Race (only in one). */
+/** Names of riders in the room whose app does not speak Freilauf Rumble (only in one). */
 function useIncompatible(): string[] {
   return useAppState(
     useShallow((s) =>
-      groupModeOf(s) === 'cardRace'
+      groupModeOf(s) === 'rumble'
         ? incompatibleRiders(s.live?.group?.riders ?? ([] as GroupRider[])).map((r) => r.name)
         : [],
     ),
@@ -111,16 +111,16 @@ export function GroupModeRow({ role }: { role: 'host' | 'guest' }) {
           <span className="hint">Chosen by the host</span>
         )}
       </div>
-      {mode === 'cardRace' && (
+      {mode === 'rumble' && (
         <p className="hint group-mode-note">
           {role === 'host'
-            ? `Everyone plays ${CARD_RACE_NAME}: two cards each, gentle attacks, protection after every hit.`
-            : `Two cards each, played with the side buttons (P and L). Attacks only move race positions.`}
+            ? `Everyone plays ${RUMBLE_NAME}: two item slots each, gentle hits, protection after every hit.`
+            : `Two item slots each, used with the side buttons (P and L). Hits only move race positions.`}
         </p>
       )}
       {note && (
         <p className="mode-incompatible" data-testid="group-mode-incompatible" role="status">
-          {`${note}: they ride along with normal power-ups and cannot be attacked.`}
+          {`${note}: they ride along with normal power-ups and nothing can hit them.`}
         </p>
       )}
       {mode === 'normal' && <GroupPowerUps role={role} />}

@@ -10,15 +10,23 @@ import {
 import {
   AttackInbox,
   AttackOutbox,
+  ClaimInbox,
+  ClaimOutbox,
   attackEpoch,
-  decodeCardMessage,
+  decodeRumbleMessage,
   encodeAck,
+  encodeClaimAck,
   type AttackMessage,
   type AttackOutcomeEvent,
   type AttackPayload,
   type AttackVerdict,
+  type ClaimMessage,
+  type ClaimOutcomeEvent,
+  type ClaimPayload,
+  type ClaimVerdict,
   type IncomingAttack,
-} from './cardRace';
+  type IncomingClaim,
+} from './rumble';
 import {
   decodeStateMessage,
   encodeStateMessage,
@@ -128,13 +136,22 @@ interface GroupRideEvents {
   problem: TransportProblem;
   log: TransportLog;
   'attack-result': AttackOutcomeEvent;
+  'claim-result': ClaimOutcomeEvent;
 }
 
 /**
- * Decides what an incoming Card Race attack does (the app: plausibility, protection, shield)
+ * Decides what an incoming Rumble attack does (the app: plausibility, protection, rain cape)
  * and applies it to the local rider. Called at most once per attack id.
  */
 export type AttackHandler = (attack: IncomingAttack) => AttackVerdict;
+
+/**
+ * Decides a claim on one of the local rider's mud puddles (the app: the puddle is live and
+ * unused, the claimer plausibly rode through it). The first claim it grants is the puddle's one
+ * hit; it must answer every later claim on that puddle with 'taken' (and a repeat by the same
+ * claimer with 'granted' again). Called at most once per claim id.
+ */
+export type ClaimHandler = (claim: IncomingClaim) => ClaimVerdict;
 
 /** Problems are kept this long for `getProblems()`. */
 const PROBLEM_KEEP_MS = 60_000;
@@ -169,6 +186,9 @@ export class GroupRide {
   readonly #inbox = new AttackInbox();
   #outbox: AttackOutbox;
   #attackHandler: AttackHandler | null = null;
+  readonly #claimInbox = new ClaimInbox();
+  #claimOutbox: ClaimOutbox;
+  #claimHandler: ClaimHandler | null = null;
 
   /** Creates a new room with a random code (and, for relay rides, a new secret) and joins it. */
   static create(name: string, deps: GroupRideDeps): Promise<GroupRide> {
@@ -249,6 +269,12 @@ export class GroupRide {
       send: (to, raw) => transport.send(to, raw),
       done: (outcome) => this.#events.emit('attack-result', outcome),
     });
+    this.#claimOutbox = new ClaimOutbox({
+      epoch: attackEpoch(),
+      retry: transport.kind === 'self-hosted',
+      send: (to, raw) => transport.send(to, raw),
+      done: (outcome) => this.#events.emit('claim-result', outcome),
+    });
     const changed = () => this.#events.emit('change', undefined);
     this.#unsubscribe = [
       // Synchronous, and strictly before any message from or to that peer passes the transport
@@ -262,10 +288,12 @@ export class GroupRide {
           if (this.#riders.ingest(peerId, state, this.#now())) changed();
           return;
         }
-        const card = decodeCardMessage(data);
-        if (card) {
-          if (card.type === 'card-ack') this.#outbox.ack(peerId, card);
-          else this.#onAttack(peerId, card);
+        const rumble = decodeRumbleMessage(data);
+        if (rumble) {
+          if (rumble.type === 'rumble-ack') this.#outbox.ack(peerId, rumble);
+          else if (rumble.type === 'rumble-attack') this.#onAttack(peerId, rumble);
+          else if (rumble.type === 'puddle-ack') this.#claimOutbox.ack(peerId, rumble);
+          else this.#onClaim(peerId, rumble);
           return;
         }
         this.#docs.handleMessage(peerId, data); // ignores anything that is not a doc message
@@ -275,6 +303,8 @@ export class GroupRide {
         this.#docs.removePeer(peerId);
         this.#inbox.removePeer(peerId);
         this.#outbox.removePeer(peerId);
+        this.#claimInbox.removePeer(peerId);
+        this.#claimOutbox.removePeer(peerId);
         changed();
       }),
       transport.on('status', ({ peerId, status }) => {
@@ -432,19 +462,16 @@ export class GroupRide {
     return this.#events.on('peer-joined', listener);
   }
 
-  // ---- Card Race attacks (docs/adr/0007-card-race.md) ---------------------------------------
+  // ---- Freilauf Rumble (docs/adr/0008-rumble-items.md) ---------------------------------------
 
   /**
-   * Sends a Card Race attack to `to`. `payload` is read now and again for every re-send, so
+   * Sends a Rumble attack to `to`. `payload` is read now and again for every re-send, so
    * re-sends carry fresh positions (same id: the target applies it once). The outcome arrives
    * once through `onAttackResult` (the target's verdict, or 'timeout'). Returns the attack id,
    * or null when `to` is not connected or the payload is null.
    */
   sendAttack(to: string, payload: () => AttackPayload | null): string | null {
-    if (this.#left) return null;
-    if (!this.#transport.getPeers().some((p) => p.peerId === to && p.status === 'connected')) {
-      return null;
-    }
+    if (this.#left || !this.#connected(to)) return null;
     return this.#outbox.send(to, payload, this.#now());
   }
 
@@ -461,6 +488,32 @@ export class GroupRide {
    */
   setAttackHandler(handler: AttackHandler | null): void {
     this.#attackHandler = handler;
+  }
+
+  /**
+   * Claims the hit of a mud puddle that `dropper` broadcasts and the local rider just rode
+   * through. Delivered like an attack (re-sent until answered on the mesh, decided once); the
+   * outcome arrives once through `onClaimResult` — 'granted' means this rider is the one the
+   * puddle hits. Null when the dropper is not connected or the payload is null.
+   */
+  claimPuddle(dropper: string, payload: () => ClaimPayload | null): string | null {
+    if (this.#left || !this.#connected(dropper)) return null;
+    return this.#claimOutbox.send(dropper, payload, this.#now());
+  }
+
+  /** What became of each puddle claim this rider sent; exactly one event per claim. */
+  onClaimResult(listener: (outcome: ClaimOutcomeEvent) => void): Unsubscribe {
+    return this.#events.on('claim-result', listener);
+  }
+
+  /**
+   * Sets the handler for claims on the local rider's puddles (null removes it; without one,
+   * claims are answered 'gone'). Checked first like attacks: meant for this rider, from a rider
+   * of this room, duplicates answered again without asking the handler, not a replay, at most
+   * a few per sender.
+   */
+  setPuddleClaimHandler(handler: ClaimHandler | null): void {
+    this.#claimHandler = handler;
   }
 
   // ---- shared documents (see docs/p2p.md, "Shared documents") ---------------------------------
@@ -521,6 +574,8 @@ export class GroupRide {
     this.#docs.close();
     this.#outbox.clear();
     this.#attackHandler = null;
+    this.#claimOutbox.clear();
+    this.#claimHandler = null;
     for (const off of this.#unsubscribe) off();
     this.#transport.close();
     this.#riders.clear();
@@ -528,11 +583,13 @@ export class GroupRide {
     this.#events.clear();
   }
 
+  #connected(peerId: string): boolean {
+    return this.#transport.getPeers().some((p) => p.peerId === peerId && p.status === 'connected');
+  }
+
   #onAttack(peerId: string, msg: AttackMessage): void {
     const now = this.#now();
-    const member =
-      this.#riders.has(peerId) &&
-      this.#transport.getPeers().some((p) => p.peerId === peerId && p.status === 'connected');
+    const member = this.#riders.has(peerId) && this.#connected(peerId);
     const decision = this.#inbox.check(peerId, msg, this.localPeerId, member, now);
     let result: AttackVerdict;
     if (decision.action === 'repeat') result = decision.result;
@@ -541,7 +598,7 @@ export class GroupRide {
       this.#inbox.record(peerId, msg.id, result, now, false);
       this.#events.emit('log', {
         level: 'warn',
-        message: `card attack refused: ${decision.reason}`,
+        message: `rumble attack refused: ${decision.reason}`,
         data: { kind: msg.kind },
       });
     } else {
@@ -562,6 +619,38 @@ export class GroupRide {
       this.#inbox.record(peerId, msg.id, result, now, true);
     }
     this.#transport.send(peerId, encodeAck(msg.id, result));
+  }
+
+  #onClaim(peerId: string, msg: ClaimMessage): void {
+    const now = this.#now();
+    const member = this.#riders.has(peerId) && this.#connected(peerId);
+    const decision = this.#claimInbox.check(peerId, msg, this.localPeerId, member, now);
+    let result: ClaimVerdict;
+    if (decision.action === 'repeat') result = decision.result;
+    else if (decision.action === 'refuse') {
+      result = 'refused';
+      this.#claimInbox.record(peerId, msg.id, result, now, false);
+      this.#events.emit('log', {
+        level: 'warn',
+        message: `puddle claim refused: ${decision.reason}`,
+      });
+    } else {
+      const claim: IncomingClaim = {
+        id: msg.id,
+        from: peerId,
+        fromName: this.#peerName(peerId),
+        puddle: msg.puddle,
+        raceM: msg.raceM,
+        ...(msg.routeId !== undefined ? { routeId: msg.routeId } : {}),
+      };
+      try {
+        result = this.#claimHandler ? this.#claimHandler(claim) : 'gone';
+      } catch {
+        result = 'refused';
+      }
+      this.#claimInbox.record(peerId, msg.id, result, now, true);
+    }
+    this.#transport.send(peerId, encodeClaimAck(msg.id, result));
   }
 
   #peerName(peerId: string): string {
@@ -615,6 +704,7 @@ export class GroupRide {
     const msg = this.#message();
     if (msg) this.#transport.broadcast(msg);
     this.#outbox.pump(this.#now());
+    this.#claimOutbox.pump(this.#now());
   }
 
   #sendTo(peerId: string): void {

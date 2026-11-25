@@ -91,13 +91,22 @@ export interface ScenePalette {
   boostGlow: string;
   boostFaint: string;
   streak: string;
-  /** Card Race: attacks (gusts, the hit pulse), the shield and protection, the fog haze. */
+  /** Freilauf Rumble: hits (the splash), the rain cape and protection, the haze of hornets. */
   attack: string;
   attackFaint: string;
   guard: string;
   guardFill: string;
   guardFaint: string;
   haze: string;
+  /** Rumble items: water (bottle, splash), mud (puddle, spatter), hornets, the feed bag. */
+  water: string;
+  waterFaint: string;
+  mud: string;
+  mudFill: string;
+  mudFaint: string;
+  hornet: string;
+  bag: string;
+  bagLine: string;
 }
 
 const FALLBACK_LIGHT = {
@@ -108,6 +117,9 @@ const FALLBACK_LIGHT = {
   accent: '#0b63d1',
   attack: '#b4561f',
   guard: '#14857a',
+  water: '#2f86d6',
+  mud: '#7a5636',
+  hornet: '#c98a12',
 };
 
 /**
@@ -124,6 +136,9 @@ export function buildPalette(
     accent: string;
     attack?: string;
     guard?: string;
+    water?: string;
+    mud?: string;
+    hornet?: string;
   },
   normalise: (css: string) => string = (c) => c,
 ): ScenePalette {
@@ -136,6 +151,9 @@ export function buildPalette(
   const accent = read(tokens.accent, FALLBACK_LIGHT.accent);
   const attack = read(tokens.attack ?? '', FALLBACK_LIGHT.attack);
   const guard = read(tokens.guard ?? '', FALLBACK_LIGHT.guard);
+  const water = read(tokens.water ?? '', FALLBACK_LIGHT.water);
+  const mud = read(tokens.mud ?? '', FALLBACK_LIGHT.mud);
+  const hornet = read(tokens.hornet ?? '', FALLBACK_LIGHT.hornet);
   const lum = (c: Rgb): number => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
   const dark = lum(surface) < lum(ink);
   const tone = (t: number): string => css(mix(surface, ink, t));
@@ -183,5 +201,13 @@ export function buildPalette(
     guardFill: css(guard, dark ? 0.12 : 0.08),
     guardFaint: css(guard, dark ? 0.35 : 0.3),
     haze: css(mix(surface, ink, dark ? 0.12 : 0.04), dark ? 0.62 : 0.68),
+    water: css(water, 0.9),
+    waterFaint: css(water, dark ? 0.3 : 0.22),
+    mud: css(mud),
+    mudFill: css(mix(mud, surface, dark ? 0.15 : 0.1), 0.88),
+    mudFaint: css(mud, dark ? 0.45 : 0.35),
+    hornet: css(hornet),
+    bag: css(mix(surface, ink, dark ? 0.75 : 0.06)),
+    bagLine: css(ink, dark ? 0.55 : 0.7),
   };
 }
