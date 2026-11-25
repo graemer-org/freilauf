@@ -7,7 +7,7 @@ import type {
   Trainer,
   Unsubscribe,
 } from '@freilauf/devices';
-import type { GroupRider } from '@freilauf/p2p';
+import type { GroupRider, GroupRules } from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
 import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
@@ -31,11 +31,13 @@ import type {
   Settings,
   WorkoutLive,
 } from '../../shared/contract';
+import type { PowerUpBlock, PowerUpLive } from '../../shared/powerUps';
 import { combineSteering, leverOutput } from './levers';
 import type { LeverOutput } from './levers';
 import { RateLimiter } from './logFormat';
 import type { ScopedLog } from './logger';
 import { NULL_LOG } from './logger';
+import { PowerUpEngine, powerUpConfig, powerUpSeed } from './powerUps';
 
 /** The part of a group ride the controller needs; implemented by @freilauf/p2p's GroupRide. */
 export interface GroupLink {
@@ -52,8 +54,14 @@ export interface GroupLink {
     route?: { id: string; m: number };
     /** Length and kind of that route, to measure the others' gaps along it (not broadcast). */
     routeShape?: { lengthM: number; loop: boolean };
+    /** Race position − ridden distance from power-ups (m); others place the rider by it. */
+    raceOffsetM?: number;
+    /** The host's rules for the group (only the host sends them). */
+    rules?: GroupRules;
   }): void;
   getRiders(): GroupRider[];
+  /** The group's rules as the host set them; null when none were sent. */
+  getRules?(): GroupRules | null;
 }
 
 export interface RideControllerOptions {
@@ -137,6 +145,8 @@ export interface FinishedRide {
   ride: RecordedRide;
   /** Present when the ride was an FTP test. */
   ftpTest: FtpTestOutcome | null;
+  /** Power-ups of the ride (never part of `ride`): the race offset they added, and counts. */
+  powerUps?: { raceOffsetM: number; picked: number; used: number } | null;
 }
 
 const INVALID_REASONS: Record<string, string> = {
@@ -179,6 +189,12 @@ export class RideController {
   readonly #leverLimit: RateLimiter;
   #lastLeverLog = '';
   #lastSegment = '';
+  /** Power-ups of the current ride (docs/power-ups.md); null outside a ride. */
+  #powerUps: PowerUpEngine | null = null;
+  /** Test/simulation overrides for spacing and challenge windows (validated by powerUpConfig). */
+  #powerUpTuning: unknown = null;
+  /** The rules this rider sets as the host of a group ride (null: a guest, or alone). */
+  #hostRules: GroupRules | null = null;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -400,6 +416,39 @@ export class RideController {
     return this.#plan?.runner?.setIntensity(factor) ?? 1;
   }
 
+  /**
+   * Uses the held power-up (docs/power-ups.md). Returns false when there is none, the ride is
+   * not running, or power-ups do not apply now (ERG step, FTP test, switched off).
+   */
+  usePowerUp(source: ShiftSource = 'ui'): boolean {
+    const engine = this.#powerUps;
+    const kind = engine?.hand[0];
+    const used = engine?.activate() ?? false;
+    this.#log.info(used ? `power-up used: ${kind} (${source})` : `power-up not used (${source})`, {
+      source,
+      ...(used ? { kind } : { held: kind ?? null, blocked: this.#powerUpBlock() }),
+    });
+    return used;
+  }
+
+  /** Waves the effort challenge on offer away. */
+  dismissPowerUpChallenge(): void {
+    if (this.#powerUps?.dismissChallenge()) this.#log.info('effort challenge dismissed');
+  }
+
+  /**
+   * Shorter pick-up spacing and challenge windows for the next ride (tests, simulation mode);
+   * null for the defaults. Anything invalid falls back to the defaults (powerUpConfig).
+   */
+  setPowerUpTuning(tuning: unknown): void {
+    this.#powerUpTuning = tuning ?? null;
+  }
+
+  /** The rules this rider sends as the host of a group ride; null as a guest or alone. */
+  setGroupRules(rules: GroupRules | null): void {
+    this.#hostRules = rules;
+  }
+
   shift(delta: number, source: ShiftSource = 'ui'): void {
     const before = this.#shifter.gear;
     this.#shifter.shift(delta);
@@ -472,6 +521,7 @@ export class RideController {
         });
       }
       this.#session.start();
+      this.#powerUps = this.#newPowerUps();
       this.#lastAutosaveAt = this.#now();
       if (this.#plan) {
         this.#plan.runner = new WorkoutRunner(this.#plan.workout, {
@@ -494,6 +544,8 @@ export class RideController {
     if (this.#session.state === 'idle') return null;
     const ride = this.#session.finish();
     const plan = this.#plan;
+    const powerUps = this.#powerUps?.toLive() ?? null;
+    this.#powerUps = null;
     this.#session = this.#newSession();
     this.#distanceM = 0;
     // The next ride starts at the chosen start point again.
@@ -523,7 +575,13 @@ export class RideController {
     });
     if (ride.samples.length < MIN_RIDE_SAMPLES) return null;
     await this.#options.saveRide(ride, true);
-    return { ride, ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null };
+    return {
+      ride,
+      ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null,
+      powerUps: powerUps
+        ? { raceOffsetM: powerUps.raceOffsetM, picked: powerUps.picked, used: powerUps.used }
+        : null,
+    };
   }
 
   /** Advances the ride and publishes the live state. */
@@ -540,6 +598,7 @@ export class RideController {
     this.#distanceM = ride.distanceM;
     const now = this.#now();
     const workout = this.#driveWorkout(ride);
+    const powerUps = this.#drivePowerUps(ride, workout, braking, routePosition);
 
     if (ride.state !== 'idle' && now - this.#lastAutosaveAt >= AUTOSAVE_INTERVAL_MS) {
       this.#lastAutosaveAt = now;
@@ -558,6 +617,8 @@ export class RideController {
       cadenceRpm: ride.cadenceRpm,
       heartRateBpm: ride.heartRateBpm,
       gear: ride.gear,
+      ...(powerUps && powerUps.raceOffsetM > 0 ? { raceOffsetM: powerUps.raceOffsetM } : {}),
+      ...(this.#hostRules ? { rules: this.#hostRules } : {}),
       // Riders on the same route are placed by where they are on it (docs/routes.md).
       ...(track && this.#route
         ? {
@@ -585,6 +646,7 @@ export class RideController {
       steering,
       braking,
       ...(this.#route ? { route: routePosition, routeControl: this.#routeControl() } : {}),
+      ...(powerUps ? { powerUps } : {}),
     };
     this.#options.onLive(live);
     return live;
@@ -592,6 +654,70 @@ export class RideController {
 
   dispose(): void {
     for (const kind of ['trainer', 'heartRate', 'controller'] as const) this.setDevice(kind, null);
+  }
+
+  #newPowerUps(): PowerUpEngine {
+    const track = this.#route?.track ?? null;
+    const base = track ? routeBaseId(track.id) : null;
+    const engine = new PowerUpEngine({
+      seed: powerUpSeed(base, this.#session.id),
+      track: track ? { id: base!, lengthM: track.totalDistanceM, loop: track.loop } : null,
+      config: powerUpConfig(this.#powerUpTuning),
+    });
+    this.#log.info('power-ups ready', {
+      enabled: this.#settings.powerUps?.enabled !== false,
+      challenges: this.#settings.powerUps?.challenges !== false,
+      spots: track ? engine.spots.length : 'along the ride',
+      firstSpotM: engine.spots[0] ?? null,
+      tuned: this.#powerUpTuning !== null,
+    });
+    return engine;
+  }
+
+  /** Why power-ups do not apply right now (null: they do). */
+  #powerUpBlock(workout: WorkoutLive | null = null): PowerUpBlock | null {
+    if (this.#settings.powerUps?.enabled === false) return 'off';
+    if (this.#plan?.ftpTest) return 'ftpTest';
+    const w = workout ?? null;
+    if (this.#ergActive || (w && w.started && !w.finished && w.mode === 'erg')) return 'erg';
+    const rules = this.#hostRules ?? this.#group?.getRules?.() ?? null;
+    if (this.#group && rules && rules.powerUps === false) return 'group';
+    return null;
+  }
+
+  /** Advances the power-ups by this tick; the recorded ride is only read, never changed. */
+  #drivePowerUps(
+    ride: RideSnapshot,
+    workout: WorkoutLive | null,
+    braking: number,
+    route: RoutePosition | null,
+  ): PowerUpLive | null {
+    const engine = this.#powerUps;
+    if (!engine) return null;
+    const blocked = this.#powerUpBlock(workout);
+    const events = engine.update({
+      state: ride.state,
+      elapsedS: ride.elapsedS,
+      distanceM: ride.distanceM,
+      routeM: route ? route.distanceM : null,
+      speedMps: ride.speedMps,
+      powerW: ride.powerW,
+      power3sW: ride.power3sW,
+      gradePercent: ride.gradePercent,
+      brake: braking,
+      bike: this.#bike(),
+      ftpW: this.#settings.rider.ftpW,
+      blocked,
+      challenges: this.#settings.powerUps?.challenges !== false,
+    });
+    for (const e of events) {
+      this.#log.info(`power-up ${e.type}${e.kind ? `: ${e.kind}` : ''}`, {
+        atS: Math.round(e.atS),
+        raceOffsetM: round(engine.raceOffsetM, 1),
+        ...(blocked ? { blocked } : {}),
+      });
+    }
+    return engine.toLive();
   }
 
   #onButton(event: ControllerButtonEvent): void {
@@ -629,6 +755,9 @@ export class RideController {
         this.setWorkoutIntensity(current + (action === 'intensityUp' ? 0.05 : -0.05));
         return;
       }
+      case 'usePowerUp':
+        this.usePowerUp(source);
+        return;
       case 'none':
         this.#log.info(`button ${event.button} pressed: no action assigned`, {
           button: event.button,

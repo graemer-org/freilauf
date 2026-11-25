@@ -6,6 +6,7 @@ import {
   LOG_FOLDER_MESSAGE,
   OPEN_FOLDER_MESSAGE,
   queryFlag,
+  WATCH_RELAY_BROWSER_REASON,
 } from './browserApi';
 import { MemoryRideRecordStore, RideRepository } from './rideRepository';
 import { BrowserSettingsStore, webDefaultSettings } from './settingsStore';
@@ -37,6 +38,15 @@ describe('queryFlag', () => {
 });
 
 describe('createBrowserApi', () => {
+  it('reports sharing with a watch as unavailable, with the reason', async () => {
+    const a = api();
+    const seen: unknown[] = [];
+    a.watchRelay.onStatus((s) => seen.push(s))();
+    const status = { state: 'unavailable', reason: WATCH_RELAY_BROWSER_REASON, browser: true };
+    expect(seen).toEqual([status]);
+    expect(await a.watchRelay.getStatus()).toEqual(status);
+  });
+
   it('delivers live state in-page', () => {
     const a = api();
     const seen: LiveState[] = [];

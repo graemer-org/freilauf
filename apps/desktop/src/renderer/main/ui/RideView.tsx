@@ -7,6 +7,7 @@ import { ConnectionBanners, DeviceDots, LOST_TEXT, SimBadge } from './Header';
 import { isEditableTarget, useAppState } from './hooks';
 import { RideTab } from './RideTab';
 import { OverlaySettings } from './SettingsTab';
+import { WatchRelayBadge } from './WatchRelay';
 
 type Sheet = 'devices' | 'group' | 'overlay';
 
@@ -204,6 +205,7 @@ export function RideView(props: RideViewProps) {
         </div>
         <div className="ride-top-right" role="toolbar" aria-label="Ride tools">
           {props.extras}
+          <WatchRelayBadge />
           {tool(
             'devices',
             <>

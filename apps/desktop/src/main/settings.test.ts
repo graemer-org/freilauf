@@ -145,6 +145,62 @@ describe('group.signallingUrl', () => {
   });
 });
 
+describe('power-ups', () => {
+  it('are on by default, challenges too, and the side buttons use them', () => {
+    expect(DEFAULT_SETTINGS.powerUps).toEqual({ enabled: true, challenges: true });
+    expect(DEFAULT_SETTINGS.shifting.buttons.powerUpLeft).toBe('usePowerUp');
+    expect(DEFAULT_SETTINGS.shifting.buttons.powerUpRight).toBe('usePowerUp');
+  });
+
+  it('validates the switches', () => {
+    const problems: string[] = [];
+    const s = sanitizeSettings(
+      { powerUps: { enabled: false, challenges: 'yes' } },
+      undefined,
+      problems,
+    );
+    expect(s.powerUps).toEqual({ enabled: false, challenges: true });
+    expect(problems.some((p) => p.startsWith('powerUps.challenges'))).toBe(true);
+  });
+
+  it('settings from before power-ups map the side buttons to "Use power-up" where they did nothing', () => {
+    const old = {
+      rider: { name: 'Old' },
+      shifting: {
+        buttons: { a: 'startPause', powerUpLeft: 'none', shiftUpRight: 'shiftUp' },
+      },
+    };
+    const s = sanitizeSettings(migrateSettings(old));
+    expect(s.shifting.buttons).toEqual({
+      a: 'startPause',
+      shiftUpRight: 'shiftUp',
+      powerUpLeft: 'usePowerUp',
+      powerUpRight: 'usePowerUp',
+    });
+    expect(s.powerUps).toEqual({ enabled: true, challenges: true });
+    expect(old.shifting.buttons.powerUpLeft).toBe('none'); // not mutated
+  });
+
+  it('keeps a custom action on a side button', () => {
+    const old = { shifting: { buttons: { powerUpLeft: 'shiftDown', powerUpRight: 'startPause' } } };
+    const s = sanitizeSettings(migrateSettings(old));
+    expect(s.shifting.buttons.powerUpLeft).toBe('shiftDown');
+    expect(s.shifting.buttons.powerUpRight).toBe('startPause');
+  });
+
+  it('runs once: after power-ups exist, "Nothing" on a side button is the rider\'s choice', () => {
+    const now = {
+      powerUps: { enabled: true, challenges: true },
+      shifting: { buttons: { powerUpLeft: 'none', powerUpRight: 'none' } },
+    };
+    const s = sanitizeSettings(migrateSettings(now));
+    expect(s.shifting.buttons.powerUpLeft).toBe('none');
+    expect(s.shifting.buttons.powerUpRight).toBe('none');
+    // A file without buttons simply gets the defaults.
+    expect(sanitizeSettings(migrateSettings({})).shifting.buttons.powerUpLeft).toBe('usePowerUp');
+  });
+});
+
 describe('shifting.levers (analog lever directions)', () => {
   it('defaults follow the mirror-symmetric hypothesis with a 5 % dead zone', () => {
     expect(DEFAULT_SETTINGS.shifting.levers).toEqual({
@@ -158,7 +214,13 @@ describe('shifting.levers (analog lever directions)', () => {
     const old = { shifting: { physicalRatio: 3, buttons: { a: 'startPause', left: 'shiftUp' } } };
     const s = sanitizeSettings(migrateSettings(old));
     expect(s.shifting.levers).toEqual(DEFAULT_SETTINGS.shifting.levers);
-    expect(s.shifting.buttons).toEqual({ a: 'startPause', left: 'shiftUp' });
+    // (plus the power-up default for the side buttons, see "power-ups" below)
+    expect(s.shifting.buttons).toEqual({
+      a: 'startPause',
+      left: 'shiftUp',
+      powerUpLeft: 'usePowerUp',
+      powerUpRight: 'usePowerUp',
+    });
     expect(s.shifting.physicalRatio).toBe(3);
   });
 

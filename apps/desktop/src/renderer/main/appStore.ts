@@ -20,6 +20,7 @@ import type {
   PickerDevice,
   RideListItem,
   Settings,
+  WatchRelayStatus,
 } from '../../shared/contract';
 import { WebBluetoothTransport } from '../ble/webBluetoothTransport';
 import { connectErrorNotice } from '../core/connectError';
@@ -122,6 +123,9 @@ export interface Notice {
   message: string;
 }
 
+/** Simulation mode: power-up spacing and challenge windows for tests (see `#powerUpTuning`). */
+export const POWER_UP_TUNING_KEY = 'freilauf.powerUps.tuning';
+
 export interface AppState {
   ready: boolean;
   simMode: boolean;
@@ -175,6 +179,10 @@ export interface AppState {
   sharingRouteId: string | null;
   /** What the ride finished last came to (post-ride summary); null before the first finish. */
   lastRide: RideSummary | null;
+  /** Share with my watch: what the relay is doing (main process; unavailable in the browser). */
+  watchRelay?: WatchRelayStatus;
+  /** The host's switch: power-ups allowed in the group ride this rider creates (default on). */
+  groupPowerUps?: boolean;
 }
 
 export interface LeverPositionsState {
@@ -385,6 +393,8 @@ export class App {
     sharedRoutes: [],
     sharingRouteId: null,
     lastRide: null,
+    watchRelay: { state: 'off' },
+    groupPowerUps: true,
   });
 
   readonly #api: FreilaufApi;
@@ -481,6 +491,7 @@ export class App {
         this.#controller?.updateSettings(next);
       }),
       this.#api.overlay.onEditMode((overlayEditMode) => this.store.setState({ overlayEditMode })),
+      this.#api.watchRelay.onStatus((watchRelay) => this.store.setState({ watchRelay })),
       this.#api.bluetooth.onPickerDevices((devices) => {
         const picker = this.store.getState().picker;
         if (picker) this.store.setState({ picker: { ...picker, devices } });
@@ -726,7 +737,10 @@ export class App {
   // ───────────── ride ─────────────
 
   startRide(): void {
-    if (this.#controller?.rideState === 'idle') this.#rideHadCompany = false;
+    if (this.#controller?.rideState === 'idle') {
+      this.#rideHadCompany = false;
+      this.#controller?.setPowerUpTuning(this.#powerUpTuning());
+    }
     this.#controller?.start();
   }
 
@@ -752,6 +766,7 @@ export class App {
         previous: Object.values(rides),
         workoutName: before.live?.workout?.name ?? null,
         routeName: before.routeTrack?.name ?? null,
+        powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
       });
       this.store.setState({
         selectedWorkoutId: null,
@@ -779,6 +794,40 @@ export class App {
   /** Brake key held (true) or released (false). Slows the virtual bike only. */
   setBrakeKey(held: boolean): void {
     this.#controller?.setBrake(held ? 1 : 0, 'keyboard');
+  }
+
+  // ───────────── power-ups (docs/power-ups.md) ─────────────
+
+  /** Uses the held power-up (P key, the on-screen card). */
+  usePowerUp(source: ShiftSource = 'ui'): boolean {
+    return this.#controller?.usePowerUp(source) ?? false;
+  }
+
+  dismissPowerUpChallenge(): void {
+    this.#controller?.dismissPowerUpChallenge();
+  }
+
+  /** The host's switch for the group ride (only the host's counts; see GroupRules). */
+  setGroupPowerUps(on: boolean): void {
+    this.store.setState({ groupPowerUps: on });
+    const group = this.store.getState().group;
+    if (group.phase === 'joined' && group.role === 'host') {
+      this.#controller?.setGroupRules({ powerUps: on });
+    }
+  }
+
+  /**
+   * Simulation mode only: shorter pick-up spacing and challenge windows from localStorage
+   * (`freilauf.powerUps.tuning`, JSON; used by the end-to-end tests). Null otherwise.
+   */
+  #powerUpTuning(): unknown {
+    if (!this.store.getState().simMode) return null;
+    try {
+      const raw = globalThis.localStorage?.getItem(POWER_UP_TUNING_KEY);
+      return raw ? (JSON.parse(raw) as unknown) : null;
+    } catch {
+      return null;
+    }
   }
 
   // ───────────── workouts ─────────────
@@ -1076,6 +1125,7 @@ export class App {
     this.#group = null;
     this.#startAt = null;
     this.#controller?.setGroup(null);
+    this.#controller?.setGroupRules(null);
     this.#sharedRouteTracks = new Map();
     this.store.setState({
       group: { phase: 'idle' },
@@ -1221,6 +1271,9 @@ export class App {
       });
       this.#group = group;
       this.#controller?.setGroup(group);
+      this.#controller?.setGroupRules(
+        action === 'create' ? { powerUps: this.store.getState().groupPowerUps !== false } : null,
+      );
       this.#community.attach(group);
       this.#groupCleanup = [
         group.onSharedWorkoutsChange(() => this.#refreshSharedWorkouts()),

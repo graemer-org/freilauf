@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { RideBest } from '../appStore';
+import { formatRaceGain } from '../../../shared/powerUps';
 import { formatDistance, formatDuration } from './format';
 import { FtpOutcomeCard } from './FtpOutcome';
 import { useApp, useAppState } from './hooks';
@@ -107,6 +108,13 @@ export function SummaryScreen({ onDone, onAgain }: { onDone: () => void; onAgain
           </dd>
         </div>
       </dl>
+
+      {(summary.powerUpGainM ?? 0) > 0 && (
+        <p className="hint summary-powerups" data-testid="summary-powerups">
+          <strong>{formatRaceGain(summary.powerUpGainM ?? 0)}</strong> in your race position. Time,
+          distance, points and bests count your own riding only.
+        </p>
+      )}
 
       {summary.bests.length > 0 && (
         <section

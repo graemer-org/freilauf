@@ -118,6 +118,14 @@ lever** for that grip, or pick each direction yourself; **Reset to defaults** go
 Without levers: hold <kbd>S</kbd> to brake, <kbd>A</kbd> <kbd>D</kbd> to steer. In simulation
 mode (`pnpm dev:sim`) the Simulation panel under the ride has a slider per lever.
 
+### Share with my watch
+
+On Windows, Freilauf can also pass power, cadence, heart rate and the virtual speed and distance
+on to a sports watch, which then records the ride too: **Devices → Share with my watch**, switch
+it on, and pair the computer on the watch as a power meter, heart-rate sensor and bike sensor
+(it appears under the computer's Bluetooth name). New and not yet tried with a real watch;
+[Share with my watch](watch-relay.md) has the details, the limits and how to report a test.
+
 ## 5. Ride
 
 - **The ride** fills the window: power, the scene, cadence, speed, heart rate, gear, time and
@@ -139,6 +147,17 @@ mode (`pnpm dev:sim`) the Simulation panel under the ride has a slider per lever
   the whole profile and the next few hundred metres. Settings → Routes sets how much of each
   climb the trainer passes on. Tested with simulated devices only so far ([routes](routes.md)).
 - **Activity → Rides**: your rides, each with **Export .fit** for the analysis tool you use.
+
+### Power-ups
+
+Every 2–4 km a softly lit gate stands across your lane; ride through it to hold a **power-up**
+(Tailwind, Slipstream, Light load or Downhill momentum). Use it with the controller's side
+button, <kbd>P</kbd> or a click on its card in the scene's corner. When your power has dropped
+for a few minutes, a short effort challenge is sometimes offered — meet it for a power-up, or
+ignore it. Power-ups only move your race position among other riders: speed, distance, the
+`.fit` file, points and bests always come from your own power. None in ERG steps and FTP tests;
+**Settings → Power-ups** switches them (and the challenges) off. Details:
+[Power-ups](power-ups.md).
 
 ## 6. The overlay
 

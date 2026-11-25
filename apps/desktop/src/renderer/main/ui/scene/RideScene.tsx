@@ -3,6 +3,7 @@ import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { isEditableTarget, useApp } from '../hooks';
 import { buildPalette } from './palette';
+import { PowerUpSceneState, powerUpAttributes } from './powerUpScene';
 import { ProfileRenderer, SceneRenderer, type SceneFrame } from './sceneRender';
 import {
   crankRate,
@@ -67,7 +68,9 @@ export function readPalette(el: HTMLElement, scratch: CanvasRenderingContext2D) 
  * React renders the container once; the 60 fps animation draws imperatively
  * into two canvases from a requestAnimationFrame loop that interpolates
  * between the 4 Hz live samples. Test hooks: data-grade, data-lateral,
- * data-distance (scene odometer), data-frames, data-frame-ms.
+ * data-distance (scene odometer), data-frames, data-frame-ms, and for power-ups data-effect
+ * (the active effect's kind, or ''), data-effect-phase and data-gate-ahead (m to the next
+ * pick-up gate, or '').
  */
 export function SideScene({
   toolbar,
@@ -115,6 +118,8 @@ export function SideScene({
       data-state={initial.state}
       data-braking="0"
       data-view="side"
+      data-effect=""
+      data-gate-ahead=""
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
@@ -228,11 +233,15 @@ function startScene(
   const history = new ProfileHistory(400, 5);
   let placed: readonly PlacedRider[] = EMPTY_RIDERS;
   let profileDirty = true;
+  const boost = new PowerUpSceneState();
+  // The frame (and its odometer) is set up below; gates are placed relative to it.
+  let odometer: { distanceM: number } = { distanceM: 0 };
   const onLive = (next: LiveState | null): void => {
     if (next === live) return;
     const prevGroup = live?.group?.riders;
     live = next;
     if (!next) return;
+    boost.setLive(next.powerUps, odometer.distanceM, performance.now());
     history.add(next.ride.distanceM, next.ride.gradePercent);
     const riders = next.group?.riders;
     if (riders !== prevGroup)
@@ -303,6 +312,7 @@ function startScene(
     others: EMPTY_RIDERS,
     otherAngles,
   };
+  odometer = frame;
   let speed = 0;
   let cadence = 0;
   let frames = 0;
@@ -311,7 +321,7 @@ function startScene(
   let lastAttr = 0;
   let lastLabel = 0;
   let label = root.getAttribute('aria-label') ?? '';
-  let lastDrawn = { grade: NaN, lat: NaN, state: '' };
+  let lastDrawn = { grade: NaN, lat: NaN, state: '', boost: '' };
 
   const tick = (t: number): void => {
     raf = 0;
@@ -371,10 +381,13 @@ function startScene(
     );
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
+    frame.powerUps = boost.update(frame.distanceM, t);
+    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}`;
 
     // Reduced motion: draw only when something visible changed.
     const changed =
       !reducedMotion ||
+      lastDrawn.boost !== boostKey ||
       viewDirty ||
       profileDirty ||
       lastDrawn.grade !== frame.grade ||
@@ -403,6 +416,7 @@ function startScene(
       lastDrawn.grade = frame.grade;
       lastDrawn.lat = frame.lateral;
       lastDrawn.state = state;
+      lastDrawn.boost = boostKey;
     }
 
     if (t - lastAttr >= ATTR_MS) {
@@ -414,6 +428,10 @@ function startScene(
       root.dataset.frameMs = frameMs.toFixed(3);
       root.dataset.state = state;
       root.dataset.motion = reducedMotion ? 'reduced' : 'full';
+      const pa = powerUpAttributes(frame.powerUps);
+      root.dataset.effect = pa.effect;
+      root.dataset.effectPhase = pa.effectPhase;
+      root.dataset.gateAhead = pa.gateAhead;
     }
     if (t - lastLabel >= LABEL_MS) {
       lastLabel = t;
@@ -451,7 +469,7 @@ function startScene(
         })
       : null;
   io?.observe(root);
-  lastDrawn = { grade: NaN, lat: NaN, state: '' };
+  lastDrawn = { grade: NaN, lat: NaN, state: '', boost: '' };
   wake();
 
   return () => {

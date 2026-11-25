@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PowerUpHud } from '../PowerUpHud';
 import { useRouteTrack } from '../routesApi';
 import { RoadScene } from './RoadScene';
 import { SideScene } from './RideScene';
@@ -33,32 +34,35 @@ function writeView(v: SceneViewMode): void {
 export function RideScene() {
   const track = useRouteTrack();
   const [mode, setMode] = useState<SceneViewMode>(readView);
-  if (!track) return <SideScene />;
+  if (!track) return <SideScene toolbar={<PowerUpHud />} />;
   const choose = (v: SceneViewMode): void => {
     setMode(v);
     writeView(v);
   };
   const toolbar = (
-    <div className="scene-switch" role="group" aria-label="Scene view">
-      <button
-        type="button"
-        className="scene-switch-btn"
-        aria-pressed={mode === 'road'}
-        data-testid="scene-view-road"
-        onClick={() => choose('road')}
-      >
-        Road
-      </button>
-      <button
-        type="button"
-        className="scene-switch-btn"
-        aria-pressed={mode === 'side'}
-        data-testid="scene-view-side"
-        onClick={() => choose('side')}
-      >
-        Side
-      </button>
-    </div>
+    <>
+      <div className="scene-switch" role="group" aria-label="Scene view">
+        <button
+          type="button"
+          className="scene-switch-btn"
+          aria-pressed={mode === 'road'}
+          data-testid="scene-view-road"
+          onClick={() => choose('road')}
+        >
+          Road
+        </button>
+        <button
+          type="button"
+          className="scene-switch-btn"
+          aria-pressed={mode === 'side'}
+          data-testid="scene-view-side"
+          onClick={() => choose('side')}
+        >
+          Side
+        </button>
+      </div>
+      <PowerUpHud />
+    </>
   );
   return mode === 'road' ? (
     <RoadScene key={track.id} track={track} toolbar={toolbar} />

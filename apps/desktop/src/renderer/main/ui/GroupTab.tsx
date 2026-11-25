@@ -22,6 +22,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatGap, formatSpeed } from './format';
 import { startTogetherAction } from './groupShare';
 import { useApp, useAppState } from './hooks';
+import { GroupPowerUps } from './PowerUpSettings';
 
 /**
  * Where the group UI is shown: its own page (`full`), compact on the start screen (`start`), or
@@ -737,6 +738,7 @@ export function GroupTab({
             transport={group.transport}
           />
           {variant !== 'start' && <RiderTable />}
+          {variant !== 'start' && <GroupPowerUps role={group.role} />}
           {variant !== 'full' && <StartTogether />}
         </section>
       )}

@@ -2,6 +2,7 @@ import { useId } from 'react';
 import type { OverlayTile, StatId } from '../../../shared/contract';
 import { ALL_STATS } from '../../../shared/contract';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
+import { PowerUpSettings } from './PowerUpSettings';
 import { statLabel } from './format';
 import { useApp, useAppState } from './hooks';
 import { routeDifficultyOf, setRouteDifficulty } from './routesApi';
@@ -317,6 +318,8 @@ export function SettingsTab({ onOpenFtpTests }: { onOpenFtpTests?: () => void })
       </section>
 
       <RouteSettings />
+
+      <PowerUpSettings />
 
       <section className="settings-section" aria-labelledby="set-diagnostics">
         <h2 id="set-diagnostics" className="section-title section-head">

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { DEVICE_KINDS, describeDevice } from './deviceStatus';
 import { useApp, useAppState } from './hooks';
 import { ButtonMapping, LeverMapping } from './SettingsExtras';
+import { WatchRelaySection } from './WatchRelay';
 
 const ROW_LABEL: Record<DeviceKind, string> = {
   trainer: 'Trainer',
@@ -123,6 +124,7 @@ export function DevicesTab() {
         connected to another app.
       </p>
       <Controllers />
+      <WatchRelaySection />
     </div>
   );
 }

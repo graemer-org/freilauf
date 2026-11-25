@@ -27,6 +27,7 @@ import {
 } from './roadMath';
 import { formatGrade, hash01, valueNoise } from './sceneMath';
 import type { GradeSign } from './routeSample';
+import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
 
 const TAU = Math.PI * 2;
 /** Fog levels (each is one batch of fills). */
@@ -75,6 +76,8 @@ export interface RoadFrame {
   finishM: number;
   others: readonly RoadRider[];
   reducedMotion: boolean;
+  /** Power-up gates ahead and the effect in progress (absent: none). */
+  powerUps?: PowerUpSceneFrame;
 }
 
 interface FogColours {
@@ -261,8 +264,16 @@ export class RoadRenderer {
       this.objectsLevel(f, level, fog);
     }
 
+    const pu = f.powerUps;
+    if (pu) {
+      this.gatesAhead(f, pu, p);
+      this.downhillChevrons(f, pu, p);
+      if (pu.effect === 'slipstream' && pu.phase === 'active') this.slipstreamGhost(f, fog);
+    }
     this.others(f, fog);
+    if (pu) this.auraBehind(f, pu, p);
     this.localRider(f);
+    if (pu) this.auraFront(f, pu, p);
     this.hud(f, p);
 
     if (f.state === 'paused') this.pill('Paused', p, true);
@@ -930,6 +941,208 @@ export class RoadRenderer {
     ctx.arc(x1, y1, r1, ang - Math.PI / 2, ang + Math.PI / 2);
     ctx.closePath();
     ctx.fill();
+  }
+
+  // ─────────── power-ups ───────────
+
+  /**
+   * Pick-up gates: a slim arch over the rider's lane (centre line to the edge) with a soft
+   * glow under it and a lit band across the asphalt, far to near, fading with distance.
+   */
+  private gatesAhead(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const hw = ROAD.halfWidthM;
+    const inner = 0.2;
+    const outer = hw - 0.15;
+    for (let i = pu.gates.length - 1; i >= 0; i--) {
+      const g = pu.gates[i]!;
+      if (g < 0.5 || g > GATE_DRAW_M) continue;
+      const s = d + g;
+      const kL = strip.pointAt(this.vp, f.camera, s, inner, 0, this.a);
+      const kR = strip.pointAt(this.vp, f.camera, s, outer, 0, this.b);
+      if (kL === 0 || kR === 0) continue;
+      const ppm = this.vp.focalPx / this.a.depth;
+      const hgt = 3.1 * ppm;
+      if (hgt < 2) continue;
+      const fade = Math.max(0.25, 1 - this.a.depth / (GATE_DRAW_M * 1.1));
+      const alpha = (pu.holding ? 0.45 : 1) * fade;
+      // quad() below reuses the scratch points: keep these.
+      const ax = this.a.x;
+      const bx = this.b.x;
+      const ay = this.a.y;
+      const by = this.b.y;
+      const top = Math.min(ay, by) - hgt;
+      this.clipped(kL, ay, top, () => {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        // Band across the lane.
+        ctx.beginPath();
+        this.quad(f, s - 0.35, s + 0.35, inner, outer);
+        ctx.fillStyle = p.boostGlow;
+        ctx.fill();
+        // Glow under the arch.
+        const mx = (ax + bx) / 2;
+        const archTop = Math.min(ay, by) - hgt * 1.18;
+        const grad = ctx.createLinearGradient(0, archTop, 0, Math.max(ay, by));
+        grad.addColorStop(0, p.boostGlow);
+        grad.addColorStop(1, p.boostFaint);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax, ay - hgt);
+        ctx.quadraticCurveTo(mx, archTop - hgt * 0.18, bx, by - hgt);
+        ctx.lineTo(bx, by);
+        ctx.closePath();
+        ctx.fill();
+        // Posts and arch.
+        ctx.strokeStyle = p.boost;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = Math.max(1.25, 0.09 * ppm);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax, ay - hgt);
+        ctx.quadraticCurveTo(mx, archTop - hgt * 0.18, bx, by - hgt);
+        ctx.lineTo(bx, by);
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+  }
+
+  /** Downhill momentum: chevrons on the lane ahead, quiet while armed, brighter while active. */
+  private downhillChevrons(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    if (pu.effect !== 'downhill' || pu.phase === null) return;
+    const ctx = this.ctx;
+    const armed = pu.phase === 'armed';
+    const d = f.camera.distanceM;
+    const lane = f.riderX;
+    const drift = f.reducedMotion || armed ? 0 : (pu.timeS * 6) % 4;
+    ctx.save();
+    ctx.globalAlpha = armed ? 0.4 : 0.85;
+    ctx.fillStyle = p.boost;
+    const t = 0.45;
+    const reach = 0.9;
+    const len = 1.3;
+    for (let i = 4; i >= 0; i--) {
+      const s0 = d + 4 + i * 4 + drift;
+      // A chevron pointing ahead, laid on the lane: front edge, then back edge.
+      const pts: [number, number][] = [
+        [s0 + t, lane - reach],
+        [s0 + len + t, lane],
+        [s0 + t, lane + reach],
+        [s0, lane + reach],
+        [s0 + len, lane],
+        [s0, lane - reach],
+      ];
+      ctx.beginPath();
+      let ok = true;
+      pts.forEach(([sAt, lAt], j) => {
+        if (!ok) return;
+        if (this.strip.pointAt(this.vp, f.camera, sAt, lAt, 0, this.a) === 0) ok = false;
+        else if (j === 0) ctx.moveTo(this.a.x, this.a.y);
+        else ctx.lineTo(this.a.x, this.a.y);
+      });
+      if (!ok) continue;
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** Slipstream: a faint rider a few metres ahead in the same line. */
+  private slipstreamGhost(f: RoadFrame, fog: FogColours): void {
+    const k = this.strip.pointAt(this.vp, f.camera, f.camera.distanceM + 4.2, f.riderX, 0, this.a);
+    if (k === 0) return;
+    const ppm = this.vp.focalPx / this.a.depth;
+    const ctx = this.ctx;
+    ctx.globalAlpha = 0.3;
+    this.riderFromBehind(
+      this.a.x,
+      this.a.y,
+      ppm,
+      f.lean,
+      f.crank + 1.3,
+      0,
+      f.tuck,
+      {
+        ...this.ghost!,
+        jersey: fog.ghostJersey[0]!,
+      },
+      false,
+    );
+    ctx.globalAlpha = 1;
+  }
+
+  /** The rider's contact point on screen and pixels per metre there (null if off-screen). */
+  private riderPoint(f: RoadFrame): number {
+    const k = this.strip.pointAt(this.vp, f.camera, f.camera.distanceM, f.riderX, 0, this.c);
+    return k === 0 ? 0 : this.vp.focalPx / this.c.depth;
+  }
+
+  /** Behind the rider: Light load's glow, Tailwind's streaks flowing past (full motion only). */
+  private auraBehind(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const active = pu.phase === 'active';
+    if (!active) return;
+    const ctx = this.ctx;
+    const ppm = this.riderPoint(f);
+    if (ppm === 0) return;
+    const x = this.c.x;
+    const y = this.c.y - 0.9 * ppm;
+    if (pu.effect === 'lightLoad') {
+      const r = 1.25 * ppm;
+      const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+      g.addColorStop(0, p.boostGlow);
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TAU);
+      ctx.fill();
+    }
+    if (pu.effect === 'tailwind' && !f.reducedMotion) {
+      // Streaks from the vanishing point outwards, as air rushing past.
+      const vx = this.vp.cx;
+      const vy = horizonLine(this.vp, f.camera);
+      const maxR = Math.hypot(this.w, this.h) * 0.75;
+      ctx.save();
+      ctx.strokeStyle = p.streak;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(1, this.h * 0.003);
+      for (let i = 0; i < 22; i++) {
+        const ang = Math.PI * (1.05 + hash01(i, 81) * 0.9) * (hash01(i, 82) < 0.5 ? 1 : -1);
+        const phase = (pu.timeS * (0.7 + hash01(i, 83) * 0.5) + hash01(i, 84)) % 1;
+        const r0 = maxR * (0.15 + phase * 0.85);
+        const r1 = r0 + maxR * (0.05 + phase * 0.12);
+        const cx = Math.cos(ang);
+        const cy = Math.sin(ang) * 0.55;
+        ctx.globalAlpha = Math.min(1, phase * 3) * (1 - phase * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(vx + cx * r0, vy + cy * r0);
+        ctx.lineTo(vx + cx * r1, vy + cy * r1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  /** In front of the rider: the pick-up flash, a ring that opens and fades. */
+  private auraFront(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    if (pu.flash < 0) return;
+    const ppm = this.riderPoint(f);
+    if (ppm === 0) return;
+    const ctx = this.ctx;
+    const t = pu.flash;
+    const r = (f.reducedMotion ? 1.1 : 0.5 + t * 1.3) * ppm;
+    ctx.save();
+    ctx.globalAlpha = f.reducedMotion ? 0.6 : 1 - t;
+    ctx.strokeStyle = p.boost;
+    ctx.lineWidth = Math.max(1.5, 0.06 * ppm);
+    ctx.beginPath();
+    ctx.ellipse(this.c.x, this.c.y - 0.9 * ppm, r, r * 0.85, 0, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // ─────────── labels ───────────

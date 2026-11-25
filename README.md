@@ -57,9 +57,15 @@ And underneath:
   a single-cog bike feels like it has a full cassette ([ADR 0002](docs/adr/0002-virtual-shifting.md)).
 - **Free ride with gradient**, and an animated ride scene with an elevation profile and
   steering; on a route, a road view from behind the rider instead.
+- **Power-ups**: collect one on the road or earn it with a short effort, use it with the side
+  button or <kbd>P</kbd>. They move only your race position — the recording, `.fit`, points and
+  bests stay your own power ([power-ups](docs/power-ups.md)).
 - **An always-on diagnostic log** that leaves out your name and ride data, made to be attached
   to a bug report: Settings → Diagnostics exports it, copies the recent part or opens its folder
   ([diagnostics](docs/diagnostics.md)).
+- **Share with my watch** (Windows, new, untested on real watches): the app also acts as a
+  Bluetooth power meter, heart-rate and speed/cadence sensor, so a sports watch records the ride
+  too ([watch relay](docs/watch-relay.md)).
 - **A browser version** you can run with Docker Compose, for example on a home server
   ([docker](docs/docker.md)).
 

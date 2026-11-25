@@ -23,6 +23,11 @@ export interface RideSummary {
   bests: RideBest[];
   workoutName: string | null;
   routeName: string | null;
+  /**
+   * Metres the race position gained from power-ups (0 without). Shown on its own line: time,
+   * distance, power, points and bests above never include it.
+   */
+  powerUpGainM?: number;
 }
 
 export interface SummarizeInput {
@@ -36,11 +41,14 @@ export interface SummarizeInput {
   previous: readonly RideFacts[];
   workoutName: string | null;
   routeName: string | null;
+  /** Race offset from power-ups at the finish (m); absent = 0. */
+  powerUpGainM?: number;
 }
 
 /** Pure: builds the post-ride summary. */
 export function summarizeRide(input: SummarizeInput): RideSummary {
   const { ride, facts } = input;
+  const gain = input.powerUpGainM ?? 0;
   const last = ride?.samples.at(-1);
   const durationS = last?.elapsedS ?? input.live?.elapsedS ?? 0;
   const distanceM = last?.distanceM ?? input.live?.distanceM ?? 0;
@@ -75,5 +83,6 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
     bests,
     workoutName: input.workoutName,
     routeName: input.routeName,
+    powerUpGainM: gain > 0 && Number.isFinite(gain) ? Math.round(gain) : 0,
   };
 }

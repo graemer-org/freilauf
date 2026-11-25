@@ -19,6 +19,7 @@ import type {
   PickerDevice,
   RideListItem,
   Settings,
+  WatchRelayStatus,
 } from '../shared/contract';
 import { ARG, IPC } from '../shared/ipc';
 
@@ -72,6 +73,10 @@ const edit = listenerSet<boolean>(IPC.overlayEditMode, (v) => {
 });
 const settingsChanged = listenerSet<Settings>(IPC.settingsChanged);
 const pickerDevices = listenerSet<PickerDevice[]>(IPC.btPickerDevices);
+let watchRelayStatus: WatchRelayStatus | undefined;
+const watchRelay = listenerSet<WatchRelayStatus>(IPC.watchRelayStatusChanged, (s) => {
+  watchRelayStatus = s;
+});
 
 // Ask for the current values once the document has committed: before that the
 // frame has no app URL yet and main's sender check rejects the call.
@@ -271,6 +276,24 @@ const api: FreilaufApi = {
     exportFit: (id) => ipcRenderer.invoke(IPC.ridesExportFit, id) as Promise<string | null>,
     delete: (id) => ipcRenderer.invoke(IPC.ridesDelete, id) as Promise<void>,
     openFolder: () => ipcRenderer.invoke(IPC.ridesOpenFolder) as Promise<void>,
+  },
+
+  watchRelay: {
+    getStatus: () => ipcRenderer.invoke(IPC.watchRelayStatus) as Promise<WatchRelayStatus>,
+    onStatus: (listener) => {
+      const off = watchRelay.subscribe(listener);
+      if (watchRelayStatus !== undefined) watchRelay.deliver(watchRelayStatus, listener);
+      else if (windowName === 'main') {
+        ipcRenderer
+          .invoke(IPC.watchRelayStatus)
+          .then((s: WatchRelayStatus) => {
+            watchRelayStatus ??= s;
+            watchRelay.deliver(watchRelayStatus, listener);
+          })
+          .catch(() => undefined); // the next change delivers it
+      }
+      return off;
+    },
   },
 
   diagnostics: {

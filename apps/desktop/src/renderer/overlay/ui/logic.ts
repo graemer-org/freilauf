@@ -2,6 +2,8 @@
 import type { ConnectionState, DeviceKind } from '@freilauf/devices';
 import type { RideSnapshot } from '@freilauf/session';
 import type { Bounds, LiveState } from '../../../shared/contract';
+import type { PowerUpKind } from '../../../shared/powerUps';
+import { POWER_UP_INFO, POWER_UP_KEY } from '../../../shared/powerUps';
 
 export const MIN_WIDTH = 160;
 export const MIN_HEIGHT = 80;
@@ -258,4 +260,57 @@ export function routeStrip(route: LiveState['route']): RouteStrip | null {
     lap: route.lap > 1 ? `Lap ${route.lap}` : '',
     finished: false,
   };
+}
+
+/** One compact power-up line for the overlay: what is held, running or asked for. */
+export interface PowerUpPill {
+  key: 'challenge' | 'effect' | 'held';
+  kind: PowerUpKind | null;
+  text: string;
+  /** Quieter second part, e.g. "212 W now", "+38 m". */
+  detail: string;
+  /** Highlighted (a power-up ready to use, a target being met). */
+  active: boolean;
+}
+
+/** What the overlay shows about power-ups (at most two pills); [] without any. */
+export function powerUpPills(pu: LiveState['powerUps']): PowerUpPill[] {
+  if (!pu) return [];
+  const out: PowerUpPill[] = [];
+  const ch = pu.challenge;
+  if (ch) {
+    const s = Math.ceil(ch.remainingS);
+    out.push({
+      key: 'challenge',
+      kind: null,
+      text: `Hold ${ch.targetW} W · ${s} s`,
+      detail: `${ch.powerW} W now`,
+      active: ch.powerW >= ch.targetW * 0.95,
+    });
+  }
+  const gain = pu.raceOffsetM >= 1 ? `+${Math.round(pu.raceOffsetM)} m` : '';
+  if (pu.effect) {
+    const name = POWER_UP_INFO[pu.effect.kind].label;
+    out.push({
+      key: 'effect',
+      kind: pu.effect.kind,
+      text:
+        pu.effect.phase === 'armed'
+          ? `${name} · armed`
+          : `${name} · ${Math.ceil(pu.effect.remainingS)} s`,
+      detail: gain,
+      active: pu.effect.phase === 'active',
+    });
+  } else if (pu.held) {
+    out.push({
+      key: 'held',
+      kind: pu.held,
+      text: `${POWER_UP_INFO[pu.held].label}${pu.canActivate ? ' ready' : ''}`,
+      detail: pu.canActivate ? `side button / ${POWER_UP_KEY}` : gain,
+      active: pu.canActivate,
+    });
+  } else if (gain) {
+    out.push({ key: 'effect', kind: null, text: 'Power-ups', detail: gain, active: false });
+  }
+  return out.slice(0, 2);
 }

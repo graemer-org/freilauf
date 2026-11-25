@@ -4,6 +4,7 @@ import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { useApp } from '../hooks';
 import { readPalette, startBrakeCue, steerKeyboard } from './RideScene';
+import { PowerUpSceneState, powerUpAttributes } from './powerUpScene';
 import { cameraFor, curveLean, riderLateralM } from './roadMath';
 import { RoadRenderer, type RoadFrame, type RoadRider } from './roadRender';
 import {
@@ -84,7 +85,8 @@ export function describeRoad(live: LiveState | null, track: RouteTrack, distance
  * across laps), data-heading (degrees, 0 = north), data-curve (degrees of
  * turn over the next 100 m, + right), data-grade (what the trainer is told),
  * data-route-grade (from the track), data-lateral, data-frames, data-frame-ms, data-jumps
- * (jumps along the route seen; each one cuts to the new place, see CUT_MS).
+ * (jumps along the route seen; each one cuts to the new place, see CUT_MS), and for power-ups
+ * data-effect (active effect's kind or ''), data-effect-phase and data-gate-ahead (m or '').
  */
 export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: ReactNode }) {
   const app = useApp();
@@ -134,6 +136,8 @@ export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: Rea
       data-frames="0"
       data-state={initial.state}
       data-braking="0"
+      data-effect=""
+      data-gate-ahead=""
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
@@ -172,6 +176,7 @@ function startRoadScene(
   let jumps: number | null = null;
   let cut = false;
   let cutTimer: ReturnType<typeof setTimeout> | null = null;
+  const boost = new PowerUpSceneState();
   const onLive = (next: LiveState | null): void => {
     if (next === live) return;
     live = next;
@@ -188,6 +193,8 @@ function startRoadScene(
     jumps = seen;
     target = unwrappedDistance(track, next.route);
     targetAt = performance.now();
+    // Gates are reported relative to the rider's route position at this sample.
+    boost.setLive(next.powerUps, target ?? 0, targetAt);
     const riders = next.group?.riders ?? [];
     const prev = new Map(others.map((o) => [o.id, o.crank]));
     others = riders
@@ -256,7 +263,7 @@ function startRoadScene(
   let lastAttr = 0;
   let lastLabel = 0;
   let label = root.getAttribute('aria-label') ?? '';
-  let drawn = { d: Number.NaN, lat: Number.NaN, state: '' };
+  let drawn = { d: Number.NaN, lat: Number.NaN, state: '', boost: '' };
   const frame: RoadFrame = {
     track,
     camera: cameraFor(track, distance, 0),
@@ -353,9 +360,13 @@ function startRoadScene(
       : total;
     frame.others = others;
     frame.reducedMotion = reducedMotion;
+    frame.powerUps = boost.update(distance, t);
+    const pu = frame.powerUps;
+    const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}`;
 
     const changed =
       !reducedMotion ||
+      drawn.boost !== boostKey ||
       dirty ||
       drawn.d !== distance ||
       drawn.lat !== lat.pos ||
@@ -367,7 +378,7 @@ function startRoadScene(
       frameMs = frames === 0 ? cost : frameMs * 0.95 + cost * 0.05;
       frames++;
       dirty = false;
-      drawn = { d: distance, lat: lat.pos, state };
+      drawn = { d: distance, lat: lat.pos, state, boost: boostKey };
     }
 
     if (t - lastAttr >= ATTR_MS) {
@@ -384,6 +395,10 @@ function startRoadScene(
       ds.state = state;
       ds.motion = reducedMotion ? 'reduced' : 'full';
       ds.jumps = String(jumps ?? 0);
+      const pa = powerUpAttributes(pu);
+      ds.effect = pa.effect;
+      ds.effectPhase = pa.effectPhase;
+      ds.gateAhead = pa.gateAhead;
       ds.nextSign = frame.next
         ? `${frame.next.gradePercent.toFixed(1)}@${Math.round(frame.next.inM)}`
         : '';

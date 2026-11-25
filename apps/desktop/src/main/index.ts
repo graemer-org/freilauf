@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BrowserWindow, app, dialog, screen, session, shell } from 'electron';
-import type { Settings } from '../shared/contract';
+import type { LiveState, Settings } from '../shared/contract';
 import { ARG, IPC } from '../shared/ipc';
 import { attachBluetoothChooser, installPairingHandler } from './bluetooth';
 import type { BluetoothChooser } from './bluetoothChooser';
@@ -23,6 +23,8 @@ import { MAIN_MIN_SIZE, centeredBounds, fitToDisplays } from './geometry';
 import { registerIpc } from './ipc';
 import { OverlayController } from './overlay';
 import { RideStore } from './rideStore';
+import { helperSpawner, locateHelper } from './sensorRelay';
+import { SensorRelayController, relayInputFromLive } from './sensorRelayController';
 import type { AppOrigin } from './security';
 import { hardenWebContents, installPermissionPolicy } from './security';
 import { describeSettingsChange } from './settingsLog';
@@ -234,6 +236,31 @@ function start(): void {
 
       settings.onChange((s) => broadcast(IPC.settingsChanged, s));
 
+      // --- share with my watch (docs/adr/0005-sensor-relay.md) ---
+      const relayLog = d.scope('relay');
+      const helper = locateHelper({ isPackaged: app.isPackaged, appPath: app.getAppPath() });
+      relayLog.info('watch relay helper', {
+        location: helper.kind,
+        ...(helper.kind === 'unavailable' ? { reason: helper.reason } : {}),
+      });
+      let relayLive: { state: LiveState; at: number } | null = null;
+      const relay = new SensorRelayController({
+        spawn: helperSpawner(helper),
+        unavailableReason: helper.kind === 'unavailable' ? helper.reason : '',
+        input: (now) => relayInputFromLive(relayLive?.state ?? null, now - (relayLive?.at ?? 0)),
+        computerName: os.hostname(),
+        log: relayLog,
+        onStatus: (status) => {
+          // Without the computer's name: the log is meant to be shared.
+          const { computerName: _name, ...logged } = { computerName: '', ...status };
+          relayLog.info('watch relay status', logged);
+          if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send(IPC.watchRelayStatusChanged, status);
+        },
+      });
+      relay.configure(settings.get().watchRelay);
+      settings.onChange((s) => relay.configure(s.watchRelay));
+
       registerIpc({
         origin,
         mainWindow: () => mainWindow,
@@ -243,6 +270,10 @@ function start(): void {
         rides,
         diag: d,
         log,
+        watchRelayStatus: () => relay.status,
+        onLive: (state) => {
+          relayLive = { state, at: Date.now() };
+        },
         exportFit: (id) =>
           rides.exportFit(id, async (defaultFileName) => {
             const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
@@ -301,6 +332,7 @@ function start(): void {
         saveWs();
       });
       app.on('will-quit', () => {
+        relay.dispose();
         overlay?.unregisterHotkey();
         overlay?.close();
         settings.flushSync();

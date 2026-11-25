@@ -43,6 +43,10 @@ export const IPC = {
   diagOpenLogFolder: 'diag:open-log-folder',
   diagExportLog: 'diag:export-log',
   diagReadRecent: 'diag:read-recent',
+
+  watchRelayStatus: 'watch-relay:status',
+  /** main → main window */
+  watchRelayStatusChanged: 'watch-relay:status-changed',
 } as const;
 
 /** Command-line switches main passes to each renderer via `additionalArguments`. */
