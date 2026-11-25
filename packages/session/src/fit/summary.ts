@@ -22,6 +22,11 @@ export interface RideSummary {
   /** `null` when no sample carries heart rate. */
   avgHeartRateBpm: number | null;
   maxHeartRateBpm: number | null;
+  /**
+   * Normalized power (W): the 4th root of the mean of the 4th powers of the 30 s rolling
+   * average of the 1 Hz power samples. `null` with fewer than 30 samples.
+   */
+  normalizedPowerW: number | null;
   /** Mechanical work in kJ (sum of power × sample interval). */
   workKj: number;
   /**
@@ -38,6 +43,31 @@ const MAX_SAMPLE_DT_S = 5;
 
 const fin = (v: number | null | undefined): v is number =>
   typeof v === 'number' && Number.isFinite(v);
+
+/** Rolling window (samples, i.e. seconds at 1 Hz) of normalized power. */
+const NP_WINDOW = 30;
+
+/**
+ * Normalized power of 1 Hz samples (the usual definition: 30 s rolling mean, raised to the
+ * 4th power, averaged, 4th root). Samples are recorded only while riding, so pauses are not
+ * counted; non-finite or negative power counts as 0. `null` with fewer than 30 samples.
+ */
+export function normalizedPower(samples: readonly RideSample[]): number | null {
+  if (samples.length < NP_WINDOW) return null;
+  const p = samples.map((s) => (fin(s.powerW) ? Math.max(0, s.powerW) : 0));
+  let windowSum = 0;
+  let sum4 = 0;
+  let n = 0;
+  for (let i = 0; i < p.length; i++) {
+    windowSum += p[i]!;
+    if (i >= NP_WINDOW) windowSum -= p[i - NP_WINDOW]!;
+    if (i >= NP_WINDOW - 1) {
+      sum4 += (windowSum / NP_WINDOW) ** 4;
+      n++;
+    }
+  }
+  return (sum4 / n) ** 0.25;
+}
 
 /** Samples usable for encoding: those with a finite timestamp. */
 export function usableSamples(ride: RecordedRide): RideSample[] {
@@ -116,6 +146,7 @@ export function rideSummary(ride: RecordedRide): RideSummary {
     maxCadenceRpm: maxCad,
     avgHeartRateBpm: hrN > 0 ? hrSum / hrN : null,
     maxHeartRateBpm: hrN > 0 ? maxHr : null,
+    normalizedPowerW: normalizedPower(samples),
     workKj,
     caloriesKcal: workKj,
     sampleCount: samples.length,
@@ -193,24 +224,74 @@ export function segmentOf(s: RideSample): number {
 }
 
 /**
- * Splits samples into laps at every change of route segment (a jump along the route), in
- * order. A ride without jumps is one lap. Never returns an empty lap; [] for no samples.
+ * A route segment shorter than this — in ridden distance or in timer time — does not make a
+ * lap of its own: typically the rider started, paused at once and moved the start point
+ * (a jump) before riding, or jumped several times in a row without riding in between.
  */
-export function splitAtJumps(samples: readonly RideSample[]): RideSample[][] {
-  const laps: RideSample[][] = [];
-  let current: RideSample[] = [];
+export const MIN_LAP_DISTANCE_M = 1;
+export const MIN_LAP_TIMER_S = 5;
+
+/** One lap of a ride: its samples, and those of them whose positions describe the lap. */
+export interface RideLap {
+  samples: RideSample[];
+  /**
+   * The samples of the route segment that was ridden in this lap. When a too-short segment
+   * was folded into the lap, its samples count for time, distance and work but not for
+   * positions (they lie on the other side of a jump).
+   */
+  ridden: RideSample[];
+}
+
+/**
+ * Splits samples into laps at every change of route segment (a jump along the route), in
+ * order. Segments with almost no riding (under MIN_LAP_DISTANCE_M or MIN_LAP_TIMER_S) are
+ * folded into the next lap (into the previous one at the end of the ride), so a ride never
+ * has an empty lap. A ride without jumps is one lap. [] for no samples.
+ */
+export function splitIntoLaps(samples: readonly RideSample[]): RideLap[] {
+  // Runs of consecutive samples on the same segment.
+  const runs: RideSample[][] = [];
   let seg: number | null = null;
   for (const s of samples) {
     const k = segmentOf(s);
-    if (seg !== null && k !== seg && current.length > 0) {
-      laps.push(current);
-      current = [];
-    }
+    if (seg === null || k !== seg) runs.push([]);
     seg = k;
-    current.push(s);
+    runs.at(-1)!.push(s);
   }
-  if (current.length > 0) laps.push(current);
+  if (runs.length <= 1) return runs.map((r) => ({ samples: r, ridden: r }));
+
+  let prevEnd: RideSample | undefined;
+  const isShort = (run: RideSample[]): boolean => {
+    const last = run.at(-1)!;
+    const d0 = prevEnd && fin(prevEnd.distanceM) ? prevEnd.distanceM : 0;
+    const t0 = prevEnd && fin(prevEnd.elapsedS) ? prevEnd.elapsedS : 0;
+    const distance = fin(last.distanceM) ? last.distanceM - d0 : 0;
+    const timer = fin(last.elapsedS) ? last.elapsedS - t0 : run.length;
+    prevEnd = last;
+    return distance < MIN_LAP_DISTANCE_M || timer < MIN_LAP_TIMER_S;
+  };
+
+  const laps: RideLap[] = [];
+  let pending: RideSample[] = [];
+  for (const run of runs) {
+    if (isShort(run)) {
+      pending.push(...run);
+      continue;
+    }
+    laps.push({ samples: [...pending, ...run], ridden: run });
+    pending = [];
+  }
+  if (pending.length > 0) {
+    const last = laps.at(-1);
+    if (last) last.samples.push(...pending);
+    else laps.push({ samples: pending, ridden: runs.at(-1)! }); // nothing ridden at all
+  }
   return laps;
+}
+
+/** The samples of each lap (see splitIntoLaps). */
+export function splitAtJumps(samples: readonly RideSample[]): RideSample[][] {
+  return splitIntoLaps(samples).map((lap) => lap.samples);
 }
 
 /**

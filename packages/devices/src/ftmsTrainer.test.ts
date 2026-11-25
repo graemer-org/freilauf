@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ControlPointError, ControlPointTimeoutError, FtmsTrainer } from './ftmsTrainer';
+import { encodeSetIndoorBikeSimulation } from './ftms';
 import { DeviceDisconnectedError } from './managedDevice';
-import { FakePeripheral, FakeScheduler, flushPromises, toHex } from './testing/fakeGatt';
+import {
+  FakePeripheral,
+  FakeScheduler,
+  flushPromises,
+  gattBusyError,
+  gattDisconnectedError,
+  toHex,
+} from './testing/fakeGatt';
 import type { FakeWrite } from './testing/fakeGatt';
 import type { SimulationParams, TrainerData } from './types';
 import {
@@ -12,14 +20,23 @@ import {
   FTMS_SERVICE,
 } from './uuids';
 
-const SIM: SimulationParams = { windSpeedMps: 0, gradePercent: 5, crr: 0.004, windResistanceKgM: 0.51 };
+const SIM: SimulationParams = {
+  windSpeedMps: 0,
+  gradePercent: 5,
+  crr: 0.004,
+  windResistanceKgM: 0.51,
+};
 const SIM_HEX = '11 00 00 f4 01 28 33';
 
 const ok = (w: FakeWrite) => `80 ${toHex(w.data.subarray(0, 1))} 01`;
 
 function setup(options: { services?: string[]; autoRespond?: boolean } = {}) {
-  const peripheral = new FakePeripheral({ services: options.services ?? [FTMS_SERVICE], name: 'KICKR' });
-  if (options.autoRespond !== false) peripheral.respondToWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, ok);
+  const peripheral = new FakePeripheral({
+    services: options.services ?? [FTMS_SERVICE],
+    name: 'KICKR',
+  });
+  if (options.autoRespond !== false)
+    peripheral.respondToWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, ok);
   const clock = new FakeScheduler();
   const trainer = new FtmsTrainer(peripheral, { schedule: clock.schedule, now: clock.now });
   const data: TrainerData[] = [];
@@ -228,9 +245,13 @@ describe('FtmsTrainer', () => {
   });
 
   it('uses Cycling Power crank data for cadence when Indoor Bike Data has none', async () => {
-    const { trainer, peripheral, clock, data } = setup({ services: [FTMS_SERVICE, CYCLING_POWER_SERVICE] });
+    const { trainer, peripheral, clock, data } = setup({
+      services: [FTMS_SERVICE, CYCLING_POWER_SERVICE],
+    });
     await trainer.connect();
-    expect(peripheral.current!.isSubscribed(CYCLING_POWER_SERVICE, CYCLING_POWER_MEASUREMENT)).toBe(true);
+    expect(peripheral.current!.isSubscribed(CYCLING_POWER_SERVICE, CYCLING_POWER_MEASUREMENT)).toBe(
+      true,
+    );
     // speed + power only (flags 0x0040)
     const ibd = '40 00 b8 0b fa 00';
     peripheral.notify(CYCLING_POWER_SERVICE, CYCLING_POWER_MEASUREMENT, '20 00 fa 00 0a 00 00 00');
@@ -248,7 +269,9 @@ describe('FtmsTrainer', () => {
   });
 
   it('prefers Indoor Bike Data cadence over CPS', async () => {
-    const { trainer, peripheral, clock, data } = setup({ services: [FTMS_SERVICE, CYCLING_POWER_SERVICE] });
+    const { trainer, peripheral, clock, data } = setup({
+      services: [FTMS_SERVICE, CYCLING_POWER_SERVICE],
+    });
     await trainer.connect();
     peripheral.notify(CYCLING_POWER_SERVICE, CYCLING_POWER_MEASUREMENT, '20 00 fa 00 0a 00 00 00');
     await clock.advance(1000);
@@ -264,5 +287,155 @@ describe('FtmsTrainer', () => {
     expect(trainer.state).toBe('disconnected');
     await clock.advance(60_000);
     expect(peripheral.connectAttempts).toBe(1);
+  });
+
+  describe('control point timing on Windows (indication before the write resolves)', () => {
+    /** Writes answer after `respondMs` and resolve after `resolveMs`; Chromium rejects overlapping writes. */
+    function windowsSetup(respondMs: number, resolveMs: number) {
+      const rig = setup();
+      rig.peripheral.setWriteBehavior(FTMS_SERVICE, FTMS_CONTROL_POINT, {
+        schedule: rig.clock.schedule,
+        respondAfterMs: respondMs,
+        resolveAfterMs: resolveMs,
+        rejectWhileBusy: true,
+      });
+      const diags: string[] = [];
+      rig.trainer.onDiagnostic((d) => diags.push(d.event));
+      return { ...rig, diags };
+    }
+    const sim = (gradePercent: number): SimulationParams => ({ ...SIM, gradePercent });
+    const simHex = (gradePercent: number) =>
+      toHex(encodeSetIndoorBikeSimulation(sim(gradePercent)));
+
+    it('waits for the write to settle before the next write (log 2026-11-25 16:29:32)', async () => {
+      // Response and write completion in the same millisecond, the response first.
+      const { trainer, peripheral, clock, cpWrites, diags } = windowsSetup(144, 144);
+      const connecting = trainer.connect();
+      await clock.advance(200);
+      await connecting;
+
+      const first = trainer.setSimulation(sim(-1.66)).catch((e: unknown) => e);
+      await clock.advance(57);
+      // a gradient update arrives while the shift's write is in flight
+      const second = trainer.setSimulation(sim(-1.08)).catch((e: unknown) => e);
+      await clock.advance(87);
+      expect(await first).toBeUndefined();
+      await clock.advance(200);
+      expect(await second).toBeUndefined();
+      expect(peripheral.rejectedWrites).toEqual([]);
+      expect(diags).not.toContain('cp-write-failed');
+      expect(cpWrites()).toEqual(['00', simHex(-1.66), simHex(-1.08)]);
+    });
+
+    it('serializes a burst of 10 shifts within 500 ms; the last parameters win, nothing is rejected', async () => {
+      const { trainer, peripheral, clock, cpWrites, diags } = windowsSetup(100, 101);
+      const connecting = trainer.connect();
+      await clock.advance(200);
+      await connecting;
+
+      const results: Array<Promise<unknown>> = [];
+      for (let i = 0; i < 10; i++) {
+        results.push(
+          trainer.setSimulation(sim(i + 1)).then(
+            () => 'ok',
+            (e: unknown) => e,
+          ),
+        );
+        await clock.advance(50);
+      }
+      await clock.advance(1000);
+      expect(await Promise.all(results)).toEqual(Array(10).fill('ok'));
+      expect(peripheral.rejectedWrites).toEqual([]);
+      expect(diags).not.toContain('cp-write-failed');
+      const simWrites = cpWrites().slice(1);
+      expect(simWrites.length).toBeLessThan(10);
+      expect(simWrites.at(-1)).toBe(simHex(10));
+      // one write per completed exchange: never two in flight
+      expect(diags.filter((e) => e === 'cp-request')).toHaveLength(cpWrites().length);
+      expect(clock.pendingDelays).toEqual([]);
+    });
+
+    it('moves on if the write never settles after its response arrived', async () => {
+      const { trainer, clock, cpWrites, diags } = windowsSetup(0, 60_000);
+      const connecting = trainer.connect().catch((e: unknown) => e);
+      await clock.advance(1999);
+      expect(cpWrites()).toEqual(['00']);
+      await clock.advance(1);
+      expect(await connecting).toBeUndefined();
+      expect(diags).toContain('cp-write-stuck');
+    });
+  });
+
+  describe('transient control point write failures', () => {
+    it('retries "GATT operation already in progress" after 50 ms, then 100 ms', async () => {
+      const { trainer, peripheral, clock, cpWrites } = setup();
+      await trainer.connect();
+      const diags: string[] = [];
+      trainer.onDiagnostic((d) => diags.push(d.event));
+      peripheral.failNextWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, 2, gattBusyError());
+      let settled = false;
+      const p = trainer.setSimulation(SIM).finally(() => (settled = true));
+      await flushPromises();
+      expect(clock.pendingDelays).toEqual([50]);
+      await clock.advance(50);
+      expect(clock.pendingDelays).toEqual([100]);
+      expect(settled).toBe(false);
+      await clock.advance(100);
+      await p;
+      expect(peripheral.rejectedWrites.map((w) => toHex(w.data))).toEqual([SIM_HEX, SIM_HEX]);
+      expect(cpWrites()).toEqual(['00', SIM_HEX]);
+      expect(diags.filter((e) => e === 'cp-write-retry')).toHaveLength(2);
+      expect(diags).not.toContain('cp-write-failed');
+    });
+
+    it('gives up after 3 retries (50, 100, 200 ms) and reports the error', async () => {
+      const { trainer, peripheral, clock, cpWrites } = setup();
+      await trainer.connect();
+      peripheral.failNextWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, 4, gattBusyError());
+      const p = trainer.setSimulation(SIM).catch((e: unknown) => e);
+      await clock.advance(349);
+      expect(peripheral.rejectedWrites).toHaveLength(3);
+      await clock.advance(1);
+      const err = await p;
+      expect((err as Error).message).toMatch(/already in progress/);
+      expect(peripheral.rejectedWrites).toHaveLength(4);
+      // the queue keeps working
+      await trainer.setSimulation(SIM);
+      expect(cpWrites()).toEqual(['00', SIM_HEX]);
+    });
+
+    it('a retry writes the latest queued parameters (coalescing)', async () => {
+      const { trainer, peripheral, clock, cpWrites } = setup();
+      await trainer.connect();
+      peripheral.failNextWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, 1, gattBusyError());
+      const p1 = trainer.setSimulation({ ...SIM, gradePercent: 1 });
+      await flushPromises();
+      const p2 = trainer.setSimulation({ ...SIM, gradePercent: 2 });
+      const p3 = trainer.setSimulation({ ...SIM, gradePercent: 3 });
+      await clock.advance(50);
+      await Promise.all([p1, p2, p3]);
+      expect(cpWrites()).toEqual(['00', '11 00 00 2c 01 28 33']);
+    });
+
+    it('does not retry when the link is gone', async () => {
+      const { trainer, peripheral, clock } = setup();
+      await trainer.connect();
+      peripheral.failNextWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, 1, gattDisconnectedError());
+      const err = await trainer.setSimulation(SIM).catch((e: unknown) => e);
+      expect((err as Error).message).toMatch(/GATT Server is disconnected/);
+      expect(clock.pendingDelays).toEqual([]);
+    });
+
+    it('a pending retry is dropped with the link', async () => {
+      const { trainer, peripheral, clock } = setup();
+      await trainer.connect();
+      peripheral.failNextWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, 1, gattBusyError());
+      const p = trainer.setSimulation(SIM).catch((e: unknown) => e);
+      await flushPromises();
+      peripheral.dropLink();
+      expect(await p).toBeInstanceOf(DeviceDisconnectedError);
+      await clock.advance(50);
+      expect(peripheral.writesTo(FTMS_CONTROL_POINT).map((w) => toHex(w.data))).toEqual(['00']);
+    });
   });
 });

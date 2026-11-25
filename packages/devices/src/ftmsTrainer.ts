@@ -12,7 +12,14 @@ import {
 import type { FtmsResult } from './ftms';
 import { DeviceDisconnectedError, ManagedDevice } from './managedDevice';
 import type { ManagedDeviceOptions } from './managedDevice';
-import type { BlePeripheral, GattConnection, SimulationParams, Trainer, TrainerData } from './types';
+import { isRetryableWriteError } from './transientErrors';
+import type {
+  BlePeripheral,
+  GattConnection,
+  SimulationParams,
+  Trainer,
+  TrainerData,
+} from './types';
 import {
   CYCLING_POWER_MEASUREMENT,
   CYCLING_POWER_SERVICE,
@@ -24,6 +31,12 @@ import {
 export interface FtmsTrainerOptions extends ManagedDeviceOptions {
   /** How long to wait for a control point response. Default 2000 ms. */
   responseTimeoutMs?: number;
+  /**
+   * Delays before re-writing a control point command whose write failed
+   * transiently (Chromium "GATT operation already in progress", a GATT
+   * error without link loss). One retry per entry. Default [50, 100, 200].
+   */
+  writeRetryDelaysMs?: number[];
   /** Clock for cadence decay. Default Date.now. */
   now?: () => number;
 }
@@ -33,7 +46,9 @@ export class ControlPointError extends Error {
   readonly result: FtmsResult;
   readonly requestOpCode: number;
   constructor(requestOpCode: number, result: FtmsResult) {
-    super(`FTMS control point op 0x${requestOpCode.toString(16).padStart(2, '0')} failed: ${result}`);
+    super(
+      `FTMS control point op 0x${requestOpCode.toString(16).padStart(2, '0')} failed: ${result}`,
+    );
     this.name = 'ControlPointError';
     this.requestOpCode = requestOpCode;
     this.result = result;
@@ -59,6 +74,8 @@ interface Waiter {
 interface Command {
   key: CommandKey;
   bytes: Uint8Array;
+  /** Later commands of the same key may replace this one's bytes. */
+  coalesce: boolean;
   /** All callers waiting on this command (several when coalesced). */
   waiters: Waiter[];
 }
@@ -67,8 +84,10 @@ interface InFlight {
   command: Command;
   opCode: number;
   sentAt: number;
-  cancelTimeout: () => void;
-  settle: (err?: unknown) => void;
+  /** The response indication (or the timeout, or a write failure) has decided the result. */
+  onResponse: (err?: unknown) => void;
+  /** Ends the command now (link lost): rejects its callers, nothing is pumped. */
+  abort: (err: unknown) => void;
 }
 
 const OP_NAMES: Record<number, string> = Object.fromEntries(
@@ -92,8 +111,15 @@ type Mode = { kind: 'sim'; params: SimulationParams } | { kind: 'erg'; watts: nu
 /**
  * FTMS smart trainer driver.
  *
- * Control point writes are serialized (one in flight; the next is written only
- * after the previous response, timeout or failure). A setSimulation (or
+ * Control point writes are serialized: one command in flight, and the next is
+ * written only once the previous one is complete, i.e. its write promise has
+ * settled AND its response indication arrived (or timed out). Both are
+ * needed: on Windows the indication can be delivered before
+ * writeValueWithResponse() resolves, and a write started in that window is
+ * rejected by Chromium with "GATT operation already in progress". Such
+ * transient write failures are retried after a short delay (bounded); while a
+ * retry is pending, newer commands of the same kind are folded into it, so
+ * rapid shifting never queues up stale parameters. A setSimulation (or
  * setTargetPower) call that arrives while an identical-kind command is the
  * last one queued replaces that command's bytes; every coalesced caller's
  * promise settles with the result of the command that is finally written.
@@ -107,6 +133,7 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
 
   private readonly dataEmitter = createEmitter<TrainerData>();
   private readonly responseTimeoutMs: number;
+  private readonly writeRetryDelaysMs: number[];
   private readonly now: () => number;
   private readonly crankCadence = new CadenceFromCrankRevs();
 
@@ -121,6 +148,7 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
   constructor(peripheral: BlePeripheral, options: FtmsTrainerOptions = {}) {
     super(peripheral, options);
     this.responseTimeoutMs = options.responseTimeoutMs ?? 2000;
+    this.writeRetryDelaysMs = options.writeRetryDelaysMs ?? [50, 100, 200];
     this.now = options.now ?? Date.now;
   }
 
@@ -155,13 +183,19 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
           this.onCyclingPower(v),
         );
         this.hasCps = true;
-        this.diag('debug', 'subscribed', 'cycling power measurement notifications on (cadence fallback)');
+        this.diag(
+          'debug',
+          'subscribed',
+          'cycling power measurement notifications on (cadence fallback)',
+        );
       } else {
         this.diag('debug', 'no-cps', 'no cycling power service (cadence only from FTMS)');
       }
     } catch (err) {
       // CPS is only a cadence fallback; ignore.
-      this.diag('debug', 'cps-failed', 'cycling power subscription failed (ignored)', { error: err });
+      this.diag('debug', 'cps-failed', 'cycling power subscription failed (ignored)', {
+        error: err,
+      });
     }
 
     // A refusal here does not fail the connection: data still flows and the
@@ -187,8 +221,9 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
     const err = new DeviceDisconnectedError('link lost');
     const pending = this.queue;
     this.queue = [];
-    this.inFlight?.settle(err);
+    const flight = this.inFlight;
     this.inFlight = null;
+    flight?.abort(err);
     for (const c of pending) for (const w of c.waiters) w.reject(err);
   }
 
@@ -225,13 +260,18 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
       });
       return;
     }
-    this.diag(r.result === 'success' ? 'debug' : 'warn', 'cp-response', `${opName(r.requestOpCode)} → ${r.result}`, {
-      op: hexByte(r.requestOpCode),
-      result: r.result,
-      ms: Date.now() - f.sentAt,
-    });
-    if (r.result === 'success') f.settle();
-    else f.settle(new ControlPointError(r.requestOpCode, r.result));
+    this.diag(
+      r.result === 'success' ? 'debug' : 'warn',
+      'cp-response',
+      `${opName(r.requestOpCode)} → ${r.result}`,
+      {
+        op: hexByte(r.requestOpCode),
+        result: r.result,
+        ms: Date.now() - f.sentAt,
+      },
+    );
+    if (r.result === 'success') f.onResponse();
+    else f.onResponse(new ControlPointError(r.requestOpCode, r.result));
   }
 
   // ───────────── control point queue ─────────────
@@ -256,11 +296,11 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
   private enqueue(key: CommandKey, bytes: Uint8Array, coalesce: boolean): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const last = this.queue.at(-1);
-      if (coalesce && last && last.key === key) {
+      if (coalesce && last && last.key === key && last.coalesce) {
         last.bytes = bytes;
         last.waiters.push({ resolve, reject });
       } else {
-        this.queue.push({ key, bytes, waiters: [{ resolve, reject }] });
+        this.queue.push({ key, bytes, coalesce, waiters: [{ resolve, reject }] });
       }
       this.pump();
     });
@@ -277,41 +317,151 @@ export class FtmsTrainer extends ManagedDevice<'trainer'> implements Trainer {
       this.pump();
       return;
     }
+
     const opCode = command.bytes[0] ?? FtmsOpCode.RequestControl;
-    let done = false;
+    /** The write promise of the current attempt has settled. */
+    let writeSettled = false;
+    /** The response (or timeout / write failure) has decided the result; `outcome` holds it. */
+    let decided = false;
+    let outcome: unknown;
+    let finished = false;
+    let retries = 0;
+    let cancelTimer: () => void = () => {};
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      cancelTimer();
+      if (this.inFlight === flight) this.inFlight = null;
+      if (outcome === undefined && command.key === 'control') this.controlGranted = true;
+      for (const w of command.waiters) {
+        if (outcome === undefined) w.resolve();
+        else w.reject(outcome);
+      }
+      this.pump();
+    };
+
+    /** The command is complete once both its write and its response are done. */
+    const maybeFinish = () => {
+      if (decided && writeSettled) finish();
+    };
+
+    const decide = (err?: unknown) => {
+      if (decided || finished) return;
+      decided = true;
+      outcome = err;
+      cancelTimer();
+      if (!writeSettled) {
+        // Response before the write resolved (seen on Windows): wait for the
+        // write, but not forever.
+        cancelTimer = this.schedule(() => {
+          this.diag(
+            'warn',
+            'cp-write-stuck',
+            `${opName(opCode)}: write did not settle, moving on`,
+            {
+              op: hexByte(opCode),
+            },
+          );
+          writeSettled = true;
+          finish();
+        }, this.responseTimeoutMs);
+      }
+      maybeFinish();
+    };
+
+    const startResponseTimer = () => {
+      cancelTimer();
+      cancelTimer = this.schedule(() => {
+        this.diag(
+          'warn',
+          'cp-timeout',
+          `${opName(opCode)}: no response within ${this.responseTimeoutMs} ms`,
+          {
+            op: hexByte(opCode),
+          },
+        );
+        decide(new ControlPointTimeoutError(opCode));
+      }, this.responseTimeoutMs);
+    };
+
+    const send = () => {
+      if (finished) return;
+      writeSettled = false;
+      flight.sentAt = Date.now();
+      startResponseTimer();
+      this.diag('debug', 'cp-request', `${opName(opCode)} sent`, {
+        op: hexByte(opCode),
+        bytes: command.bytes,
+        coalesced: command.waiters.length,
+        ...(retries > 0 ? { retry: retries } : {}),
+      });
+      conn.write(FTMS_SERVICE, FTMS_CONTROL_POINT, command.bytes).then(
+        () => {
+          if (finished) return;
+          writeSettled = true;
+          maybeFinish();
+        },
+        (err: unknown) => {
+          if (finished) return;
+          writeSettled = true;
+          if (decided) {
+            // A response already arrived for this write: it was processed.
+            maybeFinish();
+            return;
+          }
+          const delay = this.writeRetryDelaysMs[retries];
+          if (delay !== undefined && this.cpConn === conn && isRetryableWriteError(err)) {
+            retries++;
+            cancelTimer();
+            this.diag(
+              'debug',
+              'cp-write-retry',
+              `${opName(opCode)}: write failed, retry ${retries} in ${delay} ms`,
+              {
+                op: hexByte(opCode),
+                delayMs: delay,
+                error: err,
+              },
+            );
+            cancelTimer = this.schedule(() => {
+              if (finished) return;
+              this.absorbQueuedUpdate(command);
+              send();
+            }, delay);
+            return;
+          }
+          this.diag('warn', 'cp-write-failed', `${opName(opCode)}: write failed`, { error: err });
+          decide(err);
+        },
+      );
+    };
+
     const flight: InFlight = {
       command,
       opCode,
       sentAt: Date.now(),
-      cancelTimeout: () => {},
-      settle: (err?: unknown) => {
-        if (done) return;
-        done = true;
-        flight.cancelTimeout();
-        if (this.inFlight === flight) this.inFlight = null;
-        if (err === undefined && command.key === 'control') this.controlGranted = true;
-        for (const w of command.waiters) {
-          if (err === undefined) w.resolve();
-          else w.reject(err);
-        }
-        this.pump();
+      onResponse: (err?: unknown) => decide(err),
+      abort: (err: unknown) => {
+        if (finished) return;
+        finished = true;
+        cancelTimer();
+        for (const w of command.waiters) w.reject(err);
       },
     };
     this.inFlight = flight;
-    flight.cancelTimeout = this.schedule(() => {
-      this.diag('warn', 'cp-timeout', `${opName(opCode)}: no response within ${this.responseTimeoutMs} ms`, {
-        op: hexByte(opCode),
-      });
-      flight.settle(new ControlPointTimeoutError(opCode));
-    }, this.responseTimeoutMs);
-    this.diag('debug', 'cp-request', `${opName(opCode)} sent`, {
-      op: hexByte(opCode),
-      bytes: command.bytes,
-      coalesced: command.waiters.length,
-    });
-    conn.write(FTMS_SERVICE, FTMS_CONTROL_POINT, command.bytes).catch((err: unknown) => {
-      this.diag('warn', 'cp-write-failed', `${opName(opCode)}: write failed`, { error: err });
-      flight.settle(err);
-    });
+    send();
+  }
+
+  /**
+   * Before re-writing `command`, takes over a newer command of the same kind
+   * waiting right behind it, so a retry writes the latest parameters once.
+   */
+  private absorbQueuedUpdate(command: Command): void {
+    const next = this.queue[0];
+    if (!command.coalesce || !next || next.key !== command.key || !next.coalesce) return;
+    this.queue.shift();
+    command.bytes = next.bytes;
+    command.waiters.push(...next.waiters);
   }
 }

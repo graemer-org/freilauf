@@ -16,7 +16,9 @@ export function hex(text: string): Uint8Array {
 
 export function toHex(bytes: Uint8Array | DataView): string {
   const u8 =
-    bytes instanceof DataView ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : bytes;
+    bytes instanceof DataView
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      : bytes;
   return [...u8].map((b) => b.toString(16).padStart(2, '0')).join(' ');
 }
 
@@ -44,6 +46,40 @@ export type WriteResponder = (write: FakeWrite) => Uint8Array | string | undefin
 
 const key = (service: Uuid, characteristic: Uuid) => `${service}|${characteristic}`;
 
+/** An error shaped like the DOMException Web Bluetooth rejects with. */
+export function fakeDomError(name: string, message: string): Error {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
+
+/** Chromium's rejection of a GATT operation while another one is running. */
+export const gattBusyError = (): Error =>
+  fakeDomError('NetworkError', 'GATT operation already in progress.');
+
+/** Chromium's rejection of a GATT operation after the link went away. */
+export const gattDisconnectedError = (): Error =>
+  fakeDomError(
+    'NetworkError',
+    'GATT Server is disconnected. Cannot retrieve services. (Re)connect first with `device.gatt.connect`.',
+  );
+
+/** How writes on one characteristic behave (see FakePeripheral.setWriteBehavior). */
+export interface FakeWriteBehavior {
+  /** Resolve the write this long after it was made. Default: at once. */
+  resolveAfterMs?: number;
+  /**
+   * Deliver the scripted response this long after the write was made,
+   * independently of when the write resolves; 0 delivers it before the write
+   * resolves, as Windows sometimes does. Default: right after the write resolves.
+   */
+  respondAfterMs?: number;
+  /** Scheduler for the delays, usually a FakeScheduler's (required for them). */
+  schedule?: Schedule;
+  /** Reject a write while another write on the characteristic is still pending, like Chromium. */
+  rejectWhileBusy?: boolean;
+}
+
 export class FakeGattConnection implements GattConnection {
   connected = true;
   /** Writes made on this connection. */
@@ -51,6 +87,9 @@ export class FakeGattConnection implements GattConnection {
   private readonly peripheral: FakePeripheral;
   private readonly listeners = new Map<string, Set<(data: DataView) => void>>();
   private readonly disconnectEmitter = createEmitter<void>();
+  private readonly pendingWrites = new Map<string, number>();
+  /** Drop the link at the first GATT operation (see FakePeripheral.dropNextLinksDuringSetup). */
+  dropOnFirstOperation: { notify: boolean } | null = null;
 
   constructor(peripheral: FakePeripheral) {
     this.peripheral = peripheral;
@@ -58,11 +97,13 @@ export class FakeGattConnection implements GattConnection {
 
   async hasService(service: Uuid): Promise<boolean> {
     this.assertConnected();
+    this.maybeDropDuringSetup();
     return this.peripheral.services.has(service);
   }
 
   async read(service: Uuid, characteristic: Uuid): Promise<DataView> {
     this.assertConnected();
+    this.maybeDropDuringSetup();
     const v = this.peripheral.values.get(key(service, characteristic));
     if (!v) throw new Error(`fake: no readable value for ${characteristic}`);
     return dataView(v);
@@ -75,6 +116,13 @@ export class FakeGattConnection implements GattConnection {
     options?: { withoutResponse?: boolean },
   ): Promise<void> {
     this.assertConnected();
+    this.maybeDropDuringSetup();
+    const k = key(service, characteristic);
+    const behavior = this.peripheral.writeBehaviors.get(k) ?? {};
+    if (behavior.rejectWhileBusy && (this.pendingWrites.get(k) ?? 0) > 0) {
+      this.peripheral.rejectedWrites.push({ service, characteristic, data: data.slice() });
+      throw gattBusyError();
+    }
     const w: FakeWrite = {
       service,
       characteristic,
@@ -82,17 +130,37 @@ export class FakeGattConnection implements GattConnection {
       withoutResponse: options?.withoutResponse ?? false,
       connection: this,
     };
+    const injected = this.peripheral.writeFailures.get(k)?.shift();
+    if (injected) {
+      this.peripheral.rejectedWrites.push({ service, characteristic, data: data.slice() });
+      throw injected;
+    }
     this.writes.push(w);
     this.peripheral.writes.push(w);
-    const r = this.peripheral.responders.get(key(service, characteristic));
-    if (!r) return;
-    const response = r.fn(w);
-    if (response === undefined) return;
-    const target = r.respondOn ?? characteristic;
-    // Deliver after the write has resolved, like a real indication.
-    void Promise.resolve().then(() => {
-      if (this.connected) this.notify(service, target, response);
-    });
+    const r = this.peripheral.responders.get(k);
+    const response = r ? r.fn(w) : undefined;
+    const target = r?.respondOn ?? characteristic;
+    const deliver = () => {
+      if (response === undefined || response === null || !this.connected) return;
+      this.notify(service, target, response);
+    };
+    const respondAfter = behavior.respondAfterMs;
+    if (respondAfter !== undefined) {
+      if (respondAfter <= 0 || !behavior.schedule) deliver();
+      else behavior.schedule(deliver, respondAfter);
+    }
+
+    const delay = behavior.resolveAfterMs ?? 0;
+    if (delay > 0 && behavior.schedule) {
+      this.pendingWrites.set(k, (this.pendingWrites.get(k) ?? 0) + 1);
+      await new Promise<void>((resolve) => behavior.schedule!(resolve, delay));
+      this.pendingWrites.set(k, (this.pendingWrites.get(k) ?? 1) - 1);
+      if (!this.connected) throw gattDisconnectedError();
+    }
+    if (respondAfter === undefined) {
+      // Deliver after the write has resolved, like a real indication.
+      void Promise.resolve().then(deliver);
+    }
   }
 
   async subscribe(
@@ -101,6 +169,7 @@ export class FakeGattConnection implements GattConnection {
     listener: (data: DataView) => void,
   ): Promise<Unsubscribe> {
     this.assertConnected();
+    this.maybeDropDuringSetup();
     if (!this.peripheral.services.has(service)) throw new Error(`fake: no service ${service}`);
     const failure = this.peripheral.subscribeFailures.get(key(service, characteristic));
     if (failure) throw failure;
@@ -118,7 +187,8 @@ export class FakeGattConnection implements GattConnection {
   /** Delivers a notification to this connection's subscribers. */
   notify(service: Uuid, characteristic: Uuid, data: Uint8Array | string): void {
     if (!this.connected) return;
-    for (const l of [...(this.listeners.get(key(service, characteristic)) ?? [])]) l(dataView(data));
+    for (const l of [...(this.listeners.get(key(service, characteristic)) ?? [])])
+      l(dataView(data));
   }
 
   async disconnect(): Promise<void> {
@@ -145,6 +215,21 @@ export class FakeGattConnection implements GattConnection {
   private assertConnected(): void {
     if (!this.connected) throw new Error('fake: not connected');
   }
+
+  /** Windows dropping a fresh link while services are being discovered. */
+  private maybeDropDuringSetup(): void {
+    const drop = this.dropOnFirstOperation;
+    if (!drop) return;
+    this.dropOnFirstOperation = null;
+    if (drop.notify) this.close();
+    else {
+      // The disconnect event was missed (fired before anyone listened).
+      this.connected = false;
+      this.listeners.clear();
+      this.disconnectEmitter.clear();
+    }
+    throw gattDisconnectedError();
+  }
 }
 
 export interface FakePeripheralOptions {
@@ -163,9 +248,17 @@ export class FakePeripheral implements BlePeripheral {
   readonly writes: FakeWrite[] = [];
   connectAttempts = 0;
   /** @internal */ readonly values = new Map<string, Uint8Array>();
-  /** @internal */ readonly responders = new Map<string, { fn: WriteResponder; respondOn?: Uuid }>();
+  /** @internal */ readonly responders = new Map<
+    string,
+    { fn: WriteResponder; respondOn?: Uuid }
+  >();
   /** @internal */ readonly subscribeFailures = new Map<string, Error>();
+  /** @internal */ readonly writeBehaviors = new Map<string, FakeWriteBehavior>();
+  /** @internal */ readonly writeFailures = new Map<string, Error[]>();
+  /** Writes that were rejected (busy or injected failures), oldest first. */
+  readonly rejectedWrites: Array<{ service: Uuid; characteristic: Uuid; data: Uint8Array }> = [];
   private readonly connectFailures: Error[] = [];
+  private setupDrops: Array<{ notify: boolean }> = [];
   private failAll: Error | null = null;
 
   constructor(options: FakePeripheralOptions = {}) {
@@ -179,6 +272,7 @@ export class FakePeripheral implements BlePeripheral {
     const failure = this.connectFailures.shift() ?? this.failAll;
     if (failure) throw failure;
     const c = new FakeGattConnection(this);
+    c.dropOnFirstOperation = this.setupDrops.shift() ?? null;
     this.connections.push(c);
     return c;
   }
@@ -199,7 +293,39 @@ export class FakePeripheral implements BlePeripheral {
     this.failAll = error;
   }
 
-  failSubscribe(service: Uuid, characteristic: Uuid, error = new Error('fake: subscribe failed')): void {
+  /**
+   * The next `count` links open, then drop at their first GATT operation,
+   * which rejects with Chromium's "GATT Server is disconnected" NetworkError.
+   * With `notify: false` the connection's onDisconnect does not fire (the
+   * event came before anyone listened).
+   */
+  dropNextLinksDuringSetup(count = 1, options: { notify?: boolean } = {}): void {
+    for (let i = 0; i < count; i++) this.setupDrops.push({ notify: options.notify ?? true });
+  }
+
+  /** Scripts the timing of writes on a characteristic (persists across reconnects). */
+  setWriteBehavior(service: Uuid, characteristic: Uuid, behavior: FakeWriteBehavior): void {
+    this.writeBehaviors.set(key(service, characteristic), behavior);
+  }
+
+  /** Makes the next `count` writes on a characteristic reject with `error` (not recorded in `writes`). */
+  failNextWrites(
+    service: Uuid,
+    characteristic: Uuid,
+    count = 1,
+    error: Error = gattBusyError(),
+  ): void {
+    const k = key(service, characteristic);
+    const list = this.writeFailures.get(k) ?? [];
+    for (let i = 0; i < count; i++) list.push(error);
+    this.writeFailures.set(k, list);
+  }
+
+  failSubscribe(
+    service: Uuid,
+    characteristic: Uuid,
+    error = new Error('fake: subscribe failed'),
+  ): void {
     this.subscribeFailures.set(key(service, characteristic), error);
   }
 

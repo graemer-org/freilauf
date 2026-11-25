@@ -35,7 +35,7 @@ import {
   rideSummary,
   routeSummary,
   sessionRouteSummary,
-  splitAtJumps,
+  splitIntoLaps,
   usableSamples,
 } from './summary';
 import { ByteWriter, toRaw } from './writer';
@@ -171,6 +171,7 @@ function summaryValues(
     avgPower: orNull(s.avgPowerW),
     maxPower: orNull(s.maxPowerW),
     totalWork: s.workKj * 1000,
+    normalizedPower: s.normalizedPowerW,
     sport: SPORT_CYCLING,
     subSport: SUB_SPORT_VIRTUAL_ACTIVITY,
   };
@@ -217,6 +218,16 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
   // Rides along a route carry positions: then records, lap and session get position fields.
   // Without positions the output is byte-for-byte what it was before routes existed.
   const route = routeSummary(samples);
+
+  // One lap per route segment: a jump along the route (RideSample.segment) starts a new lap, so
+  // no lap implies travel across the gap and each lap's start/end position, bounding box and
+  // ascent/descent describe road that was actually ridden (docs/routes.md, "Choosing where to start, and jumping"). Distance,
+  // speed and the timer run on unchanged. A ride without jumps is one lap, as before. A segment
+  // with (almost) no riding — e.g. one second before the rider paused and moved the start
+  // point — is folded into the next lap; its records keep time, distance and power but carry
+  // no position, since that position lies on the other side of a jump.
+  const laps = splitIntoLaps(samples);
+  const ridden = new Set(laps.flatMap((lap) => lap.ridden));
 
   const b = new FitBuilder();
   const serial = hash32(ride.id);
@@ -265,13 +276,14 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
         });
       }
     }
+    const positioned = ridden.has(s);
     b.write(route ? RECORD_WITH_POSITION : RECORD, {
       ...(route
         ? {
-            positionLat: toSemicircles(s.lat),
-            positionLong: toSemicircles(s.lon),
-            altitude: s.altitudeM,
-            enhancedAltitude: s.altitudeM,
+            positionLat: positioned ? toSemicircles(s.lat) : null,
+            positionLong: positioned ? toSemicircles(s.lon) : null,
+            altitude: positioned ? s.altitudeM : null,
+            enhancedAltitude: positioned ? s.altitudeM : null,
           }
         : {}),
       timestamp: toFitTimestamp(s.timestamp),
@@ -292,17 +304,18 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
     eventGroup: 0,
   });
 
-  // One lap per route segment: a jump along the route (RideSample.segment) starts a new lap, so
-  // no lap implies travel across the gap and each lap's start/end position, bounding box and
-  // ascent/descent describe road that was actually ridden (docs/routes.md, "Choosing where to start, and jumping"). Distance,
-  // speed and the timer run on unchanged. A ride without jumps is one lap, as before.
-  const laps = splitAtJumps(samples);
-  const lapRoutes = laps.map((lap) => (route ? routeSummary(lap) : null));
-  const sessionRoute = route ? sessionRouteSummary(samples, lapRoutes) : null;
+  const lapRoutes = laps.map((lap) => (route ? routeSummary(lap.ridden) : null));
+  const sessionRoute = route
+    ? sessionRouteSummary(
+        laps.flatMap((lap) => lap.ridden),
+        lapRoutes,
+      )
+    : null;
   if (laps.length <= 1) {
+    const lapRoute = lapRoutes[0] ?? route;
     const totals = {
       ...summaryValues(summary, start, end),
-      ...(route ? positionValues(route) : {}),
+      ...(lapRoute ? positionValues(lapRoute) : {}),
     };
     b.write(route ? LAP_WITH_POSITION : LAP, {
       ...totals,
@@ -311,8 +324,8 @@ export function encodeFit(ride: RecordedRide, options: EncodeFitOptions = {}): U
       lapTrigger: LAP_TRIGGER_SESSION_END,
     });
   } else {
-    laps.forEach((lap, k) => {
-      const before = k > 0 ? laps[k - 1]!.at(-1) : undefined;
+    laps.forEach(({ samples: lap }, k) => {
+      const before = k > 0 ? laps[k - 1]!.samples.at(-1) : undefined;
       const ls = lapSummary(ride, lap, before);
       const lapStart = k === 0 ? start : toFitTimestamp(ls.startTime);
       const lapEnd = toFitTimestamp(ls.endTime);

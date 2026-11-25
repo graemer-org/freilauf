@@ -191,6 +191,7 @@ export const LAP: MesgSpec = {
       enhancedMaxSpeed: 111,
     }),
     f('lapTrigger', 24, ENUM),
+    f('normalizedPower', 33, UINT16),
   ],
 };
 
@@ -216,6 +217,7 @@ export const SESSION: MesgSpec = {
     f('firstLapIndex', 25, UINT16),
     f('numLaps', 26, UINT16),
     f('trigger', 28, ENUM),
+    f('normalizedPower', 34, UINT16),
   ],
 };
 

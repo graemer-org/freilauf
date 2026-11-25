@@ -7,6 +7,7 @@ export * from './heartRate';
 export * from './cyclingSpeedCadence';
 export * from './relay';
 export * from './managedDevice';
+export * from './transientErrors';
 export * from './ftmsTrainer';
 export * from './heartRateSensor';
 export * from './testing/fakeGatt';

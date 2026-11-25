@@ -1,5 +1,6 @@
 import { createEmitter } from './emitter';
 import type { Unsubscribe } from './emitter';
+import { isTransientLinkError } from './transientErrors';
 import type { BlePeripheral, ConnectionState, Device, DeviceKind, GattConnection } from './types';
 
 /** Runs `fn` after `ms`; returns a function that cancels it. */
@@ -26,9 +27,20 @@ export interface BackoffOptions {
   factor?: number;
 }
 
+export interface InitialConnectOptions {
+  /** Attempts of the first connect() before it rejects. Default 3. */
+  attempts?: number;
+  /**
+   * Delay before retry n (0-based); the last entry repeats. Default
+   * [500, 1000, 2000].
+   */
+  delaysMs?: number[];
+}
+
 export interface ManagedDeviceOptions {
   schedule?: Schedule;
   backoff?: BackoffOptions;
+  initialConnect?: InitialConnectOptions;
 }
 
 /** Delay before reconnect attempt number `attempt` (0-based). */
@@ -59,6 +71,18 @@ export class DeviceDisconnectedError extends Error {
   }
 }
 
+/** A failed link attempt, with whether another attempt may succeed. */
+class AttemptFailure {
+  readonly error: unknown;
+  readonly transient: boolean;
+  constructor(error: unknown, transient: boolean) {
+    this.error = error;
+    this.transient = transient;
+  }
+}
+
+const unwrap = (err: unknown): unknown => (err instanceof AttemptFailure ? err.error : err);
+
 /**
  * Connection lifecycle shared by all BLE drivers.
  *
@@ -67,9 +91,14 @@ export class DeviceDisconnectedError extends Error {
  * `setup()` runs after every successful link (initial and each reconnect);
  * `onLinkDown()` runs whenever a link that reached setup goes away.
  *
- * connect() rejects if the first attempt (link or setup) fails, leaving the
- * device `disconnected`. Calling connect() while already connecting returns
- * the same promise; while connected/reconnecting it resolves immediately.
+ * connect() retries a bounded number of times (default 3 attempts, 0.5 s /
+ * 1 s apart) when an attempt fails with a transient link error — typically
+ * Windows dropping the first link right after a scan, while services are
+ * being discovered. Other failures (cancelled, not found, not allowed) and
+ * the last failed attempt reject connect() and leave the device
+ * `disconnected`; disconnect() during the retries rejects it at once.
+ * Calling connect() while already connecting returns the same promise;
+ * while connected/reconnecting it resolves immediately.
  */
 export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   abstract readonly kind: K;
@@ -79,6 +108,8 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   protected readonly peripheral: BlePeripheral;
   protected readonly schedule: Schedule;
   private readonly backoff: BackoffOptions;
+  private readonly initialAttempts: number;
+  private readonly initialDelaysMs: number[];
   private readonly stateEmitter = createEmitter<ConnectionState>();
   private readonly diagnosticEmitter = createEmitter<DeviceDiagnostic>();
   private currentState: ConnectionState = 'disconnected';
@@ -96,6 +127,9 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     this.name = peripheral.name;
     this.schedule = options.schedule ?? defaultSchedule;
     this.backoff = options.backoff ?? {};
+    this.initialAttempts = Math.max(1, options.initialConnect?.attempts ?? 3);
+    const delays = options.initialConnect?.delaysMs ?? [500, 1000, 2000];
+    this.initialDelaysMs = delays.length > 0 ? delays : [0];
   }
 
   /** Subscribe to characteristics, request control, etc. Throwing fails the attempt. */
@@ -128,7 +162,9 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     message: string,
     context?: Record<string, unknown>,
   ): void {
-    this.diagnosticEmitter.emit(context ? { level, event, message, context } : { level, event, message });
+    this.diagnosticEmitter.emit(
+      context ? { level, event, message, context } : { level, event, message },
+    );
   }
 
   connect(): Promise<void> {
@@ -136,10 +172,12 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     if (this.currentState !== 'disconnected') return Promise.resolve();
     const gen = this.generation;
     this.setState('connecting');
-    const p = this.tryLink(gen).then(
+    const p = this.connectWithRetries(gen).then(
       () => {
         this.connecting = null;
-        if (gen !== this.generation) throw new DeviceDisconnectedError('disconnected while connecting');
+        if (gen !== this.generation) {
+          throw new DeviceDisconnectedError('disconnected while connecting');
+        }
         this.attempt = 0;
         this.setState('connected');
       },
@@ -153,6 +191,62 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     return p;
   }
 
+  private async connectWithRetries(gen: number): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.tryLink(gen);
+        return;
+      } catch (failure) {
+        const err = unwrap(failure);
+        if (gen !== this.generation) {
+          throw new DeviceDisconnectedError('disconnected while connecting');
+        }
+        const transient = failure instanceof AttemptFailure && failure.transient;
+        if (!transient || attempt >= this.initialAttempts) {
+          if (attempt > 1) {
+            this.diag('warn', 'connect-failed', `connect failed after ${attempt} attempts`, {
+              attempts: attempt,
+              error: err,
+            });
+          }
+          throw err;
+        }
+        const delay = this.initialDelaysMs[Math.min(attempt - 1, this.initialDelaysMs.length - 1)]!;
+        this.diag(
+          'warn',
+          'connect-retry',
+          `connect attempt ${attempt} failed, retrying in ${delay} ms`,
+          {
+            attempt,
+            of: this.initialAttempts,
+            delayMs: delay,
+            error: err,
+          },
+        );
+        await this.sleepUnlessDisconnected(delay, gen);
+      }
+    }
+  }
+
+  /** Waits `ms`; rejects at once if disconnect() is called meanwhile. */
+  private sleepUnlessDisconnected(ms: number, gen: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (gen !== this.generation) {
+        reject(new DeviceDisconnectedError('disconnected while connecting'));
+        return;
+      }
+      const cancel = this.schedule(() => {
+        this.cancelRetry = null;
+        if (gen === this.generation) resolve();
+        else reject(new DeviceDisconnectedError('disconnected while connecting'));
+      }, ms);
+      this.cancelRetry = () => {
+        cancel();
+        reject(new DeviceDisconnectedError('disconnected while connecting'));
+      };
+    });
+  }
+
   async disconnect(): Promise<void> {
     this.generation++;
     this.cancelRetry?.();
@@ -164,7 +258,10 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     if (conn) await conn.disconnect().catch(() => {});
   }
 
-  /** Establishes a link and runs setup. Resolves only if `gen` is still current. */
+  /**
+   * Establishes a link and runs setup. Resolves only if `gen` is still
+   * current; rejects with an AttemptFailure.
+   */
   private async tryLink(gen: number): Promise<void> {
     const started = Date.now();
     this.diag('debug', 'link-attempt', 'opening GATT link');
@@ -172,13 +269,16 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     try {
       conn = await this.peripheral.connect();
     } catch (err) {
-      this.diag('warn', 'link-failed', 'GATT link failed', { ms: Date.now() - started, error: err });
-      throw err;
+      this.diag('warn', 'link-failed', 'GATT link failed', {
+        ms: Date.now() - started,
+        error: err,
+      });
+      throw new AttemptFailure(err, isTransientLinkError(err));
     }
     this.diag('info', 'link-up', 'GATT link open', { ms: Date.now() - started });
     if (gen !== this.generation) {
       await conn.disconnect().catch(() => {});
-      throw new DeviceDisconnectedError('disconnected while connecting');
+      throw new AttemptFailure(new DeviceDisconnectedError('disconnected while connecting'), false);
     }
     let lost = false;
     this.conn = conn;
@@ -198,11 +298,12 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
         this.releaseLink();
         await conn.disconnect().catch(() => {});
       }
-      throw err;
+      // Whatever setup threw, a link that went away underneath it is worth retrying.
+      throw new AttemptFailure(err, lost || isTransientLinkError(err));
     }
     if (lost || this.conn !== conn) {
       this.diag('warn', 'setup-failed', 'link lost during setup');
-      throw new DeviceDisconnectedError('link lost during setup');
+      throw new AttemptFailure(new DeviceDisconnectedError('link lost during setup'), true);
     }
     this.diag('info', 'setup-done', 'setup complete', { ms: Date.now() - setupStarted });
   }
@@ -245,8 +346,9 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
           this.attempt = 0;
           this.setState('connected');
         },
-        (err: unknown) => {
+        (failure: unknown) => {
           if (gen !== this.generation) return;
+          const err = unwrap(failure);
           this.diag('warn', 'retry-failed', `reconnect attempt ${this.attempt} failed`, {
             attempt: this.attempt,
             error: err,
