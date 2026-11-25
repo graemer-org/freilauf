@@ -6,7 +6,7 @@
     <title>Freilauf — indoor cycling without the virtual world</title>
     <meta
       name="description"
-      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, a stats overlay over your own video, and peer-to-peer group rides. No account, no telemetry."
+      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, GPX routes, structured workouts, a stats overlay over your own video, and peer-to-peer group rides with a playful race mode. No account, no telemetry."
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f3f3f6" media="(prefers-color-scheme: light)" />
@@ -84,8 +84,9 @@
           <h1 id="hero-title">Indoor cycling without the virtual world.</h1>
           <p class="lede">
             Your own video, your friends, your data. Freilauf connects your smart trainer, shifts
-            gears in software and puts your numbers over whatever is on your screen. It starts in
-            seconds, needs no account, and keeps every ride on your machine.
+            gears in software and puts your numbers over whatever is on your screen. Ride a free
+            ride, a GPX route or a structured workout, alone or with friends. It starts in seconds,
+            needs no account, and keeps every ride on your machine.
           </p>
           <div class="actions">
             <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf"
@@ -105,10 +106,10 @@
               />
               <img
                 src="assets/site/ride-climb-light.webp"
-                width="1280"
-                height="720"
+                width="1920"
+                height="1080"
                 fetchpriority="high"
-                alt="The ride view during an 8 % climb, filling the window: a large power reading, an animated rider on a tilted road with an elevation profile, cadence, speed, gear 12 of 24, time, distance and heart rate."
+                alt="The ride view during an 8 % climb, filling the window: a large power reading with calories, an animated rider on a tilted road with an elevation profile, cadence, speed, gear 12 of 24, time, distance and heart rate, and a quiet toolbar with device status, Group and Overlay."
               />
             </picture>
             <figcaption>
@@ -148,16 +149,17 @@
               <p>
                 The trainer holds the target power while you pedal. Import <code>.zwo</code> files,
                 pick from a built-in library, or measure your FTP with a 20-minute or a ramp test.
+                Share a workout with your group and start it together.
               </p>
             </div>
             <img
               class="shot"
               src="assets/site/workout-erg.webp"
-              width="960"
-              height="540"
+              width="1280"
+              height="720"
               loading="lazy"
               decoding="async"
-              alt="A workout in progress: target 91 watts in the warm-up step, a coloured chart of the whole sweet-spot workout, and the time left in the step."
+              alt="A workout in progress in dark mode: target 91 watts in the warm-up step of Sweet spot 3×12, a coloured chart of the whole workout, the time left in the step, and buttons to restart or skip the step and change the intensity."
             />
           </div>
 
@@ -168,7 +170,8 @@
                 Import a GPX file — from a ride you recorded or a route planner — or pick a built-in
                 route. Its gradient drives the trainer, and the scene shows the road from behind
                 you, bending and climbing as the route does, with a mini map and the profile of what
-                lies ahead. Tested with simulated devices only so far.
+                lies ahead. Click the profile to start part-way or jump to any point; loops count
+                laps, and the <code>.fit</code> file gets a lap for every jump.
               </p>
             </div>
             <picture>
@@ -179,11 +182,11 @@
               <img
                 class="shot"
                 src="assets/site/ride-route-light.webp"
-                width="1280"
-                height="720"
+                width="1920"
+                height="1080"
                 loading="lazy"
                 decoding="async"
-                alt="Riding a route: the road seen from behind the rider, bending right and climbing at 5 %, with a map of the winding climb and elevation profiles of the whole route and of the next few hundred metres, coloured by steepness."
+                alt="Riding the built-in Punchy circuit: the road seen from behind the rider, bending left, with elevation profiles of the whole loop and of the next few hundred metres, a mini map, the distance to go, the climbing left and the lap."
               />
             </picture>
           </div>
@@ -192,22 +195,53 @@
             <div class="feature-text">
               <h3>Ride together, directly</h3>
               <p>
-                Up to eight friends in a room, connected peer-to-peer. Share a workout with the
-                group and start it together on a countdown; everyone's targets follow their own FTP.
+                Up to eight friends in a room, connected peer-to-peer. Share a workout or a route
+                with the group and start together on a countdown; everyone's targets follow their
+                own FTP.
               </p>
             </div>
             <img
               class="shot"
               src="assets/site/group-ride.webp"
-              width="960"
-              height="540"
+              width="1280"
+              height="720"
               loading="lazy"
               decoding="async"
-              alt="The ride scene with three riders side by side on a flat road; the other two are labelled Cleo and Ben."
+              alt="A group ride: three riders side by side on a flat road; the other two are labelled Cleo and Ben, the toolbar shows Group 3, and the left item slot holds hornets."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>Power-ups and Freilauf Rumble</h3>
+              <p>
+                Collect a power-up on the road or earn one with a short effort. In a Rumble, ride
+                past feed bags for items and hold two at a time: throw a water bottle at the rider
+                ahead, drop a mud puddle behind you, send hornets after the leader, or pull on a
+                rain cape. Items only move race positions — the trainer's resistance, your recording
+                and your <code>.fit</code> file always stay your own power.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/rumble.webp"
+              width="1280"
+              height="720"
+              loading="lazy"
+              decoding="async"
+              alt="Freilauf Rumble: hornets swarm around the rider, a notice says Anna sent hornets after you, a feed bag hangs from a stand at the roadside, and both item slots hold a rain cape."
             />
           </div>
 
           <ul class="grid" role="list">
+            <li>
+              <h3>Your devices, reconnected</h3>
+              <p>
+                Smart trainers over standard Bluetooth FTMS, heart-rate straps, and the handlebar
+                controllers of a smart frame — every button and both levers. Dropped links reconnect
+                on their own.
+              </p>
+            </li>
             <li>
               <h3>Virtual shifting</h3>
               <p>
@@ -216,23 +250,45 @@
               </p>
             </li>
             <li>
-              <h3>Free ride with gradient</h3>
+              <h3>Free ride, braking, steering</h3>
               <p>
-                Set the slope and feel it. An animated scene shows the climb, an elevation profile
-                and steering.
+                Set the slope and feel it. Brake and steer with the levers or the keyboard; braking
+                slows the virtual bike, not the trainer.
+              </p>
+            </li>
+            <li>
+              <h3>Start screen and countdown</h3>
+              <p>
+                Choose what and with whom, then one button. Starting and resuming count down 3, 2, 1
+                (or 5, 10, or off); press again or Escape to cancel.
               </p>
             </li>
             <li>
               <h3>Recording and <code>.fit</code> export</h3>
               <p>
-                Every ride autosaves locally and exports to <code>.fit</code> for whatever you use
-                to analyse it.
+                Every ride autosaves locally and exports to <code>.fit</code>, laps and map
+                included. Upload it wherever you analyse rides; a direct Strava upload is not built
+                yet.
+              </p>
+            </li>
+            <li>
+              <h3>Calories, fat and carbs</h3>
+              <p>
+                Calories from your measured power, a heart-rate cross-check, and a rough fat and
+                carbohydrate split — with an honest note on how rough it is.
+              </p>
+            </li>
+            <li>
+              <h3>Share with my watch</h3>
+              <p>
+                On Windows the app can act as a Bluetooth power meter and heart-rate sensor, so a
+                sports watch records the ride too. Not yet tried with a real watch.
               </p>
             </li>
             <li>
               <h3>In the browser, too</h3>
               <p>
-                A web version runs from Docker Compose, for example on a home server; group rides
+                A web version runs from Docker Compose, for example on a Synology NAS; group rides
                 work there with no further setup.
               </p>
             </li>
@@ -261,18 +317,30 @@
               </li>
             </ul>
             <p>
-              Up to eight riders in a room. Share a workout with the group and start it together on
-              a countdown; everyone's targets follow their own FTP.
+              Up to eight riders in a room. Share a workout or a route with the group and start
+              together on a countdown; everyone's targets follow their own FTP. The host can make
+              the ride a <strong>Freilauf Rumble</strong>.
+            </p>
+            <p>
+              <strong>Points, leaderboards and challenges</strong> without a server: friends'
+              standings travel peer-to-peer whenever you ride together, and you choose per friend
+              what they may see.
             </p>
             <p class="note">
-              <strong>Status:</strong> this way of connecting is new and not yet verified on real
-              networks — group rides between different homes have not been tried yet. Connections
+              <strong>Status:</strong> this way of connecting is new and not yet verified between
+              two real machines on real networks — so far several apps on one machine. Connections
               use public STUN servers and no TURN relay, so some networks (mobile carriers, some
               company or university networks) will not connect.
             </p>
             <p class="links">
               <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
                 >How group rides work</a
+              >
+              <span class="small"
+                >·
+                <a href="https://github.com/graemer-org/freilauf/blob/main/docs/rumble.md"
+                  >Freilauf Rumble</a
+                ></span
               >
               <span class="small"
                 >·
@@ -364,50 +432,46 @@
           <h2 id="status-title">Honest status</h2>
           <p>
             Freilauf is <strong>early</strong> and has <strong>no published releases yet</strong>;
-            you build it from source. Everything on this page works and is tested end to end against
-            simulated devices — about 650 unit tests plus Playwright end-to-end tests of the desktop
-            app and the browser build — but very little has met real hardware.
+            you build it from source, or build the installers with the release workflow. Everything
+            on this page works and is tested end to end against simulated devices — over 1,500 unit
+            tests plus Playwright end-to-end tests of the desktop app and the browser build. Some of
+            it has met real hardware; much has not.
           </p>
-          <h3>First real-hardware test, 22 November 2026</h3>
+          <h3>Verified on real hardware</h3>
           <p class="small">
-            Windows 11 · Wahoo KICKR CORE · Zwift Ride smart frame · Bluetooth heart-rate strap
+            Tested with Windows 11, a Wahoo KICKR CORE, the handlebar controllers of a Zwift Ride
+            smart frame and a Bluetooth heart-rate strap
           </p>
           <ul class="checks" role="list">
+            <li class="ok">Connecting the trainer, the heart-rate strap and the controllers.</li>
+            <li class="ok">Virtual shifting on the trainer.</li>
             <li class="ok">
-              Pairing worked for the trainer, the frame's controllers and the heart-rate strap.
+              All sixteen controller buttons and both levers (one per grip, moving both ways), with
+              the default assignment of braking and steering confirmed.
             </li>
             <li class="ok">
-              All sixteen controller buttons are confirmed on hardware, Z and the right power button
-              included (23 November).
-            </li>
-            <li class="ok">
-              The brake and steering levers work (one lever per grip, moving both ways); the default
-              assignment of braking and steering was confirmed on the real controllers and can be
-              changed in Settings.
-            </li>
-            <li class="open">
-              The overlay over fullscreen video on Windows and macOS is not confirmed yet.
+              A 60-minute real ride, recorded and exported as a <code>.fit</code> file.
             </li>
           </ul>
+          <h3>Not yet verified</h3>
+          <ul class="checks" role="list">
+            <li class="open">
+              Group rides over the public relays between two real machines on different networks.
+            </li>
+            <li class="open">Share with my watch on Windows with a real sports watch.</li>
+            <li class="open">
+              Power-ups, Freilauf Rumble, and leaderboards and challenges syncing between real
+              machines.
+            </li>
+            <li class="open">
+              ERG workouts, the FTP tests, the overlay over fullscreen video and riding a route, in
+              practice on a real trainer.
+            </li>
+            <li class="open">The Docker image on a real NAS, and macOS in general.</li>
+          </ul>
           <p>
-            <strong>Not tried on real hardware yet:</strong> ERG workouts on a trainer, the FTP
-            tests, steering with the controllers, group rides across real networks (only on one
-            machine so far; the new zero-setup connection over public relays not at all), the Docker
-            image build, and macOS in general.
-          </p>
-          <p>
-            <strong>Routes</strong> — GPX import, the road view, the route's gradient on the
-            trainer, sharing routes in a group — are tested with simulated devices only; no route
-            has been ridden on real hardware yet.
-          </p>
-          <p>
-            <strong>Community features</strong> — points, weekly and monthly totals, friends,
-            challenges and leaderboards synced peer-to-peer — are in the app under Activity →
-            Community, tested against simulated riders; not yet between real machines.
-          </p>
-          <p>
-            <strong>Installers</strong> will be unsigned at first, so Windows and macOS will warn
-            before opening them.
+            <strong>Installers</strong> are unsigned for now, so Windows and macOS will warn before
+            opening them.
           </p>
           <p>
             <a href="https://github.com/graemer-org/freilauf/blob/main/README.md#status"
@@ -426,11 +490,15 @@
               a Wahoo KICKR CORE.
             </li>
             <li>
-              <strong>Smart-frame handlebar controllers.</strong> Works in part with the Zwift Ride
-              smart frame (see above).
+              <strong>Smart-frame handlebar controllers.</strong> Works with the Zwift Ride smart
+              frame: all buttons and both levers (see above).
             </li>
             <li>
               <strong>Heart-rate straps</strong> using the standard Bluetooth Heart Rate Service.
+            </li>
+            <li>
+              <strong>Sports watches</strong> (optional, Windows) that pair with standard Bluetooth
+              power, heart-rate and speed/cadence sensors. Not yet tried with a real watch.
             </li>
           </ul>
           <p class="small">
@@ -453,8 +521,8 @@
               <h3>Test your hardware</h3>
               <p>
                 Pair your trainer, strap or controllers and open an issue with your system, devices,
-                what happened and the diagnostic log. Controller button captures and trainers other
-                than the one above help most.
+                what happened and the diagnostic log. Trainers other than the one above, a group
+                ride between two homes and a real watch help most.
               </p>
             </li>
             <li>
@@ -499,8 +567,9 @@
           </div>
           <h3 class="roadmap-title">Next on the roadmap</h3>
           <p class="small">
-            Drafting in group rides · Strava upload · a Wi-Fi connection to the trainer · signed
-            installers · an optional always-on relay peer for leaderboards. None of it is built yet.
+            Drafting in group rides · uploading to Strava from the app · a Wi-Fi connection to the
+            trainer · signed installers · an optional always-on relay peer for leaderboards. None of
+            it is built yet.
           </p>
         </div>
       </section>
@@ -517,19 +586,42 @@
                     href="https://github.com/graemer-org/freilauf/blob/main/docs/getting-started.md"
                     >Getting started</a
                   >
-                  — build or install, first start, pairing, the overlay, simulation mode
+                  — build or install, the start screen, the countdown, pairing, the overlay,
+                  simulation mode
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/routes.md"
                     >Riding real routes</a
                   >
-                  — GPX files, the road view, climb difficulty
+                  — GPX files, the road view, jumping, climb difficulty
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
                     >Ride with friends</a
                   >
                   — create a ride, send the link; what the relays see
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/power-ups.md"
+                    >Power-ups</a
+                  >
+                  and
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/rumble.md"
+                    >Freilauf Rumble</a
+                  >
+                  — items, effects, the fairness rule
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/energy.md"
+                    >Calories, fat and carbohydrate</a
+                  >
+                  — how the estimates work
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/watch-relay.md"
+                    >Share with my watch</a
+                  >
+                  — the app as a Bluetooth sensor (Windows)
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/docker.md"
@@ -573,6 +665,16 @@
                   <a
                     href="https://github.com/graemer-org/freilauf/blob/main/docs/protocols/zwift-ride.md"
                     >Controller protocol notes</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/releasing.md"
+                    >Releasing: installers and the release workflow</a
+                  >
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/tree/main/docs/adr"
+                    >Architecture decisions</a
                   >
                 </li>
                 <li>

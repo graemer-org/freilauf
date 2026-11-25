@@ -2,18 +2,24 @@
 
 ## For riders
 
-- [getting-started.md](getting-started.md) — build or install, first start, pairing devices,
-  the overlay and its hotkey, simulation mode, where the log is
+- [getting-started.md](getting-started.md) — build or install, first start, the start screen and
+  the ride view, the countdown, pairing devices (controller buttons and levers), the overlay and
+  its hotkey, simulation mode, where the log is
+- [routes.md](routes.md) — riding real routes from GPX files: importing, what happens to noisy
+  elevation, starting part-way or jumping by clicking the profile, difficulty, loops and laps,
+  sharing limits, recording with a map
 - [group-rides.md](group-rides.md) — ride with friends: create a ride and send the link (no
   setup), what the public relay servers see, troubleshooting, and the advanced own-server option
-- [routes.md](routes.md) — riding real routes from GPX files: importing, what happens to noisy
-  elevation, difficulty, loops, sharing limits, recording with a map
-- [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
-  NAS, and how it differs from the desktop app
-- [watch-relay.md](watch-relay.md) — share with my watch: the app as a Bluetooth power meter,
-  heart-rate and speed/cadence sensor for a sports watch (Windows); pairing, limits, test steps
 - [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
   fairness rule (only the race position changes, never the recording), settings
+- [rumble.md](rumble.md) — Freilauf Rumble, the battle mode for group rides: feed bags, two item
+  slots, water bottle, mud puddle, hornets, rain cape, protection, compatibility
+- [energy.md](energy.md) — calories, fat and carbohydrate: what is shown where, how it is
+  computed, how accurate it is
+- [watch-relay.md](watch-relay.md) — share with my watch: the app as a Bluetooth power meter,
+  heart-rate and speed/cadence sensor for a sports watch (Windows); pairing, limits, test steps
+- [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
+  NAS, and how it differs from the desktop app
 - [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it is, how to export
   it, what it contains and what it leaves out
 - [Reporting a hardware test](../README.md#reporting-a-hardware-test) — what to put in an issue
@@ -30,6 +36,8 @@ The rest of this page is technical: decisions, protocols and how features are bu
 | [0004](adr/0004-routes.md)                       | Routes: elevation smoothing, gradient update policy, difficulty, storage, sharing   |
 | [0005](adr/0005-sensor-relay.md)                 | Share with my watch: a native helper as Bluetooth peripheral, services, packaging   |
 | [0006](adr/0006-power-ups.md)                    | Power-ups: race offset vs. recorded physics, determinism, battle-mode extension     |
+| [0007](adr/0007-card-race.md)                    | Card Race: attacks as events, signed race offset (**superseded** by 0008)           |
+| [0008](adr/0008-rumble-items.md)                 | Freilauf Rumble: feed bags, two item slots, items, compatibility with 0007's format |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.
@@ -51,7 +59,8 @@ Anything not yet confirmed on real hardware is marked unverified.
 - [workouts.md](workouts.md) — structured workouts: model, ERG runner,
   `.zwo` import/export, built-in library, FTP tests
 - [community.md](community.md) — points, totals, friends, challenges and
-  leaderboards synced peer-to-peer (core library; app integration in progress)
+  leaderboards synced peer-to-peer (core library and its integration under Activity →
+  Community)
 
 ## Running and shipping
 
