@@ -6,6 +6,7 @@
  */
 
 import type { ScenePalette } from './palette';
+import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
 import { BIKE, BODY, computePose, createPose, type Point, type Pose } from './riderPose';
 import {
   formatGrade,
@@ -34,6 +35,8 @@ export interface SceneFrame {
   others: readonly PlacedRider[];
   /** Wheel/crank angles of other riders, by id. */
   otherAngles: ReadonlyMap<string, { wheel: number; crank: number }>;
+  /** Power-up gates ahead and the effect in progress (absent: none). */
+  powerUps?: PowerUpSceneFrame;
 }
 
 interface Colours {
@@ -196,15 +199,21 @@ export class SceneRenderer {
     this.trees(d, LAYERS.trees, p.trees, 53, 3.4);
 
     this.road(d, slope, p);
+    const pu = f.powerUps;
+    if (pu) this.boostRoad(f, pu, slope, p);
 
     // Riders: those on the far side of the local rider first.
     const localLat = f.lateral;
     const otherLat = -0.62;
+    if (pu?.effect === 'slipstream' && pu.phase === 'active') this.slipstreamGhost(f, slope);
     if (localLat < otherLat) this.localRider(f, slope);
     this.others(f, slope, otherLat);
+    if (pu) this.boostAura(f, pu, slope, p);
     if (localLat >= otherLat) this.localRider(f, slope);
+    if (pu) this.gates(pu, slope, p, true);
 
     this.gradeLabel(f.gradeLabel, slope, p);
+    if (pu) this.gateTag(pu, slope, p);
 
     if (f.state === 'paused') this.pill('Paused', p, true);
     else if (f.state === 'idle') this.pill('Ready', p, false);
@@ -465,6 +474,232 @@ export class SceneRenderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, this.w / 2, y + ph / 2 + 0.5);
+  }
+
+  // ─────────── power-ups ───────────
+
+  /** Screen x of a point `aheadM` metres ahead of the rider on the road plane. */
+  private aheadX(aheadM: number): number {
+    return this.riderX + aheadM * this.px;
+  }
+
+  /**
+   * Pick-up gates in view: a slim, softly lit arch across the lane, seen from the side as a
+   * band of light from the far road edge to the near one. Far half first (behind the rider),
+   * near half after the rider, so the rider rides through it.
+   */
+  private gates(pu: PowerUpSceneFrame, slope: number, p: ScenePalette, near: boolean): void {
+    const ctx = this.ctx;
+    const k = this.px;
+    const reach = (this.w - this.riderX) / k + 1;
+    const back = this.riderX / k + 1;
+    for (const g of pu.gates) {
+      if (g > reach || g < -back) continue;
+      const x = this.aheadX(g);
+      const yRoad = this.roadY(x, slope);
+      const yFar = yRoad - this.halfDepth;
+      const yNear = yRoad + this.halfDepth;
+      const hgt = 1.05 * k;
+      // Seen a little from the side: the far post sits to the right of the near one, so the
+      // arch between them reads as an arch.
+      const skew = 0.32 * k;
+      const xFar = x + skew;
+      const xNear = x - skew;
+      const lift = 0.5 * k;
+      ctx.save();
+      ctx.globalAlpha = pu.holding ? 0.45 : 1;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (!near) {
+        // The light inside the gate: a soft curtain from the far post to the near one.
+        const grad = ctx.createLinearGradient(0, yFar - hgt - lift, 0, yNear);
+        grad.addColorStop(0, p.boostGlow);
+        grad.addColorStop(1, p.boostFaint);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(xNear, yNear);
+        ctx.lineTo(xNear, yNear - hgt);
+        ctx.bezierCurveTo(xNear, yNear - hgt - lift, xFar, yFar - hgt - lift, xFar, yFar - hgt);
+        ctx.lineTo(xFar, yFar);
+        ctx.closePath();
+        ctx.fill();
+        // Its threshold across the road.
+        ctx.strokeStyle = p.boostGlow;
+        ctx.lineWidth = Math.max(3, 0.12 * k);
+        ctx.beginPath();
+        ctx.moveTo(xNear, yNear);
+        ctx.lineTo(xFar, yFar);
+        ctx.stroke();
+        ctx.strokeStyle = p.boost;
+        ctx.lineWidth = Math.max(1.5, 0.04 * k);
+        ctx.beginPath();
+        ctx.moveTo(xFar, yFar);
+        ctx.lineTo(xFar, yFar - hgt);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = p.boost;
+        ctx.lineWidth = Math.max(2, 0.055 * k);
+        ctx.beginPath();
+        ctx.moveTo(xNear, yNear);
+        ctx.lineTo(xNear, yNear - hgt);
+        ctx.bezierCurveTo(xNear, yNear - hgt - lift, xFar, yFar - hgt - lift, xFar, yFar - hgt);
+        ctx.stroke();
+        // A chevron in the curtain at rider height: "through here".
+        const cy = yRoad - hgt * 0.5;
+        const c = Math.max(3, 0.12 * k);
+        ctx.lineWidth = Math.max(1.5, 0.04 * k);
+        ctx.beginPath();
+        ctx.moveTo(x - c * 0.45, cy - c);
+        ctx.lineTo(x + c * 0.45, cy);
+        ctx.lineTo(x - c * 0.45, cy + c);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  /** The next gate beyond the edge of the view: a quiet tag at the road's right end. */
+  private gateTag(pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const reach = (this.w - this.riderX) / this.px;
+    const next = pu.gates.find((g) => g > -1);
+    // Only while the next gate is still beyond the view: then the gate itself shows.
+    if (next === undefined || next < reach - 0.5 || next > GATE_DRAW_M + 180) return;
+    const ctx = this.ctx;
+    ctx.font = this.pillFont;
+    const text = `${Math.max(10, Math.round(next / 10) * 10)} m`;
+    const fs = Math.max(11, Math.min(17, this.h * 0.04));
+    const tw = ctx.measureText(text).width;
+    const ph = fs * 1.75;
+    const chev = fs * 0.9;
+    const pw = tw + chev + fs * 1.6;
+    const x = this.w - pw - Math.max(8, this.h * 0.03);
+    const y = this.roadY(this.w, slope) - this.halfDepth - ph - this.halfDepth * 0.9;
+    ctx.save();
+    ctx.globalAlpha = pu.holding ? 0.6 : 1;
+    ctx.fillStyle = p.surface;
+    ctx.strokeStyle = p.boost;
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.roundRect(x, y, pw, ph, ph / 2);
+    ctx.fill();
+    ctx.stroke();
+    // A small arch glyph, then the distance.
+    const gx = x + fs * 0.75;
+    const gy = y + ph / 2;
+    ctx.strokeStyle = p.boost;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(gx, gy + chev * 0.45);
+    ctx.lineTo(gx, gy - chev * 0.1);
+    ctx.quadraticCurveTo(gx + chev * 0.5, gy - chev * 0.75, gx + chev, gy - chev * 0.1);
+    ctx.lineTo(gx + chev, gy + chev * 0.45);
+    ctx.stroke();
+    ctx.fillStyle = p.ink;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, gx + chev + fs * 0.45, gy + 0.5);
+    ctx.restore();
+  }
+
+  /** On the road: the far halves of gates, and Downhill momentum's chevrons while armed/active. */
+  private boostRoad(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    this.gates(pu, slope, p, false);
+    if (pu.effect !== 'downhill' || pu.phase === null) return;
+    const ctx = this.ctx;
+    const k = this.px;
+    const armed = pu.phase === 'armed';
+    // Chevrons painted on the lane ahead, drifting forward while active.
+    const drift = f.reducedMotion || armed ? 0 : (pu.timeS * 2) % 1.2;
+    ctx.save();
+    ctx.strokeStyle = p.boost;
+    ctx.globalAlpha = armed ? 0.45 : 0.9;
+    ctx.lineWidth = Math.max(1.5, 0.05 * k);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const c = Math.max(4, this.halfDepth * 0.45);
+    for (let i = 0; i < 3; i++) {
+      const x = this.aheadX(0.8 + i * 0.45 + drift * 0.375);
+      const y = this.roadY(x, slope) + this.halfDepth * 0.12;
+      ctx.beginPath();
+      ctx.moveTo(x - c * 0.5, y - c * 0.55);
+      ctx.lineTo(x + c * 0.2, y);
+      ctx.lineTo(x - c * 0.5, y + c * 0.55);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Around the rider: the pick-up flash (a ring that opens and fades), Light load's soft glow
+   * and lift, and Tailwind's light streaks (none with reduced motion).
+   */
+  private boostAura(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const ctx = this.ctx;
+    const k = this.px;
+    const x = this.riderX + 0.05 * k;
+    const y = this.roadY(this.riderX, slope) + f.lateral * this.halfDepth * 0.62 - 0.85 * k;
+    const active = pu.phase === 'active';
+    if (pu.effect === 'lightLoad' && active) {
+      const g = ctx.createRadialGradient(x, y, 0.1 * k, x, y, 1.15 * k);
+      g.addColorStop(0, p.boostGlow);
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.15 * k, 0, TAU);
+      ctx.fill();
+    }
+    if (pu.effect === 'tailwind' && active && !f.reducedMotion) {
+      ctx.save();
+      ctx.strokeStyle = p.streak;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(1, 0.02 * k);
+      const span = this.w + 2 * k;
+      for (let i = 0; i < 14; i++) {
+        const speed = 0.8 + hash01(i, 91) * 0.6;
+        const phase = (pu.timeS * speed * 0.9 + hash01(i, 92)) % 1;
+        const sx = this.w + k - phase * span;
+        const sy = this.horizonY * 0.45 + hash01(i, 93) * (this.roadY0 - this.horizonY * 0.45);
+        const len = (0.5 + hash01(i, 94) * 0.9) * k;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + len, sy);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (pu.flash >= 0) {
+      const t = pu.flash;
+      const r = f.reducedMotion ? 1.0 * k : (0.4 + t * 1.1) * k;
+      ctx.save();
+      ctx.globalAlpha = f.reducedMotion ? 0.6 : 1 - t;
+      ctx.strokeStyle = p.boost;
+      ctx.lineWidth = Math.max(1.5, 0.05 * k);
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * 0.92, 0, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** Slipstream: a faint rider just ahead, as if riding in their wheel. */
+  private slipstreamGhost(f: SceneFrame, slope: number): void {
+    const x = this.riderX + 1.85 * this.px;
+    const scale = this.place(x, Math.min(0.6, f.lateral + 0.1), slope, this.tmp) * 0.99;
+    computePose(this.ghostPose, f.crank + 1.1, 0, f.tuck, Math.atan(slope));
+    this.ctx.globalAlpha = 0.32;
+    this.rider(
+      this.tmp.x,
+      this.tmp.y,
+      scale,
+      slope,
+      0,
+      this.ghostPose,
+      f.wheel,
+      this.ghost!,
+      false,
+    );
+    this.ctx.globalAlpha = 1;
   }
 
   // ─────────── riders ───────────

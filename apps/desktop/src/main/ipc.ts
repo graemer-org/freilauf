@@ -5,7 +5,7 @@
  */
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { ipcMain } from 'electron';
-import type { LiveState } from '../shared/contract';
+import type { LiveState, WatchRelayStatus } from '../shared/contract';
 import { IPC } from '../shared/ipc';
 import { isLogLevel } from '../renderer/core/logFormat';
 import type { BluetoothChooser } from './bluetoothChooser';
@@ -33,6 +33,10 @@ export interface IpcDeps {
   openLogFolder(): Promise<void>;
   exportLog(): Promise<string | null>;
   log(m: string): void;
+  /** Share with my watch: the current status. */
+  watchRelayStatus?(): WatchRelayStatus;
+  /** Every accepted LiveState from the main window (feeds the watch relay). */
+  onLive?(state: LiveState): void;
 }
 
 function bad(channel: string): never {
@@ -114,6 +118,7 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
       return;
     }
     lastLive = state;
+    deps.onLive?.(state);
     const ov = deps.overlay()?.win;
     if (ov && !ov.isDestroyed()) ov.webContents.send(IPC.liveState, state);
   });
@@ -208,6 +213,14 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
       bad(IPC.diagReadRecent);
     return deps.diag.file.readRecent(maxBytes);
   });
+
+  // share with my watch (settings go through settings:update)
+  handle(
+    IPC.watchRelayStatus,
+    mainOnly,
+    (): WatchRelayStatus =>
+      deps.watchRelayStatus?.() ?? { state: 'unavailable', reason: 'Not available.' },
+  );
 
   return { lastLive: () => lastLive };
 }

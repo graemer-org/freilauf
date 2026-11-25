@@ -86,6 +86,11 @@ export interface ScenePalette {
   profileLine: string;
   wash: string;
   surface: string;
+  /** Power-ups: the gate and cue line (the accent), its soft glow, and light streaks. */
+  boost: string;
+  boostGlow: string;
+  boostFaint: string;
+  streak: string;
 }
 
 const FALLBACK_LIGHT = {
@@ -149,5 +154,9 @@ export function buildPalette(
     profileFill: css(accent, dark ? 0.2 : 0.13),
     profileLine: css(accent),
     wash: css(surface, 0.45),
+    boost: css(accent, dark ? 0.95 : 0.9),
+    boostGlow: css(accent, dark ? 0.26 : 0.18),
+    boostFaint: css(accent, dark ? 0.12 : 0.08),
+    streak: css(ink, dark ? 0.24 : 0.16),
   };
 }

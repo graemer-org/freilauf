@@ -8,7 +8,7 @@
  * hand-edited file only loses its bad parts and new keys appear after an
  * upgrade); updates use the current settings (so a bad patch field is a no-op).
  */
-import type { ControllerButton, DeviceKind } from '@freilauf/devices';
+import type { ControllerButton, DeviceKind, RelayServiceKind } from '@freilauf/devices';
 import type {
   Bounds,
   DeepPartial,
@@ -19,6 +19,7 @@ import type {
   Settings,
   ShiftAction,
   StatId,
+  WatchRelaySettings,
 } from '../shared/contract';
 import { DEFAULT_SETTINGS, LEGACY_DEFAULT_SIGNALLING_URL } from '../shared/contract';
 
@@ -56,6 +57,7 @@ const SHIFT_ACTIONS: Record<ShiftAction, true> = {
   intensityDown: true,
   steerLeft: true,
   steerRight: true,
+  usePowerUp: true,
 };
 const LEVER_FUNCTIONS: Record<LeverFunction, true> = {
   none: true,
@@ -330,6 +332,32 @@ function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems)
   return out.slice(0, 16);
 }
 
+const RELAY_KINDS: Record<RelayServiceKind, true> = {
+  heartRate: true,
+  power: true,
+  speedCadence: true,
+  trainer: true,
+};
+
+/** Share with my watch: a switch and one boolean per kind (unknown kinds are dropped). */
+function sanitizeWatchRelay(
+  raw: unknown,
+  fallback: WatchRelaySettings,
+  problems: Problems,
+): WatchRelaySettings {
+  const root = obj(raw, 'watchRelay', problems);
+  const share = obj(root.share, 'watchRelay.share', problems);
+  const out: WatchRelaySettings = {
+    enabled: bool(root.enabled, fallback.enabled, 'watchRelay.enabled', problems),
+    share: { ...fallback.share },
+  };
+  for (const [kind, on] of Object.entries(share)) {
+    if (!has(RELAY_KINDS, kind)) problems.push(`watchRelay.share.${kind}: unknown kind`);
+    else out.share[kind] = bool(on, fallback.share[kind], `watchRelay.share.${kind}`, problems);
+  }
+  return out;
+}
+
 /**
  * Upgrades a stored settings value before `sanitizeSettings` (on load only,
  * never on updates). Returns a new value; `raw` is not changed.
@@ -340,8 +368,27 @@ function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems)
  *   computer; group rides now explain how to set up a real server instead of
  *   failing against it. ("Use a server on this computer" stores
  *   `ws://127.0.0.1:8787`, which this leaves alone.)
+ * - Settings from before power-ups (no `powerUps` key) get the new default for the two
+ *   "lever click / side button" buttons, `usePowerUp`, where they did nothing ('none' or
+ *   unset); a button the rider had given another action keeps it (`migratePowerUpButtons`).
  */
 export function migrateSettings(raw: unknown): unknown {
+  return migratePowerUpButtons(migrateSignallingUrl(raw));
+}
+
+const POWER_UP_BUTTONS = ['powerUpLeft', 'powerUpRight'] as const;
+
+export function migratePowerUpButtons(raw: unknown): unknown {
+  if (!isPlainObject(raw) || raw.powerUps !== undefined) return raw;
+  if (!isPlainObject(raw.shifting) || !isPlainObject(raw.shifting.buttons)) return raw;
+  const buttons = { ...raw.shifting.buttons };
+  for (const b of POWER_UP_BUTTONS) {
+    if (buttons[b] === undefined || buttons[b] === 'none') buttons[b] = 'usePowerUp';
+  }
+  return { ...raw, shifting: { ...raw.shifting, buttons } };
+}
+
+function migrateSignallingUrl(raw: unknown): unknown {
   if (!isPlainObject(raw) || !isPlainObject(raw.group)) return raw;
   if (raw.group.signallingUrl !== LEGACY_DEFAULT_SIGNALLING_URL) return raw;
   const { signallingUrl: _old, ...group } = raw.group;
@@ -360,6 +407,7 @@ export function sanitizeSettings(
   const overlay = obj(root.overlay, 'overlay', problems);
   const group = obj(root.group, 'group', problems);
   const route = obj(root.route, 'route', problems);
+  const powerUps = obj(root.powerUps, 'powerUps', problems);
 
   let trainerMassKg = fallback.shifting.trainerMassKg;
   if (shifting.trainerMassKg === null) trainerMassKg = null;
@@ -468,6 +516,16 @@ export function sanitizeSettings(
         100,
       ),
     },
+    powerUps: {
+      enabled: bool(powerUps.enabled, fallback.powerUps.enabled, 'powerUps.enabled', problems),
+      challenges: bool(
+        powerUps.challenges,
+        fallback.powerUps.challenges,
+        'powerUps.challenges',
+        problems,
+      ),
+    },
+    watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
   };
 }
 

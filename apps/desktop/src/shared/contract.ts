@@ -2,10 +2,16 @@
  * Contract between the Electron main process, the main window and the
  * overlay window. Types only (plus defaults) — importable from all three.
  */
-import type { ConnectionState, ControllerButton, DeviceKind } from '@freilauf/devices';
+import type {
+  ConnectionState,
+  ControllerButton,
+  DeviceKind,
+  RelayServiceKind,
+} from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
 import type { RoutePosition } from '@freilauf/routes';
 import type { RecordedRide, RideSnapshot } from '@freilauf/session';
+import type { PowerUpLive } from './powerUps';
 
 export type StatId =
   | 'power'
@@ -84,6 +90,7 @@ export type ControllerAction =
   | 'intensityDown'
   | 'steerLeft'
   | 'steerRight'
+  | 'usePowerUp'
   | 'none';
 
 /** @deprecated use ControllerAction */
@@ -102,6 +109,7 @@ export const CONTROLLER_ACTION_LABELS: Record<ControllerAction, string> = {
   intensityDown: 'Workout: intensity −5 %',
   steerLeft: 'Steer left (hold)',
   steerRight: 'Steer right (hold)',
+  usePowerUp: 'Use power-up',
 };
 
 /**
@@ -185,7 +193,46 @@ export interface Settings {
      */
     difficulty: number;
   };
+  /** Power-ups (docs/power-ups.md): never change the recording, only the race position. */
+  powerUps: { enabled: boolean; challenges: boolean };
+  /** Share with my watch: publish the live values as Bluetooth sensors (docs/watch-relay.md). */
+  watchRelay: WatchRelaySettings;
 }
+
+/** Which groups of live values to publish as a Bluetooth sensor; see docs/adr/0005-sensor-relay.md. */
+export interface WatchRelaySettings {
+  /** Off by default: the computer only advertises while this is on. */
+  enabled: boolean;
+  /**
+   * heartRate: Heart Rate service. power: Cycling Power (power + cadence). speedCadence: Cycling
+   * Speed and Cadence (virtual speed and distance + cadence). trainer: Fitness Machine (Indoor
+   * Bike Data), off by default (see the ADR).
+   */
+  share: Record<RelayServiceKind, boolean>;
+}
+
+export const DEFAULT_WATCH_RELAY: WatchRelaySettings = {
+  enabled: false,
+  share: { heartRate: true, power: true, speedCadence: true, trainer: false },
+};
+
+/** What "Share with my watch" is doing right now (main → main window). */
+export type WatchRelayStatus =
+  /** Not possible in this build or on this operating system; the switch is disabled. */
+  | { state: 'unavailable'; reason: string; browser?: boolean }
+  | { state: 'off' }
+  | { state: 'starting' }
+  /** The helper ran but this computer's Bluetooth cannot act as a sensor. */
+  | { state: 'unsupported'; reason: string }
+  /** Advertising; `devices` watches are subscribed (0 = waiting for a watch). */
+  | {
+      state: 'sharing';
+      devices: number;
+      sharing: RelayServiceKind[];
+      /** The name the watch most likely sees (the computer's name). */
+      computerName: string;
+    }
+  | { state: 'error'; message: string; retrying: boolean };
 
 export const DEFAULT_SETTINGS: Settings = {
   rider: { name: 'Rider', massKg: 75, bikeMassKg: 8, ftpW: 200 },
@@ -202,6 +249,8 @@ export const DEFAULT_SETTINGS: Settings = {
       down: 'gradientDown',
       left: 'steerLeft',
       right: 'steerRight',
+      powerUpLeft: 'usePowerUp',
+      powerUpRight: 'usePowerUp',
     },
     levers: DEFAULT_LEVERS,
   },
@@ -223,6 +272,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   group: { useOwnServer: false, signallingUrl: '', relayUrls: [] },
   route: { difficulty: 100 },
+  powerUps: { enabled: true, challenges: true },
+  watchRelay: DEFAULT_WATCH_RELAY,
 };
 
 /**
@@ -262,6 +313,8 @@ export interface LiveState {
   routeControl?: RouteControl | null;
   /** Brake from the controller levers or the brake key, 0 (none) … 1 (full). */
   braking?: number;
+  /** Power-ups of the current ride (docs/power-ups.md); absent before the ride starts. */
+  powerUps?: PowerUpLive | null;
 }
 
 /** How a loaded route drives the trainer. */
@@ -403,6 +456,13 @@ export interface FreilaufApi {
     exportFit(id: string): Promise<string | null>;
     delete(id: string): Promise<void>;
     openFolder(): Promise<void>;
+  };
+
+  /** Share with my watch (desktop on Windows; the browser build reports it as unavailable). */
+  watchRelay: {
+    getStatus(): Promise<WatchRelayStatus>;
+    /** Fires on every status change; also delivers the current value on subscribe. */
+    onStatus(listener: (status: WatchRelayStatus) => void): () => void;
   };
 
   diagnostics: {

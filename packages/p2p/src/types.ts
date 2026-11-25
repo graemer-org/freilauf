@@ -16,6 +16,23 @@ export interface RiderState {
    * one of them started further along or jumped (docs/routes.md, "Choosing where to start, and jumping").
    */
   route?: RiderRoute;
+  /**
+   * Optional (power-ups, docs/power-ups.md): metres the rider's race position is ahead of the
+   * ridden distance because of power-ups. Riders are placed by distance + raceOffsetM (and on a
+   * route by route position + raceOffsetM); the recorded ride never includes it.
+   */
+  raceOffsetM?: number;
+  /**
+   * Optional: rules of this group ride, sent by the rider who created it (the host). Unknown
+   * fields are dropped, so a later mode (e.g. battles) adds its own fields here.
+   */
+  rules?: GroupRules;
+}
+
+/** Group-level switches set by the host. */
+export interface GroupRules {
+  /** Power-ups allowed in this group ride (default true). */
+  powerUps: boolean;
 }
 
 /** A rider's place on a route, as broadcast. */
@@ -43,6 +60,8 @@ export interface GroupRider {
   gapM: number;
   /** True when `gapM` is measured along the route both riders share. */
   sameRoute?: boolean;
+  /** Metres of `gapM` that come from that rider's power-ups (race position − ridden), if any. */
+  raceOffsetM?: number;
   /** True when no update arrived for a while. */
   stale: boolean;
 }

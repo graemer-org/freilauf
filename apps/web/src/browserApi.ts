@@ -18,6 +18,7 @@ import type {
   LiveState,
   LogContext,
   LogLevel,
+  WatchRelayStatus,
 } from '../../desktop/src/shared/contract';
 import {
   formatLogLine,
@@ -78,6 +79,16 @@ export const LOG_FOLDER_MESSAGE =
   'Use “Export log” to download it as a file (it is lost when the tab is closed or reloaded).';
 
 export const LOG_LOCATION = 'browser memory (this tab)';
+
+/** Why "Share with my watch" is not offered in the browser. */
+export const WATCH_RELAY_BROWSER_REASON =
+  'A web page can connect to Bluetooth sensors but cannot act as one, so sharing with a watch needs the desktop app on Windows.';
+
+const WATCH_RELAY_STATUS: WatchRelayStatus = {
+  state: 'unavailable',
+  reason: WATCH_RELAY_BROWSER_REASON,
+  browser: true,
+};
 
 export const EDIT_MODE_MESSAGE =
   'The web version has no free-floating overlay. Use “Pop-out stats” for a small always-on-top ' +
@@ -192,6 +203,14 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
       onPickerDevices: () => () => {},
       pick: () => {},
       cancelPicker: () => {},
+    },
+
+    watchRelay: {
+      getStatus: async () => WATCH_RELAY_STATUS,
+      onStatus: (listener) => {
+        listener(WATCH_RELAY_STATUS);
+        return () => {};
+      },
     },
 
     rides: {

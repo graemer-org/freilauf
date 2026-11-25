@@ -20,7 +20,8 @@ files:
   - out/**/*
   - package.json
   - '!node_modules/**/*'
-# Nothing to rebuild: there are no native modules.
+# Nothing to rebuild: there are no native Node modules (the watch-relay helper
+# is a separate, prebuilt program; see win.extraResources).
 npmRebuild: false
 asar: true
 
@@ -41,6 +42,13 @@ win:
     - target: zip
       arch: [x64]
   artifactName: ${productName}-${version}-win-${arch}.${ext}
+  # "Share with my watch": the Bluetooth sensor helper, checked in prebuilt and
+  # reproducible (native/sensor-relay/build-windows.sh, docs/adr/0005-sensor-relay.md).
+  # Windows only; macOS and Linux builds do not include it. check-bundle.mjs
+  # verifies its SHA-256 before packaging.
+  extraResources:
+    - from: native/sensor-relay/prebuilt/win32-x64/freilauf-sensor-relay.exe
+      to: sensor-relay/freilauf-sensor-relay.exe
   # Unsigned: without CSC_LINK / WIN_CSC_LINK electron-builder skips signing.
   # To sign later, set those secrets (or azureSignOptions) - see docs/releasing.md.
 

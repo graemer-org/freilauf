@@ -65,7 +65,31 @@ describe('summarizeRide', () => {
       bests: [],
       workoutName: 'Openers',
       routeName: null,
+      powerUpGainM: 0,
     });
+  });
+
+  it('carries the power-up gain separately; distance stays the recorded one', () => {
+    const s = summarizeRide({
+      ...base,
+      live: { elapsedS: 2, distanceM: 999 },
+      ride: ride('r2', [200, 200]),
+      facts: null,
+      previous: [],
+      powerUpGainM: 37.6,
+    });
+    expect(s.powerUpGainM).toBe(38);
+    expect(s.distanceM).toBe(ride('r2', [200, 200]).samples.at(-1)!.distanceM);
+    expect(
+      summarizeRide({
+        ...base,
+        live: null,
+        ride: null,
+        facts: null,
+        previous: [],
+        powerUpGainM: Number.NaN,
+      }).powerUpGainM,
+    ).toBe(0);
   });
 
   it('reports only efforts that beat every earlier ride', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Decoder, Stream } from '@garmin/fitsdk';
 import type { RecordedRide, RideSample } from '../types';
 import { encodeFit, toFitTimestamp, FIT_EPOCH_OFFSET_S } from './encodeFit';
-import { rideSummary } from './summary';
+import { normalizedPower, rideSummary, splitAtJumps } from './summary';
 
 const START = Date.UTC(2026, 10, 22, 17, 0, 0);
 
@@ -406,5 +406,188 @@ describe('encodeFit with jumps along the route (route segments)', () => {
     const msgs = decode(encodeFit(jumped([A])));
     expect(msgs.lapMesgs).toHaveLength(1);
     expect(msgs.lapMesgs?.[0]?.lapTrigger).toBe('sessionEnd');
+  });
+  /** Samples of one segment: `n` seconds at `speed` m/s from `base`, continuing time/distance of `prev`. */
+  function leg(
+    prev: RideSample | undefined,
+    n: number,
+    o: {
+      base: { lat: number; lon: number; alt: number };
+      segment: number;
+      speed: number;
+      pauseS?: number;
+    },
+  ): RideSample[] {
+    const out: RideSample[] = [];
+    let t = prev ? prev.timestamp + (o.pauseS ?? 0) * 1000 : START;
+    let e = prev?.elapsedS ?? 0;
+    let d = prev?.distanceM ?? 0;
+    let travelled = 0;
+    for (let i = 0; i < n; i++) {
+      t += 1000;
+      e += 1;
+      d += o.speed;
+      out.push({
+        timestamp: t,
+        elapsedS: e,
+        powerW: o.speed > 0 ? 180 : 0,
+        cadenceRpm: o.speed > 0 ? 85 : 0,
+        heartRateBpm: 120,
+        speedMps: o.speed,
+        distanceM: d,
+        gradePercent: 0,
+        gear: 5,
+        lat: o.base.lat + travelled / 111_000,
+        lon: o.base.lon,
+        altitudeM: o.base.alt + travelled * 0.01,
+        ...(o.segment > 0 ? { segment: o.segment } : {}),
+      });
+      travelled += o.speed;
+    }
+    return out;
+  }
+  const rideOf = (samples: RideSample[]): RecordedRide => ({
+    id: 'ride-j',
+    name: 'Jumps',
+    startedAt: START,
+    riderMassKg: 75,
+    samples,
+  });
+
+  it('a jump before any distance was ridden does not make a 1 s lap (the ride of 2026-11-25)', () => {
+    // Start, pause after one second, move the start point while paused, resume ~7 min later.
+    const before = leg(undefined, 1, { base: A, segment: 0, speed: 0 });
+    const after = leg(before[0], 300, { base: B, segment: 1, speed: 8, pauseS: 413 });
+    const ride = rideOf([...before, ...after]);
+    expect(splitAtJumps(ride.samples)).toHaveLength(1);
+    const msgs = decode(encodeFit(ride));
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(1);
+    const lap = laps[0]!;
+    const session = msgs.sessionMesgs![0]!;
+    expect(lap.lapTrigger).toBe('sessionEnd');
+    expect(session.numLaps).toBe(1);
+    expect(lap.totalTimerTime).toBe(301);
+    expect(session.totalTimerTime).toBe(301);
+    expect(lap.startTime).toEqual(session.startTime);
+    // Positions: where the riding began, after the jump; nothing from the unridden start point.
+    for (const m of [lap, session]) {
+      expect((m.startPositionLat as number) * semi).toBeCloseTo(B.lat, 6);
+      expect((m.swcLat as number) * semi).toBeGreaterThan(B.lat - 1e-6);
+      expect(m.enhancedMinAltitude as number).toBeGreaterThanOrEqual(B.alt - 0.2);
+      expect(m.enhancedMaxAltitude as number).toBeLessThan(B.alt + 30);
+      expect(m.totalAscent as number).toBeLessThan(30);
+    }
+    // Every sample is still recorded; the pre-jump one has no position.
+    const records = msgs.recordMesgs ?? [];
+    expect(records).toHaveLength(301);
+    expect(records[0]!.positionLat).toBeUndefined();
+    expect(records[0]!.enhancedAltitude).toBeUndefined();
+    expect(records[0]!.heartRate).toBe(120);
+    expect((records[1]!.positionLat as number) * semi).toBeCloseTo(B.lat, 6);
+    // The pause is still marked.
+    expect((msgs.eventMesgs ?? []).map((e) => e.eventType)).toEqual([
+      'start',
+      'stop',
+      'start',
+      'stopAll',
+    ]);
+  });
+
+  it('a jump mid-ride still makes two laps', () => {
+    const first = leg(undefined, 120, { base: A, segment: 0, speed: 8 });
+    const second = leg(first.at(-1), 120, { base: B, segment: 1, speed: 8 });
+    const msgs = decode(encodeFit(rideOf([...first, ...second])));
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(2);
+    expect(laps.map((l) => l.totalTimerTime)).toEqual([120, 120]);
+    expect((laps[0]!.startPositionLat as number) * semi).toBeCloseTo(A.lat, 6);
+    expect((laps[1]!.startPositionLat as number) * semi).toBeCloseTo(B.lat, 6);
+    expect((msgs.recordMesgs ?? []).every((r) => r.positionLat !== undefined)).toBe(true);
+  });
+
+  it('several jumps in a row with no riding in between make one lap boundary', () => {
+    const first = leg(undefined, 120, { base: A, segment: 0, speed: 8 });
+    // jump, resume for a second without moving, pause, jump again, …
+    const j1 = leg(first.at(-1), 1, { base: B, segment: 1, speed: 0, pauseS: 30 });
+    const j2 = leg(j1.at(-1), 2, { base: C, segment: 2, speed: 0, pauseS: 30 });
+    const last = leg(j2.at(-1), 120, { base: B, segment: 3, speed: 8, pauseS: 30 });
+    const ride = rideOf([...first, ...j1, ...j2, ...last]);
+    const msgs = decode(encodeFit(ride));
+    const laps = msgs.lapMesgs ?? [];
+    expect(laps).toHaveLength(2);
+    expect(msgs.sessionMesgs![0]!.numLaps).toBe(2);
+    expect(laps.map((l) => l.totalTimerTime)).toEqual([120, 123]);
+    expect((laps[1]!.startPositionLat as number) * semi).toBeCloseTo(B.lat, 6);
+    expect(laps[1]!.enhancedMinAltitude as number).toBeGreaterThanOrEqual(B.alt - 0.2);
+    const records = msgs.recordMesgs ?? [];
+    expect(records.slice(120, 123).every((r) => r.positionLat === undefined)).toBe(true);
+    expect(records[123]!.positionLat).toBeDefined();
+  });
+
+  it('a jump at the very end without riding is folded into the last lap', () => {
+    const first = leg(undefined, 120, { base: A, segment: 0, speed: 8 });
+    const tail = leg(first.at(-1), 2, { base: B, segment: 1, speed: 0, pauseS: 10 });
+    const msgs = decode(encodeFit(rideOf([...first, ...tail])));
+    expect(msgs.lapMesgs).toHaveLength(1);
+    const lap = msgs.lapMesgs![0]!;
+    expect(lap.totalTimerTime).toBe(122);
+    expect((lap.endPositionLat as number) * semi).toBeCloseTo(A.lat + (119 * 8) / 111_000, 6);
+  });
+});
+
+describe('normalized power', () => {
+  const flat = (watts: (i: number) => number, n: number) =>
+    makeRide(n, (i) => ({ powerW: watts(i) })).samples;
+
+  it('equals the power of a constant effort and is null under 30 s', () => {
+    expect(normalizedPower(flat(() => 200, 600))).toBeCloseTo(200, 9);
+    expect(normalizedPower(flat(() => 200, 29))).toBeNull();
+    expect(normalizedPower(flat(() => 200, 30))).toBeCloseTo(200, 9);
+  });
+
+  it('weights hard efforts: 30 s on / 30 s off is above the average power', () => {
+    const p = (i: number) => (Math.floor(i / 30) % 2 === 0 ? 400 : 0);
+    const samples = flat(p, 1200);
+    // reference: straightforward O(n·30) computation
+    const watts = samples.map((s) => s.powerW);
+    let acc = 0;
+    let n = 0;
+    for (let i = 29; i < watts.length; i++) {
+      const avg = watts.slice(i - 29, i + 1).reduce((a, b) => a + b, 0) / 30;
+      acc += avg ** 4;
+      n++;
+    }
+    const np = normalizedPower(samples)!;
+    expect(np).toBeCloseTo((acc / n) ** 0.25, 6);
+    expect(np).toBeGreaterThan(
+      rideSummary(makeRide(1200, (i) => ({ powerW: p(i) }))).avgPowerW + 50,
+    );
+  });
+
+  it('is written to the session and the laps', () => {
+    const msgs = decode(encodeFit(makeRide(600, (i) => ({ powerW: i < 300 ? 100 : 300 }))));
+    const session = msgs.sessionMesgs![0]!;
+    const expected = Math.round(
+      normalizedPower(makeRide(600, (i) => ({ powerW: i < 300 ? 100 : 300 })).samples)!,
+    );
+    expect(session.normalizedPower).toBe(expected);
+    expect(msgs.lapMesgs![0]!.normalizedPower).toBe(expected);
+    // FTP is not known to the encoder: no intensity factor / TSS.
+    expect(session.intensityFactor).toBeUndefined();
+    expect(session.trainingStressScore).toBeUndefined();
+  });
+
+  it('per lap when the ride has jumps; absent for a ride shorter than 30 s', () => {
+    const ride = makeRide(200, (i) => ({
+      powerW: i < 100 ? 150 : 250,
+      lat: 47 + (i % 100) * 1e-5,
+      lon: 11,
+      altitudeM: 500,
+      ...(i >= 100 ? { segment: 1 } : {}),
+    }));
+    const msgs = decode(encodeFit(ride));
+    expect(msgs.lapMesgs!.map((l) => l.normalizedPower)).toEqual([150, 250]);
+    expect(decode(encodeFit(makeRide(20))).sessionMesgs![0]!.normalizedPower).toBeUndefined();
   });
 });

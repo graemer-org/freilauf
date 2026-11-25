@@ -20,6 +20,7 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
     // The group already knows the local name; it only wants the numbers.
     setLocalState: ({ name: _name, ...state }) => void ride.setLocalState(state),
     getRiders: () => ride.getRiders(),
+    getRules: () => ride.getRules(),
     leave: () => ride.leave(),
 
     shareWorkout: (text) => {

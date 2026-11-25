@@ -5,6 +5,13 @@
 // workspace package missing from WORKSPACE_PACKAGES in electron.vite.config.ts.
 //
 //   node build/check-bundle.mjs   (run by `pnpm dist` after electron-vite build)
+//
+// It also checks the prebuilt Windows watch-relay helper against its recorded
+// SHA-256 (electron-builder.yml `win.extraResources`), so a corrupted or
+// swapped binary never gets packaged. Missing is only an error on Windows,
+// the one platform that ships it.
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import path from 'node:path';
@@ -28,12 +35,32 @@ for (const dir of ['main', 'preload']) {
   }
 }
 
+const helper = path.resolve(
+  import.meta.dirname,
+  '..',
+  'native/sensor-relay/prebuilt/win32-x64/freilauf-sensor-relay.exe',
+);
+if (existsSync(helper)) {
+  const want = (await readFile(`${helper}.sha256`, 'utf8')).split(/\s+/)[0];
+  const got = createHash('sha256')
+    .update(await readFile(helper))
+    .digest('hex');
+  if (got !== want) {
+    problems.push(
+      `native/sensor-relay/prebuilt/win32-x64/freilauf-sensor-relay.exe: SHA-256 ${got}, expected ${want} (rebuild with build-windows.sh)`,
+    );
+  }
+} else if (process.platform === 'win32') {
+  problems.push('native/sensor-relay/prebuilt/win32-x64/freilauf-sensor-relay.exe is missing');
+}
+
 if (problems.length) {
   console.error(
-    'Bundles import modules that will not exist in the packaged app:\n  ' +
+    'Not ready to package (imports that will not exist in the packaged app, or a bad helper binary):\n  ' +
       problems.join('\n  ') +
-      '\nBundle them (electron.vite.config.ts) or ship them via electron-builder.yml `files`.',
+      '\nFor imports: bundle them (electron.vite.config.ts) or ship them via electron-builder.yml `files`.',
   );
   process.exit(1);
 }
 console.log('check-bundle: main and preload only import electron and Node built-ins');
+if (existsSync(helper)) console.log('check-bundle: watch-relay helper matches its SHA-256');

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { backoffDelay, ManagedDevice } from './managedDevice';
+import { backoffDelay, DeviceDisconnectedError, ManagedDevice } from './managedDevice';
 import type { ManagedDeviceOptions } from './managedDevice';
-import { FakePeripheral, FakeScheduler, flushPromises } from './testing/fakeGatt';
+import { fakeDomError, FakePeripheral, FakeScheduler, flushPromises } from './testing/fakeGatt';
 import type { BlePeripheral, ConnectionState, GattConnection } from './types';
 import { HEART_RATE_MEASUREMENT, HEART_RATE_SERVICE } from './uuids';
 
@@ -191,7 +191,7 @@ describe('ManagedDevice', () => {
     expect(peripheral.connections.every((c) => !c.connected)).toBe(true);
   });
 
-  it('a link drop during first-connect setup rejects connect()', async () => {
+  it('a link drop during every first-connect setup attempt rejects connect() after 3 attempts', async () => {
     const { device, peripheral, clock } = setup();
     device.failSetup = null;
     const orig = peripheral.connect.bind(peripheral);
@@ -205,8 +205,161 @@ describe('ManagedDevice', () => {
       };
       return c;
     };
-    await expect(device.connect()).rejects.toThrow('link lost during setup');
+    const result = device.connect().catch((e: unknown) => e);
+    await clock.advance(1500);
+    const err = await result;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('link lost during setup');
+    expect(peripheral.connectAttempts).toBe(3);
     expect(device.state).toBe('disconnected');
     expect(clock.pendingDelays).toEqual([]);
+  });
+
+  describe('initial connect retries (Windows drops the first link during service discovery)', () => {
+    it('succeeds on attempt 2 when the link drops once during setup', async () => {
+      const { device, peripheral, clock, states } = setup();
+      const diags: Array<{ event: string; context?: Record<string, unknown> }> = [];
+      device.onDiagnostic((d) => diags.push(d));
+      // As in the log: the disconnect event came before the connection listened.
+      peripheral.dropNextLinksDuringSetup(1, { notify: false });
+      let settled = false;
+      const p = device.connect().finally(() => (settled = true));
+      await flushPromises();
+      expect(peripheral.connectAttempts).toBe(1);
+      expect(device.state).toBe('connecting');
+      expect(clock.pendingDelays).toEqual([500]);
+      await clock.advance(499);
+      expect(settled).toBe(false);
+      expect(peripheral.connectAttempts).toBe(1);
+      await clock.advance(1);
+      await p;
+      expect(peripheral.connectAttempts).toBe(2);
+      expect(device.state).toBe('connected');
+      expect(states).toEqual(['connecting', 'connected']);
+      expect(peripheral.connections[0]?.connected).toBe(false);
+      expect(peripheral.current?.isSubscribed(HEART_RATE_SERVICE, HEART_RATE_MEASUREMENT)).toBe(
+        true,
+      );
+      expect(diags.map((d) => d.event)).toEqual([
+        'link-attempt',
+        'link-up',
+        'setup-failed',
+        'connect-retry',
+        'link-attempt',
+        'link-up',
+        'setup-done',
+      ]);
+      expect(diags[3]?.context).toMatchObject({ attempt: 1, of: 3, delayMs: 500 });
+    });
+
+    it('also retries when onDisconnect fired during setup', async () => {
+      const { device, peripheral, clock } = setup();
+      peripheral.dropNextLinksDuringSetup(1, { notify: true });
+      const p = device.connect();
+      await clock.advance(500);
+      await p;
+      expect(device.state).toBe('connected');
+      expect(peripheral.connectAttempts).toBe(2);
+    });
+
+    it('retries transient link failures of gatt.connect() itself', async () => {
+      const { device, peripheral, clock } = setup();
+      peripheral.failNextConnects(1, fakeDomError('NetworkError', 'Connection attempt failed.'));
+      const p = device.connect();
+      await clock.advance(500);
+      await p;
+      expect(peripheral.connectAttempts).toBe(2);
+    });
+
+    it('rejects after 3 failed attempts (0.5 s, then 1 s apart)', async () => {
+      const { device, peripheral, clock, states } = setup();
+      const diags: string[] = [];
+      device.onDiagnostic((d) => diags.push(d.event));
+      peripheral.dropNextLinksDuringSetup(3, { notify: false });
+      const result = device.connect().catch((e: unknown) => e);
+      await flushPromises();
+      expect(clock.pendingDelays).toEqual([500]);
+      await clock.advance(500);
+      expect(peripheral.connectAttempts).toBe(2);
+      expect(clock.pendingDelays).toEqual([1000]);
+      await clock.advance(1000);
+      const err = await result;
+      expect(peripheral.connectAttempts).toBe(3);
+      expect((err as Error).name).toBe('NetworkError');
+      expect((err as Error).message).toMatch(/GATT Server is disconnected/);
+      expect(device.state).toBe('disconnected');
+      expect(states).toEqual(['connecting', 'disconnected']);
+      expect(clock.pendingDelays).toEqual([]);
+      expect(diags.filter((e) => e === 'connect-retry')).toHaveLength(2);
+      expect(diags.at(-1)).toBe('connect-failed');
+      expect(peripheral.connections.every((c) => !c.connected)).toBe(true);
+    });
+
+    it('disconnect() during the backoff rejects connect() and stops the attempts', async () => {
+      const { device, peripheral, clock, states } = setup();
+      peripheral.dropNextLinksDuringSetup(1, { notify: false });
+      const result = device.connect().catch((e: unknown) => e);
+      await flushPromises();
+      expect(clock.pendingDelays).toEqual([500]);
+      await device.disconnect();
+      const err = await result;
+      expect(err).toBeInstanceOf(DeviceDisconnectedError);
+      expect((err as Error).message).toBe('disconnected while connecting');
+      expect(clock.pendingDelays).toEqual([]);
+      await clock.advance(60_000);
+      expect(peripheral.connectAttempts).toBe(1);
+      expect(device.state).toBe('disconnected');
+      expect(states).toEqual(['connecting', 'disconnected']);
+      // and it can be connected again afterwards
+      await device.connect();
+      expect(device.state).toBe('connected');
+    });
+
+    it('does not retry non-transient errors', async () => {
+      for (const error of [
+        fakeDomError('NotFoundError', 'User cancelled the requestDevice() chooser.'),
+        fakeDomError('NotAllowedError', 'Permission denied.'),
+        fakeDomError('SecurityError', 'Origin is not allowed to access the service.'),
+      ]) {
+        const { device, peripheral, clock } = setup();
+        peripheral.failNextConnects(1, error);
+        await expect(device.connect()).rejects.toBe(error);
+        expect(peripheral.connectAttempts).toBe(1);
+        expect(clock.pendingDelays).toEqual([]);
+      }
+      const { device, peripheral, clock } = setup();
+      device.failSetup = fakeDomError('NotFoundError', 'No Characteristics matching UUID found.');
+      await expect(device.connect()).rejects.toThrow('No Characteristics');
+      expect(peripheral.connectAttempts).toBe(1);
+      expect(clock.pendingDelays).toEqual([]);
+    });
+
+    it('honours initialConnect options', async () => {
+      const peripheral = new FakePeripheral({ services: [HEART_RATE_SERVICE] });
+      const clock = new FakeScheduler();
+      const device = new TestDevice(peripheral, {
+        schedule: clock.schedule,
+        initialConnect: { attempts: 1 },
+      });
+      peripheral.dropNextLinksDuringSetup(1);
+      await expect(device.connect()).rejects.toThrow(/GATT Server is disconnected/);
+      expect(peripheral.connectAttempts).toBe(1);
+    });
+
+    it('a link dropping during setup of a reconnect is retried with the reconnect backoff', async () => {
+      const { device, peripheral, clock } = setup();
+      await device.connect();
+      peripheral.dropNextLinksDuringSetup(2, { notify: false });
+      peripheral.dropLink();
+      await clock.advance(1000);
+      expect(device.state).toBe('reconnecting');
+      expect(clock.pendingDelays).toEqual([2000]);
+      await clock.advance(2000);
+      expect(device.state).toBe('reconnecting');
+      expect(clock.pendingDelays).toEqual([4000]);
+      await clock.advance(4000);
+      expect(device.state).toBe('connected');
+      expect(peripheral.connectAttempts).toBe(4);
+    });
   });
 });

@@ -211,3 +211,58 @@ describe('RemoteRiders', () => {
     expect(r.getRiders(T0, 0).map((x) => x.peerId)).toEqual(['c', 'a']);
   });
 });
+
+describe('power-ups: race offset and group rules', () => {
+  const T0 = 5_000;
+  it('validates the optional race offset and rules; old senders add nothing', () => {
+    expect(sanitizeRiderState(state())).not.toHaveProperty('raceOffsetM');
+    expect(sanitizeRiderState(state())).not.toHaveProperty('rules');
+    expect(sanitizeRiderState(state({ raceOffsetM: 38.5 }))?.raceOffsetM).toBe(38.5);
+    expect(sanitizeRiderState(state({ raceOffsetM: 0 }))).not.toHaveProperty('raceOffsetM');
+    for (const bad of [-1, 1e9, Number.NaN, '5'])
+      expect(sanitizeRiderState({ ...state(), raceOffsetM: bad })).toBeNull();
+    expect(
+      sanitizeRiderState({ ...state(), rules: { powerUps: false, battle: { x: 1 } } })?.rules,
+    ).toEqual({ powerUps: false });
+    for (const bad of [null, 'off', { powerUps: 'no' }, []])
+      expect(sanitizeRiderState({ ...state(), rules: bad })).toBeNull();
+    expect(decodeStateMessage(encodeStateMessage(state({ raceOffsetM: 12 })))?.raceOffsetM).toBe(
+      12,
+    );
+  });
+
+  it('places riders by race position: ridden distance plus their power-up gains', () => {
+    const r = new RemoteRiders();
+    r.ingest('a', state({ distanceM: 1000, speedMps: 0, raceOffsetM: 30 }), T0);
+    r.ingest('b', state({ distanceM: 1020, speedMps: 0 }), T0);
+    // A rode less but is ahead on race position.
+    const riders = r.getRiders(T0, 1000);
+    expect(riders.map((x) => [x.peerId, x.gapM])).toEqual([
+      ['a', 30],
+      ['b', 20],
+    ]);
+    expect(riders[0]?.raceOffsetM).toBe(30);
+    // The local rider's own gains count too.
+    expect(r.getRiders(T0, 1000, null, 25).map((x) => x.gapM)).toEqual([5, -5]);
+  });
+
+  it('on a shared route the race offset moves the route position', () => {
+    const r = new RemoteRiders();
+    r.ingest(
+      'a',
+      state({ distanceM: 500, speedMps: 0, route: { id: 'loop', m: 900 }, raceOffsetM: 40 }),
+      T0,
+    );
+    const local = { id: 'loop', m: 950, lengthM: 1000, loop: true };
+    expect(r.getRiders(T0, 0, local)[0]?.gapM).toBeCloseTo(-10);
+    expect(r.getRiders(T0, 0, local, 20)[0]?.gapM).toBeCloseTo(-30);
+  });
+
+  it('reads the rules from the peer that sends them', () => {
+    const r = new RemoteRiders();
+    expect(r.getRules()).toBeNull();
+    r.ingest('b', state(), T0);
+    r.ingest('c', state({ rules: { powerUps: false } }), T0);
+    expect(r.getRules()).toEqual({ powerUps: false });
+  });
+});

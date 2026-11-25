@@ -17,6 +17,7 @@ import {
 import { MAX_NAME_LENGTH } from './SettingsTab';
 import type { RideKind } from './startView';
 import { activeKinds, COMBINED_NOTE, routeLine, trainerNotice, workoutLine } from './startView';
+import { WatchRelayBadge } from './WatchRelay';
 
 export interface StartScreenProps {
   onStart: () => void;
@@ -524,6 +525,7 @@ function DeviceLine({ onOpenDevices }: { onOpenDevices: () => void }) {
         onClick={onOpenDevices}
       >
         <DeviceChips />
+        <WatchRelayBadge />
         <span className="device-line-more" aria-hidden="true">
           Devices ›
         </span>

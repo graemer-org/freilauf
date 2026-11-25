@@ -1,5 +1,5 @@
 import { sanitizeName } from './signalling/channel';
-import type { GroupRider, RiderRoute, RiderState } from './types';
+import type { GroupRider, GroupRules, RiderRoute, RiderState } from './types';
 
 /** No update for this long -> `stale: true`. */
 export const STALE_AFTER_MS = 3_000;
@@ -24,6 +24,8 @@ export const RIDER_STATE_LIMITS = {
   gear: [0, 100],
   /** Routes are at most 1000 km (MAX_ROUTE_LENGTH_M in @freilauf/routes). */
   routeM: [0, 1_000_000],
+  /** Power-up gains are tens of metres per use; anything beyond this is not believable. */
+  raceOffsetM: [0, 100_000],
 } as const;
 
 /** Route ids as @freilauf/routes makes them (and its codec accepts). */
@@ -77,6 +79,16 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     if (typeof id !== 'string' || !ROUTE_ID.test(id) || !inRange(m, L.routeM)) return null;
     route = { id, m };
   }
+  const raceOffsetM = v['raceOffsetM'];
+  if (raceOffsetM !== undefined && !inRange(raceOffsetM, L.raceOffsetM)) return null;
+  let rules: GroupRules | undefined;
+  if (v['rules'] !== undefined) {
+    const r = v['rules'];
+    if (typeof r !== 'object' || r === null || Array.isArray(r)) return null;
+    const { powerUps } = r as Record<string, unknown>;
+    if (typeof powerUps !== 'boolean') return null;
+    rules = { powerUps };
+  }
   return {
     name: sanitizeName(v['name']) || 'Rider',
     sentAt,
@@ -87,6 +99,8 @@ export function sanitizeRiderState(value: unknown): RiderState | null {
     heartRateBpm: hr,
     gear: Math.round(gear),
     ...(route ? { route } : {}),
+    ...(raceOffsetM !== undefined && raceOffsetM > 0 ? { raceOffsetM } : {}),
+    ...(rules ? { rules } : {}),
   };
 }
 
@@ -162,6 +176,16 @@ export class RemoteRiders {
     return true;
   }
 
+  /** The group's rules as the host sends them (the first peer, by id, that sends any). */
+  getRules(): GroupRules | null {
+    const ids = [...this.#tracks.keys()].sort();
+    for (const id of ids) {
+      const rules = this.#tracks.get(id)?.state.rules;
+      if (rules) return rules;
+    }
+    return null;
+  }
+
   remove(peerId: string): boolean {
     return this.#tracks.delete(peerId);
   }
@@ -177,20 +201,26 @@ export class RemoteRiders {
   /**
    * Remote riders at local time `now`, leader first. `gapM` is measured along the route for
    * riders on `localRoute` (same id), otherwise relative to `localDistanceM` (ridden distance).
+   * Both sides count their race offset (power-ups): `localRaceOffsetM` and each rider's own.
    */
   getRiders(
     now: number,
     localDistanceM: number,
     localRoute?: LocalRoutePlacement | null,
+    localRaceOffsetM = 0,
   ): GroupRider[] {
     const riders: GroupRider[] = [];
+    const localRace = Number.isFinite(localRaceOffsetM) ? Math.max(0, localRaceOffsetM) : 0;
+    const raceRoute =
+      localRoute && localRace > 0 ? { ...localRoute, m: localRoute.m + localRace } : localRoute;
     for (const [peerId, track] of this.#tracks) {
       const s = track.state;
       const distanceM = displayedDistance(track, now);
+      const race = s.raceOffsetM ?? 0;
       const routeGap =
-        localRoute && s.route && s.route.id === localRoute.id
+        raceRoute && s.route && s.route.id === raceRoute.id
           ? // The route position moves with the (extrapolated, smoothed) distance.
-            gapAlongRoute(s.route.m + (distanceM - s.distanceM), localRoute)
+            gapAlongRoute(s.route.m + (distanceM - s.distanceM) + race, raceRoute)
           : null;
       riders.push({
         peerId,
@@ -201,8 +231,9 @@ export class RemoteRiders {
         cadenceRpm: s.cadenceRpm,
         heartRateBpm: s.heartRateBpm,
         gear: s.gear,
-        gapM: routeGap ?? distanceM - localDistanceM,
+        gapM: routeGap ?? distanceM + race - (localDistanceM + localRace),
         ...(routeGap !== null ? { sameRoute: true } : {}),
+        ...(race > 0 ? { raceOffsetM: race } : {}),
         stale: now - track.receivedAt > STALE_AFTER_MS,
       });
     }

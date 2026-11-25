@@ -43,7 +43,7 @@ import {
 } from './transport';
 import { RelayTransport, type TrysteroModuleLike } from './transports/relay';
 import { SignallingMeshTransport } from './transports/selfHosted';
-import type { GroupRider, RiderState } from './types';
+import type { GroupRider, GroupRules, RiderState } from './types';
 import type { PeerConnectionFactory } from './webrtc';
 
 /** A peer that just entered the room (see `GroupRide.onPeerJoined`). */
@@ -330,7 +330,20 @@ export class GroupRide {
 
   /** Remote riders at local time `now` (default: the clock), leader first, `gapM` vs. local. */
   getRiders(now: number = this.#now()): GroupRider[] {
-    return this.#riders.getRiders(now, this.#localDistance(now), this.#localRoute(now));
+    return this.#riders.getRiders(
+      now,
+      this.#localDistance(now),
+      this.#localRoute(now),
+      this.#local?.state.raceOffsetM ?? 0,
+    );
+  }
+
+  /**
+   * The rules of this ride: the local rider's own when they set some (the host does, in
+   * `setLocalState`), otherwise the host's as received; null when nobody sent any.
+   */
+  getRules(): GroupRules | null {
+    return this.#local?.state.rules ?? this.#riders.getRules();
   }
 
   /**

@@ -61,6 +61,11 @@ function useRideShortcuts(app: App): void {
         case ']':
           nudgeGradient(app, GRADIENT_STEP);
           break;
+        case 'p':
+        case 'P':
+          if (e.repeat) return;
+          app.usePowerUp('keyboard');
+          break;
         case ' ': {
           // Let a focused button handle its own Space activation.
           const tag = (e.target as HTMLElement | null)?.tagName;
@@ -511,6 +516,7 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
   const erg = phase === 'erg';
   const onRoute = useAppState((s) => routeTrackOf(s) !== null);
   const gradientLocked = useAppState((s) => onRouteOrLocked(s));
+  const powerUpsOn = useAppState((s) => s.settings?.powerUps?.enabled !== false);
   return (
     <>
       <div
@@ -562,6 +568,12 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
           )}
           <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>S</kbd> brake (hold) · <kbd>Space</kbd> start /
           pause
+          {powerUpsOn && (
+            <>
+              {' '}
+              · <kbd>P</kbd> use power-up
+            </>
+          )}
         </p>
       </div>
       <SimulationPanel />

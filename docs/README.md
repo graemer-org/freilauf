@@ -10,6 +10,10 @@
   elevation, difficulty, loops, sharing limits, recording with a map
 - [docker.md](docker.md) — the browser version with Docker Compose, incl. HTTPS on a Synology
   NAS, and how it differs from the desktop app
+- [watch-relay.md](watch-relay.md) — share with my watch: the app as a Bluetooth power meter,
+  heart-rate and speed/cadence sensor for a sports watch (Windows); pairing, limits, test steps
+- [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
+  fairness rule (only the race position changes, never the recording), settings
 - [diagnostics.md](diagnostics.md) — the always-on diagnostic log: where it is, how to export
   it, what it contains and what it leaves out
 - [Reporting a hardware test](../README.md#reporting-a-hardware-test) — what to put in an issue
@@ -24,6 +28,8 @@ The rest of this page is technical: decisions, protocols and how features are bu
 | [0002](adr/0002-virtual-shifting.md)             | Software virtual shifting via FTMS simulation parameters                            |
 | [0003](adr/0003-signalling-via-public-relays.md) | Group-ride signalling via public relays (Trystero); removal plan for the own server |
 | [0004](adr/0004-routes.md)                       | Routes: elevation smoothing, gradient update policy, difficulty, storage, sharing   |
+| [0005](adr/0005-sensor-relay.md)                 | Share with my watch: a native helper as Bluetooth peripheral, services, packaging   |
+| [0006](adr/0006-power-ups.md)                    | Power-ups: race offset vs. recorded physics, determinism, battle-mode extension     |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.
@@ -72,25 +78,27 @@ pinned in `package.json`). See also [CONTRIBUTING.md](../CONTRIBUTING.md).
 | `pnpm typecheck`  | `tsc --noEmit` in every workspace package                            |
 | `pnpm format`     | Format with Prettier (`format:check` only checks)                    |
 
-| Variable             | Used by    | Effect                                                                                                                    |
-| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `FREILAUF_SIM=1`     | desktop    | Use simulated devices instead of Bluetooth (`pnpm dev:sim`)                                                               |
-| `FREILAUF_BLE_LOG=1` | desktop    | Also log every raw controller frame, uncollapsed, to the diagnostic log (always on; see [diagnostics.md](diagnostics.md)) |
-| `FREILAUF_USER_DATA` | desktop    | Use this directory for settings and rides instead of the default user-data folder                                         |
-| `PORT`               | signalling | Listen port (default `8787`)                                                                                              |
-| `HOST`               | signalling | Bind address (default all interfaces)                                                                                     |
-| `LOG_LEVEL=debug`    | signalling | Verbose logging                                                                                                           |
+| Variable                       | Used by              | Effect                                                                                                                    |
+| ------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `FREILAUF_SIM=1`               | desktop              | Use simulated devices instead of Bluetooth (`pnpm dev:sim`)                                                               |
+| `FREILAUF_BLE_LOG=1`           | desktop              | Also log every raw controller frame, uncollapsed, to the diagnostic log (always on; see [diagnostics.md](diagnostics.md)) |
+| `FREILAUF_USER_DATA`           | desktop              | Use this directory for settings and rides instead of the default user-data folder                                         |
+| `FREILAUF_SENSOR_RELAY_HELPER` | desktop (unpackaged) | Use this watch-relay helper (an executable, or a `.mjs` script such as `apps/desktop/e2e/fakeSensorRelay.mjs`)            |
+| `PORT`                         | signalling           | Listen port (default `8787`)                                                                                              |
+| `HOST`                         | signalling           | Bind address (default all interfaces)                                                                                     |
+| `LOG_LEVEL=debug`              | signalling           | Verbose logging                                                                                                           |
 
-| Path                 | Contents                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------- |
-| `packages/devices`   | BLE transport interfaces, protocol parsers and device drivers (FTMS, HR, controllers) |
-| `packages/sim`       | Bike physics, virtual gearing, simulated devices                                      |
-| `packages/session`   | Ride state, recording, `.fit` encoding                                                |
-| `packages/p2p`       | Relay transport (Trystero), fallback signalling + WebRTC mesh, group state, documents |
-| `packages/workouts`  | Structured workouts, `.zwo` import/export, FTP tests                                  |
-| `packages/community` | Points, totals, contacts, challenges, leaderboards, sync                              |
-| `packages/routes`    | GPX import/export, route preparation and smoothing, queries, codec, built-in routes   |
-| `apps/desktop`       | Electron app: main window, overlay, Bluetooth chooser, persistence                    |
-| `apps/web`           | Browser build of the app (served by the Docker image)                                 |
-| `apps/signalling`    | Optional WebSocket signalling server (self-hostable fallback)                         |
-| `docs/index.html`    | The project website (static, no build step)                                           |
+| Path                               | Contents                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `packages/devices`                 | BLE transport interfaces, protocol parsers and device drivers (FTMS, HR, controllers)               |
+| `packages/sim`                     | Bike physics, virtual gearing, simulated devices                                                    |
+| `packages/session`                 | Ride state, recording, `.fit` encoding                                                              |
+| `packages/p2p`                     | Relay transport (Trystero), fallback signalling + WebRTC mesh, group state, documents               |
+| `packages/workouts`                | Structured workouts, `.zwo` import/export, FTP tests                                                |
+| `packages/community`               | Points, totals, contacts, challenges, leaderboards, sync                                            |
+| `packages/routes`                  | GPX import/export, route preparation and smoothing, queries, codec, built-in routes                 |
+| `apps/desktop`                     | Electron app: main window, overlay, Bluetooth chooser, persistence                                  |
+| `apps/desktop/native/sensor-relay` | Rust helper that makes the PC a Bluetooth sensor for a watch (prebuilt `.exe` checked in; ADR 0005) |
+| `apps/web`                         | Browser build of the app (served by the Docker image)                                               |
+| `apps/signalling`                  | Optional WebSocket signalling server (self-hostable fallback)                                       |
+| `docs/index.html`                  | The project website (static, no build step)                                                         |

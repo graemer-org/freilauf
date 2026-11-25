@@ -5382,6 +5382,61 @@ div.server-note {
   display: inline;
 }
 
+/* Devices → Share with my watch (WatchRelay.tsx), and its badge next to the device chips. */
+.watch-relay {
+  display: grid;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+}
+
+.watch-relay > .section-head,
+.watch-relay-intro {
+  margin: 0;
+}
+
+.watch-relay-status.chip {
+  justify-self: start;
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+}
+
+.watch-relay-kinds {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.watch-relay-kinds > legend {
+  float: left;
+  width: 100%;
+  margin-bottom: var(--s-1);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.watch-relay-kinds .check-row {
+  align-items: flex-start;
+}
+
+.watch-relay-kind-hint {
+  display: block;
+}
+
+.watch-relay-howto ol {
+  margin: var(--s-2) 0;
+  padding-left: var(--s-6);
+}
+
+.watch-relay-badge {
+  flex: none;
+}
+
 .start-trainer.callout-warn {
   display: inline-flex;
   flex-wrap: wrap;
@@ -5741,4 +5796,387 @@ div.server-note {
 
 .sheet .tile-editor-row > select:first-of-type {
   flex-basis: 8rem;
+}
+
+/* ───────── power-ups (docs/power-ups.md) ───────── */
+
+/*
+ * The dock sits in the scene's bottom-right corner: a cue, the effort challenge, the held
+ * card or the running effect, and the race gain, stacked. Cards are opaque surfaces so the
+ * text never fades; only the scene behind them moves.
+ */
+.pu-dock {
+  position: absolute;
+  right: var(--s-3);
+  bottom: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-2);
+  max-width: min(19rem, calc(100% - 2 * var(--s-3)));
+  pointer-events: none;
+}
+
+.pu-dock > * {
+  pointer-events: auto;
+}
+
+.pu-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: var(--s-2) var(--s-3) var(--s-2) var(--s-2);
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.pu-held {
+  cursor: pointer;
+  box-shadow:
+    var(--shadow-raised),
+    0 0 0 1.5px var(--accent-soft);
+  transition: box-shadow var(--t-med) var(--ease);
+}
+
+.pu-held:hover:not(.is-waiting) {
+  box-shadow:
+    var(--shadow-raised),
+    0 0 0 1.5px var(--accent);
+}
+
+.pu-held:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pu-held.is-waiting {
+  cursor: default;
+}
+
+.pu-held.is-waiting .pu-badge {
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.pu-badge,
+.pu-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+}
+
+.pu-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pu-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pu-ring {
+  color: var(--accent);
+}
+
+.pu-ring > .pu-ring-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.pu-ring-track,
+.pu-ring-fill {
+  fill: none;
+  stroke-width: 2.6;
+}
+
+.pu-ring-track {
+  stroke: var(--fill-strong);
+}
+
+.pu-ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 260ms linear;
+}
+
+.pu-ring-fill.is-armed {
+  stroke-dasharray: 3 4 !important;
+  stroke-dashoffset: 0 !important;
+  opacity: 0.7;
+}
+
+.pu-ring .pu-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.pu-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.pu-name {
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+
+.pu-hint {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pu-label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pu-gain {
+  margin: 0;
+  padding: 0.15rem var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pu-cue {
+  margin: 0;
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  box-shadow: var(--shadow-raised);
+  animation: pu-cue-in 2.6s var(--ease) both;
+}
+
+.pu-cue.is-quiet {
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+@keyframes pu-cue-in {
+  0% {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+  8%,
+  85% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The effort challenge: target, live power against it, the countdown. */
+.pu-challenge {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s-1);
+  width: 15.5rem;
+  max-width: 100%;
+  padding: var(--s-2) var(--s-3) var(--s-3);
+}
+
+.pu-challenge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pu-dismiss {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-right: calc(-1 * var(--s-1));
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pu-dismiss:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.pu-challenge-goal {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.pu-meter {
+  position: relative;
+  height: 0.5rem;
+  margin-top: var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.pu-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--text-3);
+  transition: width 240ms linear;
+}
+
+.pu-meter.is-on .pu-meter-fill {
+  background: var(--accent);
+}
+
+/* The target sits at 80 % of the track (the track is 125 % of the target). */
+.pu-meter-target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 80%;
+  width: 2px;
+  background: var(--text);
+}
+
+.pu-challenge-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.pu-now {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pu-progress {
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.pu-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 240ms linear;
+}
+
+/* A small scene (a narrow window): the dock shrinks so the rider stays in view. */
+.scene-view {
+  container: scene-view / inline-size;
+}
+
+@container scene-view (max-width: 560px) {
+  .pu-dock {
+    right: var(--s-2);
+    bottom: var(--s-2);
+    gap: var(--s-1);
+  }
+
+  .pu-card {
+    gap: var(--s-2);
+    padding: var(--s-1) var(--s-2) var(--s-1) var(--s-1);
+  }
+
+  .pu-badge,
+  .pu-ring {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .pu-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  .pu-name {
+    font-size: var(--text-sm);
+  }
+
+  .pu-hint {
+    font-size: 0.6875rem;
+  }
+
+  .pu-challenge {
+    width: 13rem;
+    padding: var(--s-1) var(--s-2) var(--s-2);
+  }
+
+  .pu-challenge-goal {
+    font-size: var(--text-sm);
+  }
+
+  .pu-cue {
+    padding: 0.125rem var(--s-2);
+    font-size: var(--text-xs);
+  }
+}
+
+/* The summary line, and the group switch under the rider list. */
+.summary-powerups {
+  margin: 0;
+}
+
+.group-room .group-powerups {
+  margin: 0;
+  padding: var(--s-2) var(--s-5);
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+.group-room .group-powerups .field {
+  padding-inline: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pu-cue {
+    animation: none;
+  }
+
+  .pu-ring-fill,
+  .pu-meter-fill,
+  .pu-progress > span,
+  .pu-held {
+    transition: none;
+  }
 }

@@ -1,0 +1,8 @@
+freilauf-sensor-relay 0.1.0, built by build-windows.sh
+sha256: edd41d965590f3fe99f3d4639a60a2ac1f03b86ea0b7151fbf93aad9d45b9ae2
+bytes: 374784
+rustc: rustc 1.97.0 (2d8144b78 2026-07-07)
+cargo: cargo 1.97.0 (c980f4866 2026-06-30)
+linker: x86_64-w64-mingw32-gcc (GCC) 13-win32
+binutils: GNU ld (GNU Binutils) 2.41.90.20240122
+target: x86_64-pc-windows-gnu

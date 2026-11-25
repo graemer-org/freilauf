@@ -6,6 +6,7 @@ import {
   PLACEHOLDER_LIVE,
   deviceWarnings,
   groupRows,
+  powerUpPills,
   routeStrip,
   workoutStrip,
   type GroupRow,
@@ -157,6 +158,7 @@ export function OverlayView({
       : null;
   const strip = workoutStrip(live?.workout);
   const route = routeStrip(live?.route);
+  const pills = rideState === 'idle' ? [] : powerUpPills(live?.powerUps);
   const opacity = Number.isFinite(settings.backdropOpacity)
     ? Math.min(1, Math.max(0, settings.backdropOpacity))
     : 0.55;
@@ -185,7 +187,10 @@ export function OverlayView({
       ) : null}
 
       <div className={rows ? 'ov-body ov-body--group' : 'ov-body'}>
-        {warnings.length > 0 || rideState === 'paused' || rideState === 'idle' ? (
+        {warnings.length > 0 ||
+        rideState === 'paused' ||
+        rideState === 'idle' ||
+        pills.length > 0 ? (
           <div className="ov-status-row">
             {warnings.map((w) => (
               <div key={w.kind} className="ov-warning" data-testid="overlay-warning" role="alert">
@@ -207,6 +212,18 @@ export function OverlayView({
                 <span className="ov-text">Not recording</span>
               </div>
             ) : null}
+            {pills.map((pill) => (
+              <div
+                key={pill.key}
+                className={`ov-powerup${pill.active ? ' ov-powerup--active' : ''}`}
+                data-testid={`overlay-powerup-${pill.key}`}
+                data-kind={pill.kind ?? undefined}
+              >
+                <div className="ov-backdrop" aria-hidden="true" />
+                <span className="ov-pu-text ov-text">{pill.text}</span>
+                {pill.detail ? <span className="ov-pu-detail ov-text">{pill.detail}</span> : null}
+              </div>
+            ))}
           </div>
         ) : null}
 
