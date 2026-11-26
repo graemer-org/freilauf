@@ -18,6 +18,7 @@ import type {
   LeverFunction,
   LeverSettings,
   OverlayTile,
+  PowerSmoothingSeconds,
   RememberedDevice,
   RiderSex,
   Settings,
@@ -30,6 +31,7 @@ import {
   DEFAULT_SETTINGS,
   LEGACY_DEFAULT_SIGNALLING_URL,
   MAX_GHOST_CHOICES,
+  POWER_SMOOTHING_CHOICES,
 } from '../shared/contract';
 
 // Records (not arrays) so the compiler flags a missing/extra member when the
@@ -79,6 +81,7 @@ export const MAX_LEVER_DEADZONE = 0.5;
 const STAT_IDS: Record<StatId, true> = {
   power: true,
   power3s: true,
+  avgPower: true,
   wattsPerKg: true,
   cadence: true,
   speed: true,
@@ -386,9 +389,22 @@ function sanitizeWatchRelay(
  * - Settings from before power-ups (no `powerUps` key) get the new default for the two
  *   "lever click / side button" buttons, `usePowerUp`, where they did nothing ('none' or
  *   unset); a button the rider had given another action keeps it (`migratePowerUpButtons`).
+ * - Settings from before power smoothing (no `ride.powerSmoothingS`) get the default, 3 s
+ *   (`migratePowerSmoothing`). Their overlay tiles are left as they are: a `power3s` tile
+ *   keeps showing the 3 s average.
  */
 export function migrateSettings(raw: unknown): unknown {
-  return migratePowerUpButtons(migrateSignallingUrl(raw));
+  return migratePowerSmoothing(migratePowerUpButtons(migrateSignallingUrl(raw)));
+}
+
+export function migratePowerSmoothing(raw: unknown): unknown {
+  // Without a `ride` object (or with a broken one) sanitizeSettings falls back to the default.
+  if (!isPlainObject(raw) || !isPlainObject(raw.ride)) return raw;
+  if (raw.ride.powerSmoothingS !== undefined) return raw;
+  return {
+    ...raw,
+    ride: { ...raw.ride, powerSmoothingS: DEFAULT_SETTINGS.ride.powerSmoothingS },
+  };
 }
 
 const POWER_UP_BUTTONS = ['powerUpLeft', 'powerUpRight'] as const;
@@ -542,7 +558,14 @@ export function sanitizeSettings(
         problems,
       ),
     },
-    ride: { countdownS: sanitizeCountdown(ride.countdownS, fallback.ride.countdownS, problems) },
+    ride: {
+      countdownS: sanitizeCountdown(ride.countdownS, fallback.ride.countdownS, problems),
+      powerSmoothingS: sanitizePowerSmoothing(
+        ride.powerSmoothingS,
+        fallback.ride.powerSmoothingS ?? DEFAULT_SETTINGS.ride.powerSmoothingS,
+        problems,
+      ),
+    },
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
     ghost: sanitizeGhost(root.ghost, fallback.ghost ?? DEFAULT_SETTINGS.ghost, problems),
   };
@@ -586,6 +609,21 @@ function sanitizeCountdown(
   const choice = COUNTDOWN_CHOICES.find((c) => c === raw);
   if (choice === undefined) {
     problems.push(`ride.countdownS: expected one of ${COUNTDOWN_CHOICES.join(', ')}`);
+    return fallback;
+  }
+  return choice;
+}
+
+/** One of the offered smoothing windows (POWER_SMOOTHING_CHOICES), else the fallback. */
+function sanitizePowerSmoothing(
+  raw: unknown,
+  fallback: PowerSmoothingSeconds,
+  problems: Problems,
+): PowerSmoothingSeconds {
+  if (raw === undefined) return fallback;
+  const choice = POWER_SMOOTHING_CHOICES.find((c) => c === raw);
+  if (choice === undefined) {
+    problems.push(`ride.powerSmoothingS: expected one of ${POWER_SMOOTHING_CHOICES.join(', ')}`);
     return fallback;
   }
   return choice;

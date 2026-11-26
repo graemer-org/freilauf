@@ -143,7 +143,7 @@ describe('RideController: ghost rider', () => {
     a.c.start();
     a.run(200, 250);
     await a.c.finish();
-    const b = rider({ ...DEFAULT_SETTINGS, ride: { countdownS: 3 } });
+    const b = rider({ ...DEFAULT_SETTINGS, ride: { ...DEFAULT_SETTINGS.ride, countdownS: 3 } });
     b.c.selectRoute(track);
     b.c.setGhost(ghostOf(a.saved[0]!));
     expect(b.c.requestStart()).toBe('counting');

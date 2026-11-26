@@ -54,6 +54,8 @@ function live(route: RoutePosition | null, state: 'idle' | 'riding' = 'riding'):
       speedMps: 8,
       powerW: 230,
       power3sW: 228,
+      displayPowerW: 230,
+      avgPowerW: 230,
       wattsPerKg: 3.1,
       cadenceRpm: 88,
       heartRateBpm: 140,

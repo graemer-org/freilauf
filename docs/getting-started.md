@@ -80,6 +80,13 @@ pedal to warm up. Pausing is immediate; resuming counts down again. Pressing Sta
 — is in **Settings → Ride**. In a group ride, **Start together** shows the same countdown for
 everyone and starts the ride at zero without a second one.
 
+**The big power number is smoothed** so it does not jump with every pedal stroke: it shows the
+average of the last 3 seconds, and so do W/kg next to it and the overlay's power tile. Under it,
+**Avg power** is the average of the ride so far. **Settings → Ride → Power smoothing** sets the
+window — off (the raw reading), 1, 3 or 5 seconds. It changes only what is shown: the recording,
+the `.fit` file, ERG targets, workouts and power-ups use the measured power. When you stop
+pedalling or a trainer drops out, the number falls to 0 within a few seconds.
+
 **After Finish** a short summary shows time, distance, average power, the points of this ride and
 of the week, new personal bests, and — after an FTP test — the result with **Save as my FTP**.
 **Export .fit**, **Ride again** or **Done** (back to the start screen).

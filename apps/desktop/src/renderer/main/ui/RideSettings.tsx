@@ -1,5 +1,5 @@
-import type { CountdownSeconds } from '../../../shared/contract';
-import { COUNTDOWN_CHOICES } from '../../../shared/contract';
+import type { CountdownSeconds, PowerSmoothingSeconds } from '../../../shared/contract';
+import { COUNTDOWN_CHOICES, POWER_SMOOTHING_CHOICES } from '../../../shared/contract';
 import { Segmented } from './CommunityTab';
 import { GhostSettingsToggle } from './GhostUi';
 import { useApp, useAppState } from './hooks';
@@ -11,10 +11,16 @@ const OPTIONS: readonly { value: Choice; label: string }[] = COUNTDOWN_CHOICES.m
   label: s === 0 ? 'Off' : `${s} s`,
 }));
 
-/** Settings → Ride: the countdown before a ride starts or resumes. */
+type SmoothingChoice = `${PowerSmoothingSeconds}`;
+
+export const SMOOTHING_OPTIONS: readonly { value: SmoothingChoice; label: string }[] =
+  POWER_SMOOTHING_CHOICES.map((s) => ({ value: `${s}`, label: s === 0 ? 'Off' : `${s} s` }));
+
+/** Settings → Ride: the countdown before a ride starts or resumes, and power smoothing. */
 export function RideSettings() {
   const app = useApp();
   const countdownS = useAppState((s) => s.settings?.ride?.countdownS ?? null);
+  const smoothingS = useAppState((s) => s.settings?.ride?.powerSmoothingS ?? 3);
   if (countdownS === null) return null;
   return (
     <section className="settings-section" aria-labelledby="set-ride" data-testid="settings-ride">
@@ -38,6 +44,28 @@ export function RideSettings() {
               value={`${countdownS}`}
               onChange={(v) =>
                 void app.updateSettings({ ride: { countdownS: Number(v) as CountdownSeconds } })
+              }
+            />
+          </div>
+        </div>
+        <div className="field field-power-smoothing">
+          <div className="field-text">
+            <span className="field-label">Power smoothing</span>
+            <span className="field-hint">
+              Averages the power shown (the big number, W/kg and the overlay) over this time, so it
+              jumps less. Recording, trainer control and workouts use the measured power.
+            </span>
+          </div>
+          <div className="field-control">
+            <Segmented
+              label="Power smoothing"
+              testId="settings-power-smoothing"
+              options={SMOOTHING_OPTIONS}
+              value={`${smoothingS}`}
+              onChange={(v) =>
+                void app.updateSettings({
+                  ride: { powerSmoothingS: Number(v) as PowerSmoothingSeconds },
+                })
               }
             />
           </div>

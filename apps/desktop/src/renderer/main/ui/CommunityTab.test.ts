@@ -26,6 +26,8 @@ function live(): LiveState {
       speedMps: 0,
       powerW: 0,
       power3sW: 0,
+      displayPowerW: 0,
+      avgPowerW: 0,
       wattsPerKg: 0,
       cadenceRpm: 0,
       heartRateBpm: null,

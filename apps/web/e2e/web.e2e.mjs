@@ -137,7 +137,7 @@ async function rideAndExport(browser, base) {
       .waitForFunction(
         () =>
           documentPictureInPicture.window?.document.querySelector(
-            '[data-testid="overlay-tile-power3s"]',
+            '[data-testid="overlay-tile-power"]',
           ),
         null,
         { timeout: 5_000 },

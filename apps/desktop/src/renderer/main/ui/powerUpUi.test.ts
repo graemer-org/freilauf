@@ -227,6 +227,8 @@ describe('overlay (SSR)', () => {
       speedMps: 9,
       powerW: 220,
       power3sW: 215,
+      displayPowerW: 220,
+      avgPowerW: 220,
       wattsPerKg: 2.9,
       cadenceRpm: 88,
       heartRateBpm: 140,

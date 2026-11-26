@@ -47,6 +47,8 @@ function makeLive(over: Partial<LiveState> = {}): LiveState {
       speedMps: 10,
       powerW: 251,
       power3sW: 263,
+      displayPowerW: 251,
+      avgPowerW: 251,
       wattsPerKg: 3.5,
       cadenceRpm: 91,
       heartRateBpm: 147,
@@ -104,6 +106,32 @@ describe('OverlayView', () => {
     expect(tileHtml(html, 'time')).toContain('1:02:05');
     expect(html).toContain('ov-tile--l');
     expect(html).toContain('ov-tile--s');
+  });
+
+  it('the power tile shows the smoothed power; W/kg and avg power are offered', () => {
+    const live = makeLive();
+    live.ride = {
+      ...live.ride,
+      powerW: 480,
+      displayPowerW: 255.2,
+      avgPowerW: 201,
+      wattsPerKg: 3.4,
+    };
+    const html = render({
+      live,
+      settings: {
+        ...settings,
+        tiles: [
+          { stat: 'power', size: 'l' },
+          { stat: 'wattsPerKg', size: 's' },
+          { stat: 'avgPower', size: 's' },
+        ],
+      },
+    });
+    expect(tileHtml(html, 'power')).toContain('>255<');
+    expect(tileHtml(html, 'power')).not.toContain('>480<');
+    expect(tileHtml(html, 'wattsPerKg')).toContain('>3.4<');
+    expect(tileHtml(html, 'avgPower')).toContain('>201<');
   });
 
   it('applies backdrop opacity as a CSS variable only', () => {
@@ -227,6 +255,14 @@ describe('deviceWarnings / groupRows', () => {
     expect(deviceWarnings(devices, new Set<DeviceKind>(['heartRate']))).toEqual([
       { kind: 'heartRate', text: 'Heart rate disconnected' },
     ]);
+  });
+
+  it('the local row shows the smoothed power; other riders their broadcast power', () => {
+    const live = makeLive({ group: { roomCode: 'X', riders: [rider('p1', 'Ann', 50)] } });
+    live.ride = { ...live.ride, powerW: 480, displayPowerW: 255 };
+    const rows = groupRows(live);
+    expect(rows.find((r) => r.local)?.powerW).toBe(255);
+    expect(rows.find((r) => !r.local)?.powerW).toBe(live.group!.riders[0]!.powerW);
   });
 
   it('caps at 8 rows and always keeps the local rider', () => {

@@ -67,7 +67,7 @@ test('structured workout in sim mode: choose on the start screen, ride in ERG, s
         async () => {
           const target = num(await main.getByTestId('workout-target-value').textContent());
           const power = num(
-            await main.getByTestId('stat-power3s').locator('.tile-number').textContent(),
+            await main.getByTestId('stat-power').locator('.tile-number').textContent(),
           );
           return target > 0 ? Math.abs(power - target) / target : 1;
         },
