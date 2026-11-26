@@ -3,8 +3,8 @@
 ## For riders
 
 - [getting-started.md](getting-started.md) — build or install, first start, the start screen and
-  the ride view, the countdown, pairing devices (controller buttons and levers), the overlay and
-  its hotkey, simulation mode, where the log is
+  the ride view, the countdown, power smoothing, pairing devices (controller buttons and levers),
+  battery levels, the overlay and its hotkey, simulation mode, where the log is
 - [routes.md](routes.md) — riding real routes from GPX files: importing, what happens to noisy
   elevation, starting part-way or jumping by clicking the profile, difficulty, loops and laps,
   sharing limits, surroundings from OpenStreetMap, recording with a map
