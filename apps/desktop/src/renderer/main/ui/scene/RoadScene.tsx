@@ -3,6 +3,8 @@ import type { RouteTrack } from '@freilauf/routes';
 import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { useApp } from '../hooks';
+import { sceneScenery } from '../routesApi';
+import { OSM_ATTRIBUTION } from '@freilauf/routes';
 import { readPalette, startBrakeCue, steerKeyboard } from './RideScene';
 import { PowerUpSceneState, powerUpAttributes, riderFx, rumbleKey } from './powerUpScene';
 import { gapsHidden } from '../../../../shared/powerUps';
@@ -87,13 +89,16 @@ export function describeRoad(live: LiveState | null, track: RouteTrack, distance
  * turn over the next 100 m, + right), data-grade (what the trainer is told),
  * data-route-grade (from the track), data-lateral, data-frames, data-frame-ms, data-jumps
  * (jumps along the route seen; each one cuts to the new place, see CUT_MS), and for power-ups
- * data-effect (active effect's kind or ''), data-effect-phase and data-gate-ahead (m or '').
+ * data-effect (active effect's kind or ''), data-effect-phase and data-gate-ahead (m or ''),
+ * and for scenery along the route data-scenery ('on' while drawn), data-buildings and
+ * data-trees (drawn in the last frame). The OSM attribution shows whenever scenery is drawn.
  */
 export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: ReactNode }) {
   const app = useApp();
   const rootRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLCanvasElement>(null);
   const brakeRef = useRef<HTMLSpanElement>(null);
+  const attributionRef = useRef<HTMLSpanElement>(null);
   const [initial] = useState(() => {
     const live = app.store.getState().live;
     const d = unwrappedDistance(track, live?.route) ?? 0;
@@ -112,7 +117,7 @@ export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: Rea
     const view = viewRef.current;
     if (!root || !view) return;
     const stopBrake = startBrakeCue(app, root, brakeRef.current);
-    const stopScene = startRoadScene(app, root, view, track);
+    const stopScene = startRoadScene(app, root, view, track, attributionRef.current);
     return () => {
       stopBrake();
       stopScene();
@@ -139,9 +144,18 @@ export function RoadScene({ track, toolbar }: { track: RouteTrack; toolbar?: Rea
       data-braking="0"
       data-effect=""
       data-gate-ahead=""
+      data-scenery="off"
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
+        <span
+          ref={attributionRef}
+          className="scene-attribution"
+          data-testid="scene-attribution"
+          hidden
+        >
+          {OSM_ATTRIBUTION}
+        </span>
         <span ref={brakeRef} className="scene-brake" data-testid="scene-brake" hidden>
           <span className="scene-brake-dot" />
           <span className="scene-brake-text">Brake</span>
@@ -157,6 +171,7 @@ function startRoadScene(
   root: HTMLElement,
   canvas: HTMLCanvasElement,
   track: RouteTrack,
+  attribution: HTMLElement | null = null,
 ): () => void {
   let view: RoadRenderer;
   try {
@@ -233,8 +248,18 @@ function startRoadScene(
     }
   };
   let cadences = new Map<string, number>();
+  // Scenery of this route (stored; never fetched here). Shown with its attribution.
+  let scenery = sceneScenery(app.store.getState());
+  const onScenery = (next: ReturnType<typeof sceneScenery>): void => {
+    if (next === scenery) return;
+    scenery = next && next.routeId === track.id ? next : null;
+    dirty = true;
+  };
   onLive(app.store.getState().live);
-  const unsubscribe = app.store.subscribe((s) => onLive(s.live));
+  const unsubscribe = app.store.subscribe((s) => {
+    onLive(s.live);
+    onScenery(sceneScenery(s));
+  });
 
   const keys = steerKeyboard(app, () => wake());
 
@@ -385,6 +410,7 @@ function startRoadScene(
     frame.hideGaps = gapsHidden(live?.powerUps);
     frame.reducedMotion = reducedMotion;
     frame.powerUps = boost.update(distance, t);
+    frame.scenery = scenery;
     const pu = frame.powerUps;
     const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}|${rumbleKey(pu.rumble)}|${others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}${o.fx.repair}` : '')).join(',')}`;
 
@@ -429,6 +455,10 @@ function startRoadScene(
       ds.roughAhead = pa.roughAhead;
       ds.supply = pa.supply;
       ds.flying = pa.flying;
+      ds.scenery = view.sceneryShown ? 'on' : 'off';
+      ds.buildings = String(view.drawnBuildings);
+      ds.trees = String(view.drawnTrees);
+      if (attribution) attribution.hidden = !view.sceneryShown;
       ds.nextSign = frame.next
         ? `${frame.next.gradePercent.toFixed(1)}@${Math.round(frame.next.inM)}`
         : '';

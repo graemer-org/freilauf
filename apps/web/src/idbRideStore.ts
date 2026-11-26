@@ -3,18 +3,20 @@ import type { RideListItem } from '../../desktop/src/shared/contract';
 import type { RideRecordStore, StoredRide } from './rideRepository';
 
 const DB_NAME = 'freilauf';
-const DB_VERSION = 1;
+/** 2: the `scenery` store (route scenery, docs/adr/0011-osm-scenery.md). */
+const DB_VERSION = 2;
 const RIDES = 'rides';
 const SUMMARIES = 'summaries';
+export const SCENERY = 'scenery';
 
-function request<T>(req: IDBRequest<T>): Promise<T> {
+export function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'));
   });
 }
 
-function done(tx: IDBTransaction): Promise<void> {
+export function done(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
@@ -29,6 +31,8 @@ export function openRideDatabase(factory: IDBFactory = indexedDB): Promise<IDBDa
     if (!db.objectStoreNames.contains(RIDES)) db.createObjectStore(RIDES, { keyPath: 'id' });
     if (!db.objectStoreNames.contains(SUMMARIES))
       db.createObjectStore(SUMMARIES, { keyPath: 'id' });
+    if (!db.objectStoreNames.contains(SCENERY))
+      db.createObjectStore(SCENERY, { keyPath: 'routeId' });
   };
   return request(req);
 }

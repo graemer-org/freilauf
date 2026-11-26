@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BrowserWindow, app, dialog, screen, session, shell } from 'electron';
+import { BrowserWindow, app, dialog, net, screen, session, shell } from 'electron';
 import type { LiveState, Settings } from '../shared/contract';
 import { ARG, IPC } from '../shared/ipc';
 import { attachBluetoothChooser, installPairingHandler } from './bluetooth';
@@ -22,7 +22,9 @@ import { DiagnosticLog, LogFile } from './logFile';
 import { MAIN_MIN_SIZE, centeredBounds, fitToDisplays } from './geometry';
 import { registerIpc } from './ipc';
 import { OverlayController } from './overlay';
+import { OverpassClient } from './overpassClient';
 import { RideStore } from './rideStore';
+import { SceneryStore } from './sceneryStore';
 import { helperSpawner, locateHelper } from './sensorRelay';
 import { SensorRelayController, relayInputFromLive } from './sensorRelayController';
 import type { AppOrigin } from './security';
@@ -139,6 +141,16 @@ function start(): void {
       });
       const ridesLog = d.scope('rides');
       const rides = new RideStore(path.join(userData, 'rides'), (m) => ridesLog.warn(m));
+      const sceneryLog = d.scope('scenery');
+      const scenery = {
+        store: new SceneryStore(path.join(userData, 'scenery'), (m) => sceneryLog.warn(m)),
+        // Chromium's network stack: the system's proxy settings and certificates apply.
+        overpass: new OverpassClient({
+          fetch: (url, init) => net.fetch(url, init),
+          endpoint: () => settings.get().scenery.overpassUrl,
+          log: (m) => sceneryLog.info(m),
+        }),
+      };
       const btLog = d.scope('bluetooth');
       const bt = (m: string) => btLog.info(m);
       const windowStatePath = path.join(userData, 'window-state.json');
@@ -268,6 +280,7 @@ function start(): void {
         chooser: () => chooser,
         settings,
         rides,
+        scenery,
         diag: d,
         log,
         watchRelayStatus: () => relay.status,
@@ -333,6 +346,7 @@ function start(): void {
       });
       app.on('will-quit', () => {
         relay.dispose();
+        scenery.overpass.cancelAll();
         overlay?.unregisterHotkey();
         overlay?.close();
         settings.flushSync();

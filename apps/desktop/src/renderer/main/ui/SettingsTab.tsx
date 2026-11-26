@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import type { OverlayTile, StatId } from '../../../shared/contract';
-import { ALL_STATS } from '../../../shared/contract';
+import { ALL_STATS, DEFAULT_OVERPASS_URL } from '../../../shared/contract';
+import { isOverpassUrl } from '../../../main/settings';
 import { RiderEnergyFields } from './EnergyUi';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { PowerUpSettings } from './PowerUpSettings';
@@ -431,6 +432,38 @@ export function OverlaySettings() {
   );
 }
 
+/** Surroundings from OpenStreetMap along routes (docs/routes.md). */
+function ScenerySettings() {
+  const app = useApp();
+  const scenery = useAppState((s) => s.settings?.scenery ?? null);
+  if (!scenery) return null;
+  return (
+    <>
+      <Toggle
+        label="Show surroundings"
+        testId="settings-scenery-enabled"
+        checked={scenery.enabled}
+        hint="Draw the buildings, woods, fields and water stored with a route in the ride scene. Loading them is a choice per route, in the route library."
+        onChange={(enabled) => void app.updateSettings({ scenery: { enabled } })}
+      />
+      <TextField
+        label="Map server for surroundings"
+        testId="settings-scenery-server"
+        value={scenery.overpassUrl}
+        maxLength={300}
+        validate={(t) => {
+          const v = t.trim();
+          if (v === '') return DEFAULT_OVERPASS_URL;
+          return isOverpassUrl(v) ? v : undefined;
+        }}
+        errorText="Enter an https:// address (or http://localhost for a server on this computer)."
+        hint={`An Overpass API address; empty = the public server (${DEFAULT_OVERPASS_URL}). Data © OpenStreetMap contributors.`}
+        onCommit={(overpassUrl) => void app.updateSettings({ scenery: { overpassUrl } })}
+      />
+    </>
+  );
+}
+
 /** Route difficulty; shown only when the settings carry it. */
 function RouteSettings() {
   const app = useApp();
@@ -456,6 +489,7 @@ function RouteSettings() {
           format={(v) => `${Math.round(v)} %`}
           onCommit={(v) => setRouteDifficulty(app, v)}
         />
+        <ScenerySettings />
       </div>
       <p className="hint section-foot">
         How much of each route gradient the trainer makes you feel. 100 % is the real road; at 50 %

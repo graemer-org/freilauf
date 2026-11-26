@@ -28,6 +28,12 @@ import {
   tailText,
 } from '../../desktop/src/renderer/core/logFormat';
 import type { RideRepository } from './rideRepository';
+import {
+  type BrowserFetch,
+  browserOverpass,
+  MemorySceneryStore,
+  type SceneryRecordStore,
+} from './sceneryStore';
 import type { BrowserSettingsStore } from './settingsStore';
 
 /** What the overlay part of the API needs from the Picture-in-Picture window. */
@@ -53,6 +59,10 @@ export interface BrowserApiDeps {
   sessionFacts?: Record<string, unknown>;
   /** Write a session header when created. Default true. */
   sessionHeader?: boolean;
+  /** Route scenery files (IndexedDB in the page; memory by default). */
+  scenery?: SceneryRecordStore;
+  /** fetch for the Overpass request (default: the page's fetch). */
+  fetch?: BrowserFetch;
 }
 
 export interface BrowserApi extends FreilaufApi {
@@ -147,6 +157,12 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
     }
   }
 
+  const sceneryStore = deps.scenery ?? new MemorySceneryStore();
+  const overpass = browserOverpass(
+    deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    () => deps.settings.get().scenery.overpassUrl,
+  );
+
   const api: BrowserApi = {
     simMode: deps.simMode,
     bleLogEnabled: deps.bleLogEnabled,
@@ -203,6 +219,15 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
       onPickerDevices: () => () => {},
       pick: () => {},
       cancelPicker: () => {},
+    },
+
+    scenery: {
+      overpass: (requestId, query) => overpass.query(requestId, query),
+      cancelOverpass: (requestId) => overpass.cancel(requestId),
+      load: (routeId) => sceneryStore.get(routeId),
+      save: (routeId, text) => sceneryStore.put(routeId, text),
+      remove: (routeId) => sceneryStore.delete(routeId),
+      list: () => sceneryStore.list(),
     },
 
     watchRelay: {

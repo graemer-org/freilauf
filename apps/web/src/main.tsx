@@ -9,6 +9,7 @@ import {
   UnavailableBluetoothTransport,
 } from './browserBluetoothTransport';
 import { IndexedDbRideRecordStore } from './idbRideStore';
+import { IndexedDbSceneryStore, MemorySceneryStore, type SceneryRecordStore } from './sceneryStore';
 import { StatsPipWindow } from './pip';
 import { MemoryRideRecordStore, RideRepository, type RideRecordStore } from './rideRepository';
 import {
@@ -38,6 +39,11 @@ function rideRecordStore(): RideRecordStore {
   return new IndexedDbRideRecordStore();
 }
 
+function sceneryRecordStore(): SceneryRecordStore {
+  if (typeof indexedDB === 'undefined') return new MemorySceneryStore();
+  return new IndexedDbSceneryStore();
+}
+
 const simMode = queryFlag(location.search, 'sim');
 const bleLogEnabled = queryFlag(location.search, 'blelog');
 
@@ -64,6 +70,7 @@ const api = createBrowserApi({
   simMode,
   bleLogEnabled,
   overlayWindow: pip,
+  scenery: sceneryRecordStore(),
   sessionFacts: {
     browser: {
       userAgent: navigator.userAgent,

@@ -5,7 +5,14 @@
  * beyond what the canvas API does internally (gradients and fonts are cached).
  */
 
-import type { ScenePalette } from './palette';
+import {
+  forEachBuildingIn,
+  forEachStretchIn,
+  type SceneryBuilding,
+  type SceneryModel,
+} from '@freilauf/routes';
+import { css, mix, parseColor, type ScenePalette } from './palette';
+import { roofOf } from './roadScenery';
 import { GATE_DRAW_M, type PowerUpSceneFrame } from './powerUpScene';
 import {
   arcPoint,
@@ -56,7 +63,19 @@ export interface SceneFrame {
   otherAngles: ReadonlyMap<string, { wheel: number; crank: number }>;
   /** Power-up gates ahead and the effect in progress (absent: none). */
   powerUps?: PowerUpSceneFrame;
+  /** Stored scenery of the route and the rider's route position (unwrapped, m). */
+  scenery?: SceneryModel | null;
+  routeM?: number;
 }
+
+/** Side view: the scenery on the far (left) side of the road, as background silhouettes. */
+const SIDE_SCENERY = {
+  /** A feature this far from the road (m) is drawn at depth factor CAMERA_M / offset. */
+  cameraM: 2.5,
+  minFactor: 0.02,
+  maxFactor: 0.08,
+  maxBuildings: 300,
+} as const;
 
 interface Colours {
   frame: string;
@@ -113,6 +132,17 @@ export class SceneRenderer {
   private readonly pose: Pose = createPose();
   private readonly ghostPose: Pose = createPose();
   private readonly tmp: Point = { x: 0, y: 0 };
+  private readonly sideBuildings: { b: SceneryBuilding; at: number; k: number }[] = [];
+  private haze: {
+    wall: string[];
+    roof: string[];
+    trees: string[];
+    water: string[];
+    cover: string[];
+  } | null = null;
+  /** Scenery drawn in the last frame (test hooks). */
+  drawnBuildings = 0;
+  sceneryShown = false;
 
   private readonly canvas: HTMLCanvasElement;
 
@@ -151,6 +181,17 @@ export class SceneRenderer {
   setPalette(p: ScenePalette, fontFamily: string): void {
     this.pal = p;
     this.sky = null;
+    const rgb = (c: string) => parseColor(c) ?? { r: 128, g: 128, b: 128, a: 1 };
+    const sky = rgb(p.skyBottom);
+    const levels = (c: string): string[] =>
+      [0, 0.25, 0.5, 0.7].map((t) => css(mix(rgb(c), sky, t)));
+    this.haze = {
+      wall: levels(p.wallSide),
+      roof: levels(p.roofSide),
+      trees: levels(p.treesFar),
+      water: levels(p.waterSurface),
+      cover: levels(p.meadow),
+    };
     this.local = {
       frame: p.frame,
       frameFar: p.frameFar,
@@ -222,8 +263,15 @@ export class SceneRenderer {
     // Level fields up to the horizon.
     ctx.fillStyle = p.field;
     ctx.fillRect(0, this.horizonY, w, h - this.horizonY);
-    this.trees(d, LAYERS.treesFar, p.treesFar, 41, 2.6);
-    this.trees(d, LAYERS.trees, p.trees, 53, 3.4);
+    this.drawnBuildings = 0;
+    this.sceneryShown = !!f.scenery;
+    if (f.scenery) {
+      this.sideScenery(f.scenery, f.routeM ?? 0, p);
+      this.trees(d, LAYERS.trees, p.trees, 53, 3.4, 0.75);
+    } else {
+      this.trees(d, LAYERS.treesFar, p.treesFar, 41, 2.6);
+      this.trees(d, LAYERS.trees, p.trees, 53, 3.4);
+    }
 
     this.road(d, slope, p);
     const pu = f.powerUps;
@@ -301,7 +349,14 @@ export class SceneRenderer {
   }
 
   /** A row of trees standing on the horizon, seeded by slot index. */
-  private trees(d: number, s: number, colour: string, seed: number, slotM: number): void {
+  private trees(
+    d: number,
+    s: number,
+    colour: string,
+    seed: number,
+    slotM: number,
+    sparse = 0.38,
+  ): void {
     const ctx = this.ctx;
     const k = this.px * s; // pixels per metre at this depth
     const slot = slotM / s; // world metres between slots (dense when far)
@@ -312,7 +367,7 @@ export class SceneRenderer {
     ctx.beginPath();
     for (let i = first; i <= last; i++) {
       const r = hash01(i, seed);
-      if (r < 0.38) continue;
+      if (r < sparse) continue;
       const jitter = hash01(i, seed + 7) * 0.8;
       const x = this.riderX + ((i + jitter) * slot - d) * k;
       const size = 0.75 + hash01(i, seed + 3) * 0.5;
@@ -345,6 +400,143 @@ export class SceneRenderer {
       }
     }
     ctx.fill();
+  }
+
+  /**
+   * The route's own surroundings on the far side of the road (its left): land cover and water
+   * as bands up to the horizon, woods as rows of trees, buildings as house silhouettes, each
+   * moving with the parallax of its distance from the road.
+   */
+  private sideScenery(m: SceneryModel, routeM: number, p: ScenePalette): void {
+    const ctx = this.ctx;
+    const hz = this.haze;
+    if (!hz) return;
+    const { w, px, riderX } = this;
+    const C = SIDE_SCENERY;
+    const factor = (offset: number): number =>
+      Math.max(C.minFactor, Math.min(C.maxFactor, C.cameraM / Math.max(1, Math.abs(offset))));
+    const haze = (f: number): number =>
+      Math.min(3, Math.floor(((C.maxFactor - f) / (C.maxFactor - C.minFactor)) * 4));
+    const groundTop = this.horizonY + 1;
+    const groundBottom = this.roadY0 - this.halfDepth * 1.6;
+    const yAt = (f: number): number =>
+      groundTop +
+      (groundBottom - groundTop) * ((f - C.minFactor) / (C.maxFactor - C.minFactor)) ** 1.4;
+    const span = (f: number): [number, number] => {
+      const k = px * f;
+      return [routeM - riderX / k - 30, routeM + (w - riderX) / k + 30];
+    };
+    const [wideFrom, wideTo] = span(C.minFactor);
+    // Land cover and water bands (far first).
+    const bands = (list: typeof m.water | typeof m.ground, colours: string[], only?: string) => {
+      ctx.beginPath();
+      let any = false;
+      forEachStretchIn(list as typeof m.ground, m, wideFrom, wideTo, (s, shift) => {
+        if (s.side !== -1 || (only && s.kind !== only)) return;
+        const fNear = factor(s.nearM);
+        const fFar = factor(s.farM);
+        const k = px * fNear;
+        const x0 = riderX + (s.fromM + shift - routeM) * k;
+        const x1 = riderX + (s.toM + shift - routeM) * k;
+        if (x1 < 0 || x0 > w) return;
+        const y0 = yAt(fFar);
+        const y1 = yAt(fNear);
+        ctx.rect(x0, y0, x1 - x0, Math.max(1, y1 - y0));
+        any = true;
+      });
+      if (any) {
+        ctx.fillStyle = colours[1]!;
+        ctx.fill();
+      }
+    };
+    bands(m.ground, hz.cover, 'meadow');
+    bands(m.water, hz.water);
+    // Woods: tree rows at the forest's edge.
+    forEachStretchIn(m.ground, m, wideFrom, wideTo, (s, shift) => {
+      if (s.side !== -1 || s.kind !== 'forest') return;
+      for (const [lat, dense] of [
+        [s.nearM + 25, 0.15],
+        [s.nearM + 4, 0.3],
+      ] as const) {
+        if (lat > s.farM + 4) continue;
+        const f = factor(lat);
+        const k = px * f;
+        const base = yAt(f);
+        const slot = 3;
+        ctx.beginPath();
+        const from = Math.max(s.fromM + shift, routeM - riderX / k);
+        const to = Math.min(s.toM + shift, routeM + (w - riderX) / k);
+        for (let i = Math.floor(from / slot); i * slot <= to; i++) {
+          if (hash01(i, 83) < dense) continue;
+          const x = riderX + (i * slot + hash01(i, 84) * 2 - routeM) * k;
+          const size = 0.85 + hash01(i, 85) * 0.5;
+          const hgt = 9 * size * k;
+          const half = 1.6 * size * k;
+          ctx.moveTo(x, base - hgt);
+          ctx.bezierCurveTo(x + half * 1.2, base - hgt * 0.62, x + half, base - hgt * 0.1, x, base);
+          ctx.bezierCurveTo(
+            x - half,
+            base - hgt * 0.1,
+            x - half * 1.2,
+            base - hgt * 0.62,
+            x,
+            base - hgt,
+          );
+        }
+        ctx.fillStyle = hz.trees[haze(f)]!;
+        ctx.fill();
+      }
+    });
+    // Buildings on the far side, farthest from the road first.
+    const list = this.sideBuildings;
+    list.length = 0;
+    forEachBuildingIn(m, wideFrom, wideTo, (b, shift) => {
+      if (b.offsetM >= 0 || list.length >= C.maxBuildings * 2) return;
+      const near = Math.abs(b.offsetM) - b.depthM / 2;
+      const f = factor(near);
+      const k = px * f;
+      const at = b.alongM + shift;
+      const x = riderX + (at - routeM) * k;
+      if (x + (b.lengthM / 2) * k < 0 || x - (b.lengthM / 2) * k > w) return;
+      list.push({ b, at, k: f });
+    });
+    list.sort((a, b) => a.k - b.k);
+    if (list.length > C.maxBuildings) list.splice(0, list.length - C.maxBuildings);
+    for (const { b, at, k: f } of list) {
+      const k = px * f;
+      const x0 = riderX + (at - b.lengthM / 2 - routeM) * k;
+      const x1 = riderX + (at + b.lengthM / 2 - routeM) * k;
+      const base = yAt(f);
+      const top = base - b.heightM * k;
+      const roof = roofOf(b) * k;
+      const level = haze(f);
+      ctx.fillStyle = hz.wall[level]!;
+      ctx.fillRect(x0, top, x1 - x0, base - top);
+      if (b.kind === 'church') {
+        const tw = Math.min(6, b.lengthM / 3) * k;
+        const th = (b.heightM * 2 + 4) * k;
+        ctx.fillRect(x0, base - th, tw, th);
+        ctx.beginPath();
+        ctx.moveTo(x0, base - th);
+        ctx.lineTo(x0 + tw / 2, base - th - tw * 1.5);
+        ctx.lineTo(x0 + tw, base - th);
+        ctx.fillStyle = hz.roof[level]!;
+        ctx.fill();
+      }
+      if (roof > 0.5) {
+        // Ridge along the road: the long side's roof slope seen from the side.
+        ctx.beginPath();
+        ctx.moveTo(x0 - 0.4 * k, top);
+        ctx.lineTo(x0 + roof * 0.3, top - roof);
+        ctx.lineTo(x1 - roof * 0.3, top - roof);
+        ctx.lineTo(x1 + 0.4 * k, top);
+        ctx.closePath();
+        ctx.fillStyle = hz.roof[level]!;
+        ctx.fill();
+      }
+      this.drawnBuildings++;
+    }
+    void p;
   }
 
   // ─────────── road ───────────

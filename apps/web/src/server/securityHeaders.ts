@@ -3,7 +3,9 @@
  * renderer's (apps/desktop/src/renderer/index.html): wss: is for group rides —
  * the public relay servers (any host: the relay list can be changed in
  * Settings) and an own signalling server on another host; ws: only for an own
- * server without TLS. No third-party scripts, no other connections.
+ * server without TLS. https: is for loading route scenery from an Overpass server, which the
+ * rider asks for per route (the endpoint can be changed in Settings, so any host; see
+ * docs/adr/0011-osm-scenery.md). No third-party scripts, nothing else connects.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
@@ -11,7 +13,7 @@ export const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' ws: wss:",
+  "connect-src 'self' ws: wss: https:",
   "media-src 'self' blob:",
   "worker-src 'self' blob:",
   "manifest-src 'self'",

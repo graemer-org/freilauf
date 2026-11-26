@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { App } from '../../appStore';
 import type { LiveState } from '../../../../shared/contract';
 import { isEditableTarget, useApp } from '../hooks';
+import { routeTrackOf, sceneScenery } from '../routesApi';
+import { OSM_ATTRIBUTION } from '@freilauf/routes';
+import { unwrappedDistance } from './RoadScene';
 import { buildPalette } from './palette';
 import { PowerUpSceneState, powerUpAttributes, rumbleKey } from './powerUpScene';
 import { ProfileRenderer, SceneRenderer, type SceneFrame } from './sceneRender';
@@ -88,6 +91,7 @@ export function SideScene({
   const viewRef = useRef<HTMLCanvasElement>(null);
   const profileRef = useRef<HTMLCanvasElement>(null);
   const brakeRef = useRef<HTMLSpanElement>(null);
+  const attributionRef = useRef<HTMLSpanElement>(null);
   // Initial attributes only; afterwards the loop owns them (React never re-sets them).
   const [initial] = useState(() => {
     const live = app.store.getState().live;
@@ -104,7 +108,7 @@ export function SideScene({
     const profile = profileRef.current;
     if (!root || !view || !profile) return;
     const stopBrake = startBrakeCue(app, root, brakeRef.current);
-    const stopScene = startScene(app, root, view, profile);
+    const stopScene = startScene(app, root, view, profile, attributionRef.current);
     return () => {
       stopBrake();
       stopScene();
@@ -130,6 +134,14 @@ export function SideScene({
     >
       <div className="scene-view">
         <canvas ref={viewRef} className="scene-canvas" aria-hidden="true" />
+        <span
+          ref={attributionRef}
+          className="scene-attribution"
+          data-testid="scene-attribution"
+          hidden
+        >
+          {OSM_ATTRIBUTION}
+        </span>
         {toolbar}
         <span ref={brakeRef} className="scene-brake" data-testid="scene-brake" hidden>
           <span className="scene-brake-dot" />
@@ -224,6 +236,7 @@ function startScene(
   root: HTMLElement,
   viewCanvas: HTMLCanvasElement,
   profileCanvas: HTMLCanvasElement,
+  attribution: HTMLElement | null = null,
 ): () => void {
   let view: SceneRenderer;
   let profile: ProfileRenderer;
@@ -257,8 +270,27 @@ function startScene(
     placed = withGhost(group, placeGhost(next.ghost));
     profileDirty = true;
   };
+  // On a route with stored scenery: its silhouettes, placed by the route position.
+  let scenery = sceneScenery(app.store.getState());
+  let track = routeTrackOf(app.store.getState());
+  /** Route position minus the scene's odometer at the last sample. */
+  let routeOffset: number | null = null;
+  const onRoute = (s: ReturnType<typeof app.store.getState>): void => {
+    const nextScenery = sceneScenery(s);
+    const nextTrack = routeTrackOf(s);
+    if (nextScenery !== scenery || nextTrack !== track) {
+      scenery = nextScenery;
+      track = nextTrack;
+      viewDirty = true;
+    }
+    const routeM = track ? unwrappedDistance(track, s.live?.route ?? null) : null;
+    routeOffset = routeM === null ? null : routeM - odometer.distanceM;
+  };
   onLive(app.store.getState().live);
-  const unsubscribe = app.store.subscribe((s) => onLive(s.live));
+  const unsubscribe = app.store.subscribe((s) => {
+    onLive(s.live);
+    onRoute(s);
+  });
 
   // ── keyboard steering ──
   const keys = steerKeyboard(app, () => wake());
@@ -322,6 +354,7 @@ function startScene(
     otherAngles,
   };
   odometer = frame;
+  onRoute(app.store.getState());
   let speed = 0;
   let cadence = 0;
   let frames = 0;
@@ -390,6 +423,8 @@ function startScene(
     );
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
+    frame.scenery = scenery && routeOffset !== null ? scenery : null;
+    frame.routeM = routeOffset !== null ? frame.distanceM + routeOffset : 0;
     frame.powerUps = boost.update(frame.distanceM, t);
     const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${rumbleKey(frame.powerUps.rumble)}|${frame.others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}${o.fx.repair}` : '')).join(',')}`;
 
@@ -447,6 +482,9 @@ function startScene(
       root.dataset.roughAhead = pa.roughAhead;
       root.dataset.supply = pa.supply;
       root.dataset.flying = pa.flying;
+      root.dataset.scenery = view.sceneryShown ? 'on' : 'off';
+      root.dataset.buildings = String(view.drawnBuildings);
+      if (attribution) attribution.hidden = !view.sceneryShown;
     }
     if (t - lastLabel >= LABEL_MS) {
       lastLabel = t;

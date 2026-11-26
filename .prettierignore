@@ -2,3 +2,5 @@ node_modules
 dist
 out
 pnpm-lock.yaml
+# Generated test fixture (packages/routes/test/scenery.test.ts checks it byte for byte)
+packages/routes/fixtures/osm

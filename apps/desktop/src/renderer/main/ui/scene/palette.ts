@@ -115,6 +115,23 @@ export interface ScenePalette {
   metal: string;
   /** The team car's body. */
   car: string;
+  /**
+   * Scenery along routes (docs/routes.md): house walls (front and side), roofs, windows,
+   * land cover tints of the ground, open water, and the town sign.
+   */
+  wall: string;
+  wallSide: string;
+  roof: string;
+  roofSide: string;
+  window: string;
+  meadow: string;
+  farmland: string;
+  forestFloor: string;
+  residential: string;
+  waterSurface: string;
+  waterLine: string;
+  townSign: string;
+  townSignInk: string;
 }
 
 const FALLBACK_LIGHT = {
@@ -223,5 +240,30 @@ export function buildPalette(
     leaf: css(mix({ r: 86, g: 128, b: 52, a: 1 }, surface, dark ? 0.2 : 0.1)),
     metal: tone(dark ? 0.7 : 0.55),
     car: css(mix(accent, ink, 0.35)),
+    ...sceneryTones(surface, ink, water, mud, dark),
+  };
+}
+
+/** The scenery's tones: still mixes of surface and ink, with a hint of the item materials. */
+function sceneryTones(surface: Rgb, ink: Rgb, water: Rgb, mud: Rgb, dark: boolean) {
+  const tone = (t: number): Rgb => mix(surface, ink, t);
+  const leaf: Rgb = { r: 96, g: 136, b: 60, a: 1 };
+  const field = tone(dark ? 0.06 : 0.045);
+  const wall = dark ? tone(0.2) : tone(0.05);
+  const roof = mix(mix(surface, mud, dark ? 0.5 : 0.55), ink, dark ? 0.05 : 0.12);
+  return {
+    wall: css(wall),
+    wallSide: css(dark ? mix(wall, surface, 0.3) : mix(wall, ink, 0.1)),
+    roof: css(roof),
+    roofSide: css(mix(roof, ink, dark ? 0.1 : 0.14)),
+    window: css(mix(wall, ink, dark ? 0.35 : 0.42)),
+    meadow: css(mix(field, leaf, dark ? 0.16 : 0.14)),
+    farmland: css(mix(field, mud, dark ? 0.16 : 0.13)),
+    forestFloor: css(mix(mix(field, ink, dark ? 0.08 : 0.07), leaf, dark ? 0.14 : 0.12)),
+    residential: css(mix(field, ink, dark ? 0.03 : 0.025)),
+    waterSurface: css(mix(field, water, dark ? 0.4 : 0.32)),
+    waterLine: css(mix(field, water, dark ? 0.6 : 0.5)),
+    townSign: css(mix(surface, { r: 236, g: 196, b: 60, a: 1 }, dark ? 0.5 : 0.62)),
+    townSignInk: css(dark ? surface : ink),
   };
 }
