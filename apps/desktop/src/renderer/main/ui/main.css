@@ -4852,6 +4852,74 @@ div.server-note {
   min-width: 0;
 }
 
+/* Surroundings from OpenStreetMap (docs/routes.md): the import option and the route's status. */
+.rt-scenery-option {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.rt-scenery-note {
+  margin: 0;
+  padding-left: 1.6rem;
+}
+
+.rt-scenery {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.rt-scenery > p {
+  margin: 0;
+}
+
+.rt-scenery-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.rt-scenery-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rt-scenery-badge > .tag {
+  margin-left: 0;
+}
+
+.rt-scenery-progress {
+  width: 6rem;
+  height: 0.4rem;
+  accent-color: var(--accent);
+}
+
+/* The data's licence asks for this wherever it is shown: small, legible, out of the way. */
+.scene-attribution {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 1;
+  padding: 0 0.35rem;
+  border-radius: var(--r-sm, 4px);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--text-2);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+
+.scene-attribution[hidden] {
+  display: none;
+}
+
 .rt-facts {
   display: flex;
   flex-wrap: wrap;

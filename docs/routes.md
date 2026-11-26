@@ -127,6 +127,47 @@ Distance, climbing and gradients survive this practically unchanged. A route too
 a usable resolution is refused with a message instead of being sent as a blurred copy; send the
 GPX file instead.
 
+## Surroundings from OpenStreetMap
+
+A route can show what is really beside the road: houses and churches as simple shaded boxes,
+woods, meadows and fields as ground colours with trees along the forest edge, rivers and lakes
+as water, a town sign with the place's name where the road enters a village, and railings on
+bridges. The data comes from [OpenStreetMap](https://www.openstreetmap.org/copyright)
+(© OpenStreetMap contributors, licensed under the ODbL); whenever it is drawn the scene shows
+that attribution in its bottom edge.
+
+- **Off unless you ask.** When importing, tick **Load surroundings from OpenStreetMap** (it is
+  off by default, every time). For a route already in the library: open its **Details** →
+  **Load surroundings**. Built-in routes have none (they lie in the open ocean).
+- **What the map server sees:** roughly where the route runs — the boxes along the road that
+  are asked for — and the app's name ("Freilauf (open-source indoor cycling app)"; in the
+  browser version the browser's own name and the page's address instead). Nothing about you,
+  your rides or your devices is sent.
+- **Once, then offline.** It is fetched once, in parts of a few kilometres, one request at a
+  time with a pause in between; when the server is busy the app waits and tries again (the
+  route's row says so; **Cancel** stops it). A 100 km route takes one to a few minutes. The
+  result is kept next to the route on this computer (desktop: the `scenery` folder in the
+  app's data folder; browser: the browser's storage) — about 20 KB per village, at most 2 MB
+  per route. A ride only ever reads what is stored: nothing is fetched while riding.
+- **What is kept:** for each house its place along the route, left or right and how far from
+  the road, its size and height (from `building:levels` or `height`, otherwise a default for
+  its kind); land cover and water as stretches beside the road; town names. Only a corridor of
+  about 150 m either side of the road. Very dense routes keep the buildings nearest the road.
+- **Details** shows what was stored ("132 buildings · woods 2.5 km · water 6.4 km · Kleinmoos
+  · 60 KB") with **Remove surroundings** and **Load again**. Deleting the route removes them too.
+- **Settings → Routes:** **Show surroundings** turns the drawing off (the stored data stays);
+  **Map server for surroundings** sets another Overpass API server (https, or
+  `http://localhost` for one on this computer). Please respect the public server's
+  [usage policy](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html).
+
+The road view draws the houses at their real distance and side, in the scene's own flat style
+(light and dark), with less detail further away; the side view shows the houses and woods on
+the far side as background silhouettes. Out-and-back routes see each house twice, on the left
+one way and on the right the other. Why it works this way: [ADR 0011](adr/0011-osm-scenery.md).
+
+> **Status:** tested against recorded and made-up map data only; loading from the real public
+> server has not been tried from the development environment yet.
+
 ## Recording and uploading with a map
 
 A ride along a route records your position and elevation on the route. The `.fit` export carries

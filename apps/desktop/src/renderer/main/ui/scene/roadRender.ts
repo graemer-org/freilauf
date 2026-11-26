@@ -8,7 +8,7 @@
  * Per frame the work is a fixed number of batched paths (one per colour and
  * fog level); nothing here depends on frame timing.
  */
-import type { RouteTrack } from '@freilauf/routes';
+import type { RouteTrack, SceneryModel } from '@freilauf/routes';
 import { css, mix, parseColor, type Rgb, type ScenePalette } from './palette';
 import { computePose, createPose, type Pose } from './riderPose';
 import {
@@ -28,6 +28,13 @@ import {
 import { formatGrade, hash01, valueNoise } from './sceneMath';
 import type { GradeSign } from './routeSample';
 import { GATE_DRAW_M, type PowerUpSceneFrame, type RiderFx } from './powerUpScene';
+import {
+  type PlacedBuilding,
+  roofOf,
+  SCENERY_LIMITS,
+  SceneryFrame,
+  stretchBand,
+} from './roadScenery';
 import {
   arcPoint,
   drawBottle,
@@ -114,6 +121,8 @@ export interface RoadFrame {
   powerUps?: PowerUpSceneFrame;
   /** Rumble: hornets around the local rider hide the gaps in the name labels. */
   hideGaps?: boolean;
+  /** Stored scenery of the route (buildings, land cover, water, town signs); absent = none. */
+  scenery?: SceneryModel | null;
 }
 
 interface FogColours {
@@ -131,6 +140,15 @@ interface FogColours {
   ghost: string[];
   ghostJersey: string[];
   sign: string[];
+  wall: string[];
+  wallSide: string[];
+  roof: string[];
+  roofSide: string[];
+  window: string[];
+  cover: Record<'forest' | 'meadow' | 'farmland' | 'grass' | 'residential' | 'orchard', string[]>;
+  water: string[];
+  waterLine: string[];
+  townSign: string[];
 }
 
 interface RiderColours {
@@ -178,6 +196,13 @@ export class RoadRenderer {
   private readonly b: ScreenPoint = createScreenPoint();
   private readonly c: ScreenPoint = createScreenPoint();
   private readonly d: ScreenPoint = createScreenPoint();
+  private readonly e: ScreenPoint = createScreenPoint();
+  private readonly g: ScreenPoint = createScreenPoint();
+  private readonly scene = new SceneryFrame();
+  /** Scenery features drawn in the last frame (test hook data-buildings, data-scenery). */
+  drawnBuildings = 0;
+  drawnTrees = 0;
+  sceneryShown = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -192,6 +217,10 @@ export class RoadRenderer {
 
   get roadStrip(): RoadStrip {
     return this.strip;
+  }
+
+  get sceneryFrame(): SceneryFrame {
+    return this.scene;
   }
 
   resize(cssW: number, cssH: number, dpr: number): void {
@@ -242,6 +271,22 @@ export class RoadRenderer {
       ghost: level(p.ghost, 0.6),
       ghostJersey: level(p.ghostJersey, 0.6),
       sign: level(css(mix(surface, ink, p.dark ? 0.12 : 0.02)), 0.5),
+      wall: level(p.wall),
+      wallSide: level(p.wallSide),
+      roof: level(p.roof),
+      roofSide: level(p.roofSide),
+      window: level(p.window, 0.8),
+      cover: {
+        forest: level(p.forestFloor),
+        meadow: level(p.meadow),
+        farmland: level(p.farmland),
+        grass: level(p.meadow),
+        residential: level(p.residential),
+        orchard: level(p.meadow),
+      },
+      water: level(p.waterSurface),
+      waterLine: level(p.waterLine),
+      townSign: level(p.townSign, 0.5),
     };
     this.local = {
       tyre: p.tyre,
@@ -290,6 +335,11 @@ export class RoadRenderer {
     anchorCamera(vp, f.camera, f.riderX);
     strip.build(f.track, vp, f.camera);
     const hy = horizonLine(vp, f.camera);
+    this.drawnBuildings = 0;
+    this.drawnTrees = 0;
+    this.sceneryShown = !!f.scenery;
+    if (f.scenery) this.scene.update(f.scenery, strip, vp, f.camera, FOG_LEVELS);
+    else this.scene.clear();
 
     this.sky(hy, p);
     this.silhouette(f.camera, hy, p);
@@ -444,6 +494,8 @@ export class RoadRenderer {
       }
     }
 
+    if (f.scenery) this.landLevel(f, level, inLevel, fog);
+
     // Verges, shaded like the land.
     for (const shade of SHADES) {
       ctx.beginPath();
@@ -555,6 +607,14 @@ export class RoadRenderer {
         if (hash01(i, seed) < 0.5) continue;
         const s = i * slot + hash01(i, seed + 1) * (slot - 2);
         if (s < sMin || s > sMax) continue;
+        if (f.scenery) {
+          // With the route's own surroundings: the generic trees only in the open, fewer,
+          // and clear of houses, water and woods (which bring their own trees).
+          const sd = side < 0 ? -1 : 1;
+          const cover = this.scene.coverAt(s, sd);
+          if (cover && cover !== 'meadow' && cover !== 'farmland' && cover !== 'grass') continue;
+          if (this.scene.occupiedAt(s, sd) || hash01(i, seed + 5) < 0.6) continue;
+        }
         const lat = side * (hw + ROAD.vergeM + 2.5 + hash01(i, seed + 2) * 18);
         const k = strip.pointAt(this.vp, f.camera, s, lat, 0, this.a);
         if (k === 0 || fogLevel(this.a.depth, FOG_LEVELS) !== level) continue;
@@ -589,6 +649,413 @@ export class RoadRenderer {
       if (k === 0 || fogLevel(this.a.depth, FOG_LEVELS) !== level) continue;
       this.sign(k, this.a, sign.gradePercent, fog, level);
     }
+
+    if (f.scenery) this.sceneryObjects(f, level, fog);
+  }
+
+  // ─────────── scenery along the route (docs/routes.md) ───────────
+
+  /** Land cover and water beside the road, as ground bands per segment of this fog level. */
+  private landLevel(
+    f: RoadFrame,
+    level: number,
+    inLevel: (k: number) => boolean,
+    fog: FogColours,
+  ): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const { s } = strip;
+    const n = strip.count;
+    const sc = this.scene;
+    const band = (from: number, to: number, l0: number, l1: number): boolean => {
+      let any = false;
+      for (let k = 1; k < n; k++) {
+        if (!inLevel(k)) continue;
+        const s0 = Math.max(from, this.nearEnd(k));
+        const s1 = Math.min(to, s[k]!);
+        if (s1 <= s0) continue;
+        this.quad(f, s0, s1, l0, l1);
+        any = true;
+      }
+      return any;
+    };
+    for (const kind of [
+      'residential',
+      'farmland',
+      'meadow',
+      'grass',
+      'orchard',
+      'forest',
+    ] as const) {
+      ctx.beginPath();
+      let any = false;
+      for (const g of sc.ground) {
+        if (g.s.kind !== kind) continue;
+        const [l0, l1] = stretchBand(g.s);
+        if (band(g.from, g.to, l0, l1)) any = true;
+      }
+      if (any) {
+        ctx.fillStyle = fog.cover[kind][level]!;
+        ctx.fill();
+      }
+    }
+    if (sc.water.length === 0) return;
+    ctx.beginPath();
+    let any = false;
+    for (const w of sc.water) {
+      const [l0, l1] = stretchBand(w.s);
+      if (band(w.from, w.to, l0, l1)) any = true;
+    }
+    if (!any) return;
+    ctx.fillStyle = fog.water[level]!;
+    ctx.fill();
+    // The near bank: a thin brighter line where the water starts.
+    ctx.beginPath();
+    for (const w of sc.water) {
+      const [l0, l1] = stretchBand(w.s);
+      const edge = w.s.side > 0 ? l0 : l1;
+      band(w.from, w.to, edge - 0.35, edge + 0.35);
+    }
+    ctx.fillStyle = fog.waterLine[level]!;
+    ctx.fill();
+  }
+
+  private sceneryObjects(f: RoadFrame, level: number, fog: FogColours): void {
+    this.forest(f, level, fog);
+    for (const b of this.scene.buildings) if (b.level === level) this.building(f, b, fog);
+    this.structures(f, level, fog);
+    this.townSigns(f, level, fog);
+  }
+
+  /** Woods: a dark canopy wall a few metres in, and a row of trees along its edge. */
+  private forest(f: RoadFrame, level: number, fog: FogColours): void {
+    const strip = this.strip;
+    const sc = this.scene;
+    const ctx = this.ctx;
+    const d = f.camera.distanceM;
+    const sMin = d + 1.5;
+    const sMax = strip.s[strip.count - 1]!;
+    const { a, b, c, d: q } = this;
+    // Canopy wall, one quad per road segment of this level.
+    ctx.beginPath();
+    let walls = false;
+    for (const g of sc.ground) {
+      if (g.s.kind !== 'forest' && g.s.kind !== 'orchard') continue;
+      const orchard = g.s.kind === 'orchard';
+      if (orchard) continue;
+      const [l0, l1] = stretchBand(g.s);
+      const lat = g.s.side > 0 ? l0 + 7 : l1 - 7;
+      if (Math.abs(lat) > g.s.farM) continue;
+      for (let k = 1; k < strip.count; k++) {
+        if (strip.visible[k] !== 1) continue;
+        const s0 = Math.max(g.from, sMin, this.nearEnd(k));
+        const s1 = Math.min(g.to, strip.s[k]!);
+        if (s1 <= s0) continue;
+        if (strip.pointAt(this.vp, f.camera, s0, lat, 0, a) === 0) continue;
+        if (fogLevel(a.depth, FOG_LEVELS) !== level) continue;
+        const h0 = 10 + hash01(Math.floor(s0 / 7), 91) * 6;
+        const h1 = 10 + hash01(Math.floor(s1 / 7), 91) * 6;
+        strip.pointAt(this.vp, f.camera, s1, lat, 0, b);
+        strip.pointAt(this.vp, f.camera, s1, lat, h1, c);
+        strip.pointAt(this.vp, f.camera, s0, lat, h0, q);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.lineTo(q.x, q.y);
+        ctx.closePath();
+        walls = true;
+      }
+    }
+    if (walls) {
+      ctx.fillStyle = fog.treesDark[level]!;
+      ctx.fill();
+    }
+    // Edge trees: denser near, sparser far (level of detail).
+    for (const g of sc.ground) {
+      if (g.s.kind !== 'forest' && g.s.kind !== 'orchard') continue;
+      const orchard = g.s.kind === 'orchard';
+      const [l0, l1] = stretchBand(g.s);
+      const inner = g.s.side > 0 ? l0 : -l1;
+      const room = Math.min(7, Math.max(0, Math.abs(l1 - l0) - 1));
+      const lo = Math.max(sMin, g.from);
+      const hi = Math.min(sMax, g.to);
+      if (hi <= lo) continue;
+      const steps = SCENERY_LIMITS.treeStepM;
+      for (const [fromD, toD, step] of [
+        [0, 120, steps[0]],
+        [120, 280, steps[1]],
+        [280, Infinity, steps[2]],
+      ] as const) {
+        const start = Math.max(lo, d + fromD);
+        const end = Math.min(hi, d + toD);
+        for (let i = Math.floor(end / step); i * step >= start; i--) {
+          const at = i * step + hash01(i, 61) * step * 0.6;
+          if (at < start || at > end) continue;
+          const lat = g.s.side * (inner + 0.8 + hash01(i, 62 + g.s.side) * room);
+          const k = strip.pointAt(this.vp, f.camera, at, lat, 0, a);
+          if (k === 0 || fogLevel(a.depth, FOG_LEVELS) !== level) continue;
+          const size = orchard ? 0.55 : 0.9 + hash01(i, 63) * 0.7;
+          const cypress = !orchard && hash01(i, 64) > 0.55;
+          this.tree(k, a, size, cypress, cypress ? fog.treesDark[level]! : fog.trees[level]!);
+          this.drawnTrees++;
+        }
+      }
+    }
+  }
+
+  /** A building as a box beside the road: near wall, the wall facing the road, roof. */
+  private building(f: RoadFrame, pb: PlacedBuilding, fog: FogColours): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const cam = f.camera;
+    const vp = this.vp;
+    const { a, b, c, d: q, e, g } = this;
+    const bd = pb.b;
+    const level = pb.level;
+    const h = bd.heightM;
+    const roof = roofOf(bd);
+    const mid = (pb.li + pb.lo) / 2;
+    // Near wall corners: base inner/outer, top inner/outer.
+    if (strip.pointAt(vp, cam, pb.a0, pb.li, 0, a) === 0) return;
+    strip.pointAt(vp, cam, pb.a0, pb.lo, 0, b);
+    strip.pointAt(vp, cam, pb.a0, pb.lo, h, c);
+    strip.pointAt(vp, cam, pb.a0, pb.li, h, q);
+    const top = roof > 0 ? strip.pointAt(vp, cam, pb.a0, mid, h + roof, g) && g.y : q.y;
+    const topY = Math.min(top, c.y, q.y);
+    if (strip.hiddenAt(pb.k, a.y) && topY >= strip.clip[pb.k]!) return;
+    this.drawnBuildings++;
+    this.clipped(pb.k, a.y, topY, () => {
+      if (pb.lod < 2) {
+        // The wall facing the road (seen at an angle), and the roof slope above it.
+        strip.pointAt(vp, cam, pb.a1, pb.li, 0, e);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(e.x, e.y);
+        strip.pointAt(vp, cam, pb.a1, pb.li, h, e);
+        ctx.lineTo(e.x, e.y);
+        ctx.lineTo(q.x, q.y);
+        ctx.closePath();
+        ctx.fillStyle = fog.wallSide[level]!;
+        ctx.fill();
+        if (roof > 0) {
+          ctx.beginPath();
+          ctx.moveTo(q.x, q.y);
+          ctx.lineTo(e.x, e.y);
+          strip.pointAt(vp, cam, pb.a1, mid, h + roof, e);
+          ctx.lineTo(e.x, e.y);
+          ctx.lineTo(g.x, g.y);
+          ctx.closePath();
+          ctx.fillStyle = fog.roofSide[level]!;
+          ctx.fill();
+        } else {
+          // A flat roof seen from below the eaves: a thin dark edge.
+          strip.pointAt(vp, cam, pb.a1, pb.li, h, e);
+          ctx.beginPath();
+          ctx.moveTo(q.x, q.y);
+          ctx.lineTo(e.x, e.y);
+          ctx.lineWidth = Math.max(1, (0.25 * vp.focalPx) / pb.depth);
+          ctx.strokeStyle = fog.roofSide[level]!;
+          ctx.stroke();
+        }
+      }
+      // Near wall with the gable.
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.lineTo(c.x, c.y);
+      if (roof > 0) ctx.lineTo(g.x, g.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.closePath();
+      ctx.fillStyle = pb.lod === 2 ? fog.wallSide[level]! : fog.wall[level]!;
+      ctx.fill();
+      if (roof > 0 && pb.lod < 2) {
+        // The roof's edge over the gable.
+        ctx.beginPath();
+        ctx.moveTo(q.x, q.y);
+        ctx.lineTo(g.x, g.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.lineWidth = Math.max(1, (0.3 * vp.focalPx) / pb.depth);
+        ctx.strokeStyle = fog.roof[level]!;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+      }
+      if (pb.lod === 0) this.windows(f, pb, fog);
+      if (bd.kind === 'church' && pb.lod < 2) this.tower(f, pb, fog);
+    });
+  }
+
+  /** Window rows on the near wall (near buildings only). */
+  private windows(f: RoadFrame, pb: PlacedBuilding, fog: FogColours): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const { e, g } = this;
+    const width = Math.abs(pb.lo - pb.li);
+    const floors = Math.max(1, Math.min(8, Math.floor(pb.b.heightM / 3)));
+    const cols = Math.max(1, Math.min(6, Math.floor(width / 3.5)));
+    ctx.beginPath();
+    for (let fl = 0; fl < floors; fl++) {
+      const y0 = fl * 3 + 1.1;
+      const y1 = y0 + 1.2;
+      for (let col = 0; col < cols; col++) {
+        const t0 = (col + 0.3) / cols;
+        const t1 = (col + 0.7) / cols;
+        const l0 = pb.li + (pb.lo - pb.li) * t0;
+        const l1 = pb.li + (pb.lo - pb.li) * t1;
+        strip.pointAt(this.vp, f.camera, pb.a0, l0, y0, e);
+        strip.pointAt(this.vp, f.camera, pb.a0, l1, y1, g);
+        ctx.rect(Math.min(e.x, g.x), Math.min(e.y, g.y), Math.abs(g.x - e.x), Math.abs(g.y - e.y));
+      }
+    }
+    ctx.fillStyle = fog.window[pb.level]!;
+    ctx.fill();
+  }
+
+  /** A church tower at the near end: a narrow box and a pointed roof. */
+  private tower(f: RoadFrame, pb: PlacedBuilding, fog: FogColours): void {
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const { e, g } = this;
+    const mid = (pb.li + pb.lo) / 2;
+    const half = Math.min(3, Math.abs(pb.lo - pb.li) / 3);
+    const top = pb.b.heightM * 2 + 4;
+    strip.pointAt(this.vp, f.camera, pb.a0, mid - half, 0, e);
+    strip.pointAt(this.vp, f.camera, pb.a0, mid + half, top, g);
+    ctx.fillStyle = fog.wall[pb.level]!;
+    ctx.fillRect(Math.min(e.x, g.x), g.y, Math.abs(g.x - e.x), e.y - g.y);
+    const x0 = Math.min(e.x, g.x);
+    const x1 = Math.max(e.x, g.x);
+    strip.pointAt(this.vp, f.camera, pb.a0, mid, top + half * 3, e);
+    ctx.beginPath();
+    ctx.moveTo(x0, g.y);
+    ctx.lineTo(e.x, e.y);
+    ctx.lineTo(x1, g.y);
+    ctx.closePath();
+    ctx.fillStyle = fog.roofSide[pb.level]!;
+    ctx.fill();
+  }
+
+  /** Bridge railings on both sides of the road; a portal where a tunnel begins. */
+  private structures(f: RoadFrame, level: number, fog: FogColours): void {
+    const sc = f.scenery;
+    if (!sc || sc.structures.length === 0) return;
+    const ctx = this.ctx;
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const sMax = strip.s[strip.count - 1]!;
+    const hw = ROAD.halfWidthM;
+    const { a, b } = this;
+    for (const st of sc.structures) {
+      const from = this.wrapNear(f, st.fromM);
+      const to = from + (st.toM - st.fromM);
+      if (to < d || from > sMax) continue;
+      if (st.kind === 'bridge') {
+        for (const side of [-1, 1]) {
+          const lat = side * (hw + 0.45);
+          ctx.beginPath();
+          let pen = false;
+          for (let s = Math.max(d + 1, from); s <= Math.min(to, sMax); s += 2.5) {
+            const k = strip.pointAt(this.vp, f.camera, s, lat, 0, a);
+            if (k === 0 || fogLevel(a.depth, FOG_LEVELS) !== level || strip.hiddenAt(k, a.y)) {
+              pen = false;
+              continue;
+            }
+            strip.pointAt(this.vp, f.camera, s, lat, 1.1, b);
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            if (pen) ctx.moveTo(b.x, b.y);
+            pen = true;
+          }
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = fog.posts[level]!;
+          ctx.stroke();
+          // The top rail.
+          ctx.beginPath();
+          let first = true;
+          for (let s = Math.max(d + 1, from); s <= Math.min(to, sMax) + 0.01; s += 2.5) {
+            const k = strip.pointAt(this.vp, f.camera, s, lat, 1.1, b);
+            if (k === 0 || fogLevel(b.depth, FOG_LEVELS) !== level) {
+              first = true;
+              continue;
+            }
+            if (first) ctx.moveTo(b.x, b.y);
+            else ctx.lineTo(b.x, b.y);
+            first = false;
+          }
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      } else if (from > d + 2) {
+        const k = strip.pointAt(this.vp, f.camera, from, -hw - 5, 0, a);
+        if (k === 0 || fogLevel(a.depth, FOG_LEVELS) !== level) continue;
+        strip.pointAt(this.vp, f.camera, from, hw + 5, 9, b);
+        const ppm = this.vp.focalPx / a.depth;
+        const cx = (a.x + b.x) / 2;
+        const rw = (hw + 0.6) * ppm;
+        const rh = 5.4 * ppm;
+        this.clipped(k, a.y, b.y, () => {
+          ctx.beginPath();
+          ctx.rect(Math.min(a.x, b.x), b.y, Math.abs(b.x - a.x), a.y - b.y);
+          ctx.moveTo(cx + rw, a.y);
+          ctx.lineTo(cx + rw, a.y - rh + rw * 0.6);
+          ctx.ellipse(cx, a.y - rh + rw * 0.6, rw, rw * 0.6, 0, 0, Math.PI, true);
+          ctx.lineTo(cx - rw, a.y);
+          ctx.closePath();
+          ctx.fillStyle = fog.wallSide[level]!;
+          ctx.fill('evenodd');
+        });
+      }
+    }
+  }
+
+  /** Town signs at the entry of a place, on the right verge. */
+  private townSigns(f: RoadFrame, level: number, fog: FogColours): void {
+    const sc = f.scenery;
+    if (!sc || sc.places.length === 0) return;
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const sMax = Math.min(strip.s[strip.count - 1]!, d + 420);
+    for (const pl of sc.places) {
+      const at = this.wrapNear(f, pl.alongM);
+      if (at < d + 1.5 || at > sMax) continue;
+      const k = strip.pointAt(this.vp, f.camera, at, ROAD.halfWidthM + 1.1, 0, this.a);
+      if (k === 0 || fogLevel(this.a.depth, FOG_LEVELS) !== level) continue;
+      this.townSign(k, this.a, pl.name, fog, level);
+    }
+  }
+
+  private townSign(k: number, at: ScreenPoint, name: string, fog: FogColours, level: number): void {
+    const ctx = this.ctx;
+    const p = this.pal!;
+    const ppm = this.vp.focalPx / at.depth;
+    const postH = 1.7 * ppm;
+    const scale = Math.max(0.4, Math.min(1.4, ppm / 28));
+    ctx.font = this.signFont;
+    const tw = ctx.measureText(name).width;
+    const fs = Number.parseFloat(this.signFont.split(' ')[1] ?? '13');
+    const pw = (tw + fs * 1.4) * scale;
+    const ph = fs * 2 * scale;
+    const top = at.y - postH - ph;
+    this.clipped(k, at.y, top, () => {
+      const postW = Math.max(1, 0.08 * ppm);
+      ctx.fillStyle = fog.posts[level]!;
+      ctx.fillRect(at.x - pw * 0.3 - postW / 2, at.y - postH, postW, postH);
+      ctx.fillRect(at.x + pw * 0.3 - postW / 2, at.y - postH, postW, postH);
+      ctx.fillStyle = fog.townSign[level]!;
+      ctx.strokeStyle = level <= 2 ? p.townSignInk : fog.edge[level]!;
+      ctx.lineWidth = Math.max(1, 1.6 * scale);
+      ctx.beginPath();
+      ctx.roundRect(at.x - pw / 2, top, pw, ph, ph * 0.12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(at.x, top + ph / 2);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = level <= 2 ? p.townSignInk : fog.edge[level]!;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name, 0, 1);
+      ctx.restore();
+    });
   }
 
   /** A route distance moved into the lap the rider is on (for loops). */

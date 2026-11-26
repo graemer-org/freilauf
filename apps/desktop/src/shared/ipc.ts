@@ -44,6 +44,13 @@ export const IPC = {
   diagExportLog: 'diag:export-log',
   diagReadRecent: 'diag:read-recent',
 
+  sceneryOverpass: 'scenery:overpass',
+  sceneryCancel: 'scenery:cancel',
+  sceneryLoad: 'scenery:load',
+  scenerySave: 'scenery:save',
+  sceneryRemove: 'scenery:remove',
+  sceneryList: 'scenery:list',
+
   watchRelayStatus: 'watch-relay:status',
   /** main → main window */
   watchRelayStatusChanged: 'watch-relay:status-changed',

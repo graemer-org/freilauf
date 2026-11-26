@@ -20,8 +20,8 @@
  *
  * Once these are part of `App`'s type this file can read them directly.
  */
-import type { RouteTrack } from '@freilauf/routes';
-import type { App, AppState } from '../appStore';
+import type { RouteTrack, SceneryModel } from '@freilauf/routes';
+import type { App, AppState, SceneryStatus } from '../appStore';
 import { useApp, useAppState } from './hooks';
 
 /** One route in the library, as the Routes tab lists it. */
@@ -46,6 +46,11 @@ export interface SharedRoute {
   peerId: string;
   peerName: string;
   entry: RouteEntry;
+}
+
+export interface RouteImportOptions {
+  /** Load the surroundings from the map server after the import (off unless ticked). */
+  scenery?: boolean;
 }
 
 export type RouteImportResult =
@@ -96,6 +101,43 @@ export function routeDifficultyOf(s: AppState): number | null {
   return typeof d === 'number' && Number.isFinite(d) ? d : null;
 }
 
+const NO_SCENERY: SceneryStatus = { state: 'none' };
+
+/** What is stored (or being loaded) as scenery for route `id`. */
+export function sceneryStatusOf(s: AppState, id: string): SceneryStatus {
+  return s.scenery?.[id] ?? NO_SCENERY;
+}
+
+/**
+ * The scenery the ride scenes draw: the selected route's stored scenery, unless switched off
+ * in Settings; null otherwise.
+ */
+export function sceneScenery(s: AppState): SceneryModel | null {
+  if (s.settings?.scenery?.enabled === false) return null;
+  const m = s.routeScenery ?? null;
+  const t = routeTrackOf(s);
+  return m && t && m.routeId === t.id ? m : null;
+}
+
+export const useSceneScenery = (): SceneryModel | null => useAppState(sceneScenery);
+
+export interface SceneryActions {
+  load(id: string): void;
+  cancel(id: string): void;
+  remove(id: string): void;
+  /** Reads the stored file once so its summary can be shown. */
+  summarize(id: string): void;
+}
+
+export function sceneryActions(app: App): SceneryActions {
+  return {
+    load: (id) => void fire(app, () => app.loadScenery(id)),
+    cancel: (id) => void fire(app, () => app.cancelScenery(id)),
+    remove: (id) => void fire(app, () => app.removeScenery(id)),
+    summarize: (id) => void fire(app, () => app.scenerySummary(id)),
+  };
+}
+
 export const useRouteTrack = (): RouteTrack | null => useAppState(routeTrackOf);
 export const useRoutes = (): readonly RouteEntry[] => useAppState(routesOf);
 export const useSelectedRouteId = (): string | null => useAppState(selectedRouteIdOf);
@@ -126,7 +168,11 @@ function fire(app: App, call: () => unknown): unknown {
 }
 
 export interface RouteActions {
-  importRoute(text: string, fileName?: string): RouteImportResult | Promise<RouteImportResult>;
+  importRoute(
+    text: string,
+    fileName?: string,
+    options?: RouteImportOptions,
+  ): RouteImportResult | Promise<RouteImportResult>;
   select(id: string | null): void;
   remove(id: string): void;
   exportRoute(id: string): { fileName: string; text: string } | null;
@@ -147,7 +193,8 @@ export function routeActions(app: App): RouteActions | null {
   const exp = method(app, 'exportRoute');
   if (!imp || !select) return null;
   return {
-    importRoute: (text, fileName) => imp(text, fileName) as RouteImportResult,
+    importRoute: (text, fileName, options) =>
+      imp(text, fileName, options ?? {}) as RouteImportResult,
     select: (id) => void fire(app, () => select(id)),
     remove: (id) => void (del && fire(app, () => del(id))),
     exportRoute: (id) => {

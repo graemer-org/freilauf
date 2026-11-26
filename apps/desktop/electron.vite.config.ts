@@ -7,6 +7,7 @@ import type { Plugin } from 'vite';
 const WORKSPACE_PACKAGES = [
   '@freilauf/devices',
   '@freilauf/p2p',
+  '@freilauf/routes',
   '@freilauf/session',
   '@freilauf/sim',
 ];

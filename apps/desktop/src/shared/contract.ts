@@ -226,7 +226,26 @@ export interface Settings {
   watchRelay: WatchRelaySettings;
   /** Ghost rider (docs/ghost.md): race an earlier ride of the same route. */
   ghost: GhostSettings;
+  /** Scenery from OpenStreetMap along routes (docs/routes.md, docs/adr/0011-osm-scenery.md). */
+  scenery: ScenerySettings;
 }
+
+/**
+ * Scenery along routes. Loading it is always the rider's choice per route (on import or later
+ * in the route's details); these settings only say whether stored scenery is drawn and which
+ * server it is loaded from.
+ */
+export interface ScenerySettings {
+  /** Draw stored scenery in the ride scenes (default on; routes without scenery look as before). */
+  enabled: boolean;
+  /**
+   * The Overpass API endpoint scenery is loaded from: https, or http on this computer
+   * (localhost / 127.0.0.1 / [::1]) for an own server. Default: the public main instance.
+   */
+  overpassUrl: string;
+}
+
+export const DEFAULT_OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 
 /**
  * Which ghost to race on a route: 'best' (the fastest full ride), 'last' (the latest ride),
@@ -322,6 +341,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ride: { countdownS: 3, powerSmoothingS: 3 },
   watchRelay: DEFAULT_WATCH_RELAY,
   ghost: { enabled: true, sources: {} },
+  scenery: { enabled: true, overpassUrl: DEFAULT_OVERPASS_URL },
 };
 
 /**
@@ -601,6 +621,27 @@ export interface FreilaufApi {
     openFolder(): Promise<void>;
   };
 
+  /**
+   * Scenery along routes (docs/adr/0011-osm-scenery.md): the one network request it needs, and
+   * where the result is kept (one file per route next to the routes; IndexedDB in the browser).
+   */
+  scenery: {
+    /**
+     * Sends one Overpass query (POST) to the endpoint in Settings.scenery.overpassUrl and
+     * returns the answer. `requestId` lets `cancelOverpass` abort it. Rejects on a network
+     * failure, a timeout or a refused endpoint.
+     */
+    overpass(requestId: string, query: string): Promise<OverpassReply>;
+    cancelOverpass(requestId: string): void;
+    /** The stored scenery text of a route, or null. */
+    load(routeId: string): Promise<string | null>;
+    /** Stores (replaces) a route's scenery; the text is validated first. */
+    save(routeId: string, text: string): Promise<void>;
+    remove(routeId: string): Promise<void>;
+    /** Routes with stored scenery and its size. */
+    list(): Promise<SceneryFileInfo[]>;
+  };
+
   /** Share with my watch (desktop on Windows; the browser build reports it as unavailable). */
   watchRelay: {
     getStatus(): Promise<WatchRelayStatus>;
@@ -636,6 +677,19 @@ export interface FreilaufApi {
     /** The last `maxBytes` (capped at 1 MB) of the log, starting at a line boundary. */
     readRecent(maxBytes: number): Promise<string>;
   };
+}
+
+/** One Overpass answer as the host received it. */
+export interface OverpassReply {
+  status: number;
+  text: string;
+  /** Seconds from a Retry-After header, or null. */
+  retryAfterS: number | null;
+}
+
+export interface SceneryFileInfo {
+  routeId: string;
+  bytes: number;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

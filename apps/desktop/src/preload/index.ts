@@ -16,8 +16,10 @@ import type {
   LogContext,
   LogInfo,
   LogLevel,
+  OverpassReply,
   PickerDevice,
   RideListItem,
+  SceneryFileInfo,
   Settings,
   WatchRelayStatus,
 } from '../shared/contract';
@@ -276,6 +278,16 @@ const api: FreilaufApi = {
     exportFit: (id) => ipcRenderer.invoke(IPC.ridesExportFit, id) as Promise<string | null>,
     delete: (id) => ipcRenderer.invoke(IPC.ridesDelete, id) as Promise<void>,
     openFolder: () => ipcRenderer.invoke(IPC.ridesOpenFolder) as Promise<void>,
+  },
+
+  scenery: {
+    overpass: (requestId, query) =>
+      ipcRenderer.invoke(IPC.sceneryOverpass, requestId, query) as Promise<OverpassReply>,
+    cancelOverpass: (requestId) => ipcRenderer.send(IPC.sceneryCancel, requestId),
+    load: (routeId) => ipcRenderer.invoke(IPC.sceneryLoad, routeId) as Promise<string | null>,
+    save: (routeId, text) => ipcRenderer.invoke(IPC.scenerySave, routeId, text) as Promise<void>,
+    remove: (routeId) => ipcRenderer.invoke(IPC.sceneryRemove, routeId) as Promise<void>,
+    list: () => ipcRenderer.invoke(IPC.sceneryList) as Promise<SceneryFileInfo[]>,
   },
 
   watchRelay: {

@@ -58,7 +58,7 @@ import type { GroupRules } from '@freilauf/p2p';
 import type { GroupMode } from '../../shared/powerUps';
 import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
-import type { RouteTrack } from '@freilauf/routes';
+import type { RouteTrack, SceneryModel } from '@freilauf/routes';
 import { matchTrackToRoute, routeBaseId } from '@freilauf/routes';
 import type { GhostTrace, RecordedRide } from '@freilauf/session';
 import { decodeFitTrack, downsampleTrace, rideGhost, rideRouteInfo } from '@freilauf/session';
@@ -73,6 +73,7 @@ import {
 import { RouteLibrary } from '../core/routeLibrary';
 import type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
 import { decodeSharedRoutes, shareRouteInGroup } from '../core/routeSharing';
+import { SceneryService, type SceneryStatus } from '../core/sceneryService';
 import type { ImportResult, KeyValueStorage, WorkoutEntry } from '../core/workoutLibrary';
 import { CommunityService } from '../core/communityService';
 import type {
@@ -90,6 +91,7 @@ import { summarizeRide } from './rideSummary';
 import type { RideSummary } from './rideSummary';
 
 export type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
+export type { SceneryStatus } from '../core/sceneryService';
 export type { RideBest, RideSummary } from './rideSummary';
 
 /** A route another rider in the group is offering. */
@@ -203,6 +205,13 @@ export interface AppState {
   groupMode?: GroupMode;
   /** The ghost rider of the selected route (docs/ghost.md); absent = none. */
   ghost?: GhostState;
+  /**
+   * Scenery along routes (docs/routes.md): what is stored or being loaded, per route id
+   * (routes without any are absent).
+   */
+  scenery?: Record<string, SceneryStatus>;
+  /** The selected route's stored scenery, for the ride scenes; null without one. */
+  routeScenery?: SceneryModel | null;
 }
 
 /** What the start screen offers and the next ride races as a ghost. */
@@ -402,6 +411,8 @@ export interface AppOptions {
   now?: () => number;
   /** "Test connection" for a signalling server (tests). Default: a real WebSocket probe. */
   probeSignalling?: (url: string) => Promise<ProbeResult>;
+  /** Scenery fetch tuning (tests: no pauses or backoff). */
+  sceneryFetch?: Partial<import('@freilauf/routes').FetchSceneryOptions>;
 }
 
 function defaultStorage(): KeyValueStorage | null {
@@ -454,6 +465,8 @@ export class App {
     groupPowerUps: true,
     groupMode: 'normal',
     ghost: NO_GHOST,
+    scenery: {},
+    routeScenery: null,
   });
 
   readonly #api: FreilaufApi;
@@ -492,6 +505,9 @@ export class App {
   #importedGhost: { routeId: string; trace: GhostTrace } | null = null;
   /** Increases with every ghost refresh, so a slow load cannot overwrite a newer choice. */
   #ghostToken = 0;
+  /** Scenery along routes (docs/adr/0011-osm-scenery.md). */
+  readonly #scenery: SceneryService;
+  #sceneryToken = 0;
 
   constructor(
     api: FreilaufApi,
@@ -519,6 +535,19 @@ export class App {
       onNotice: (kind, message) => this.notify(kind, message),
     });
     this.store = createStore<AppState>(() => App.#initialState(this.#community.view));
+    this.#scenery = new SceneryService({
+      api: api.scenery,
+      log: this.#logger.scope('scenery'),
+      onStatus: (scenery) => {
+        this.store.setState({ scenery });
+        // Loaded (or removed) for the selected route: the scenes pick it up.
+        const id = this.store.getState().selectedRouteId;
+        if (id && (scenery[id]?.state ?? 'none') !== (this.#sceneryShown ?? 'none'))
+          void this.#refreshRouteScenery();
+      },
+      onNotice: (kind, message) => this.notify(kind, message),
+      ...(options.sceneryFetch ? { fetchOptions: options.sceneryFetch } : {}),
+    });
     this.store.setState({ workouts: this.#library.list(), routes: this.#routes.list() });
     this.#community.subscribe((community) => this.store.setState({ community }));
   }
@@ -582,6 +611,7 @@ export class App {
       this.#community.tick(); // no-op until the minute changes
     }, TICK_MS);
     this.store.setState({ ready: true });
+    void this.#scenery.init().then(() => this.#refreshRouteScenery());
     void this.refreshRides().then(() =>
       // Once per installation: rides saved before the community features existed.
       this.#community.backfill(
@@ -606,6 +636,7 @@ export class App {
     for (const off of this.#cleanup) off();
     this.#buttonWatch?.();
     this.#leverWatch?.();
+    this.#scenery.dispose();
     this.#community.dispose(); // withdraws its documents and writes pending changes
     this.#group?.leave();
     this.#controller?.dispose();
@@ -1015,7 +1046,58 @@ export class App {
     }
     this.store.setState({ selectedRouteId: id, routeTrack: found?.track ?? null });
     void this.#refreshGhost();
+    void this.#refreshRouteScenery();
     return true;
+  }
+
+  // ───────────── scenery along routes (docs/adr/0011-osm-scenery.md) ─────────────
+
+  /** The scenery state last handed to the scenes ('ready' or 'none'), for onStatus. */
+  #sceneryShown: SceneryStatus['state'] | null = null;
+
+  /** Loads the selected route's stored scenery for the scenes (never fetches). */
+  async #refreshRouteScenery(): Promise<void> {
+    const token = ++this.#sceneryToken;
+    const id = this.store.getState().selectedRouteId;
+    const status = id ? this.#scenery.status(id) : null;
+    this.#sceneryShown = status?.state ?? null;
+    if (!id || status?.state !== 'ready') {
+      if (status?.state === 'loading' || status?.state === 'queued') return; // keep the old one
+      if (this.store.getState().routeScenery) this.store.setState({ routeScenery: null });
+      return;
+    }
+    const model = await this.#scenery.model(id);
+    if (token !== this.#sceneryToken) return;
+    const track = this.store.getState().routeTrack;
+    // Built for this route (same length): otherwise the places would not match the road.
+    const fits =
+      model && track && Math.abs(model.totalDistanceM - track.totalDistanceM) < 1 + track.stepM;
+    this.store.setState({ routeScenery: fits ? model : null });
+  }
+
+  /**
+   * Loads the surroundings of an imported route from the map server once and stores them
+   * (the rider asked for it: on import or in the route's details). Built-in routes have none.
+   */
+  loadScenery(id: string): boolean {
+    const found = this.#routes.get(id);
+    if (!found || found.entry.source !== 'imported') return false;
+    this.#scenery.load(found.track);
+    return true;
+  }
+
+  cancelScenery(id: string): void {
+    this.#scenery.cancel(id);
+  }
+
+  async removeScenery(id: string): Promise<void> {
+    await this.#scenery.remove(id);
+    if (this.store.getState().selectedRouteId === id) await this.#refreshRouteScenery();
+  }
+
+  /** Summary of a route's stored scenery (loads and decodes it once). */
+  async scenerySummary(id: string): Promise<void> {
+    await this.#scenery.model(id);
   }
 
   /**
@@ -1063,6 +1145,7 @@ export class App {
   importRoute(
     text: string,
     fileName?: string,
+    options: { scenery?: boolean } = {},
   ): { ok: true; entry: RouteEntry; warnings: string[] } | { ok: false; errors: string[] } {
     const log = this.#logger.scope('routes');
     const result: RouteImportResult = this.#routes.importText(text, fileName);
@@ -1091,6 +1174,8 @@ export class App {
     this.store.setState({ routes: this.#routes.list() });
     // A re-import of the selected route replaces its track (for the next ride).
     if (this.store.getState().selectedRouteId === entry.id) this.selectRoute(entry.id);
+    // Only when the rider ticked "Load surroundings" (off by default).
+    if (options.scenery === true) this.loadScenery(entry.id);
     return { ok: true, entry, warnings };
   }
 
@@ -1100,6 +1185,7 @@ export class App {
     if (this.#routes.remove(id)) {
       this.#logger.log('info', 'routes', 'route deleted', { id });
       this.store.setState({ routes: this.#routes.list() });
+      if (this.#scenery.status(id).state !== 'none') void this.#scenery.remove(id);
     }
   }
 

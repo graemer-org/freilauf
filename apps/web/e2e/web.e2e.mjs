@@ -13,7 +13,7 @@
 // Against an already running server (e.g. the Docker container):
 //   FREILAUF_URL=http://localhost:8080 node apps/web/e2e/web.e2e.mjs
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -494,6 +494,85 @@ async function pairingWithoutPicker(browser, base) {
   }
 }
 
+/**
+ * Scenery along routes from the browser (docs/routes.md): the page itself POSTs to the public
+ * Overpass endpoint (CORS, allowed by the CSP's https:), here answered by Playwright with the
+ * synthetic fixture; the road view then draws buildings with the attribution.
+ */
+async function scenery(browser, base) {
+  const fixtures = path.join(here, '../../../packages/routes/fixtures');
+  const answer = readFileSync(path.join(fixtures, 'osm/isar-ursprung.overpass.json'), 'utf8');
+  const gpxText = readFileSync(path.join(fixtures, 'isar-ursprung.gpx'), 'utf8');
+  const pts = [...gpxText.matchAll(/<trkpt[\s\S]*?<\/trkpt>/g)].map((m) => m[0]).slice(0, 160);
+  const gpx = `<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Isar web test</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const problems = await watch(page, 'scenery');
+  const requests = [];
+  await page.route('https://overpass-api.de/api/interpreter', async (route) => {
+    const req = route.request();
+    requests.push({ method: req.method(), body: req.postData() ?? '' });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: answer,
+    });
+  });
+  await page.goto(`${base}/?sim=1`);
+  await page.getByTestId('start-screen').waitFor({ timeout: 15_000 });
+  await trainerConnected(page);
+  await page.getByTestId('ride-kind-route').click();
+  const option = page.getByTestId('route-import-scenery');
+  check('scenery: import option off by default', !(await option.isChecked()));
+  await option.check();
+  await page.getByTestId('route-import').setInputFiles({
+    name: 'isar.gpx',
+    mimeType: 'application/gpx+xml',
+    buffer: Buffer.from(gpx),
+  });
+  const row = page.getByTestId('route-row').filter({ hasText: 'Isar web test' });
+  const ready = await row
+    .getByTestId('route-scenery-badge')
+    .waitFor({ timeout: 60_000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    'scenery: fetched from the browser (form POST) and stored',
+    ready &&
+      requests.length > 0 &&
+      requests.every((r) => r.method === 'POST' && r.body.startsWith('data=')),
+    `${requests.length} requests`,
+  );
+  await row.getByTestId('route-select').click();
+  await row.getByTestId('route-go-ride').click();
+  await page.getByTestId('start-open-ride').click();
+  const scene = page.getByTestId('ride-scene');
+  let buildings = 0;
+  for (let i = 0; i < 40 && buildings === 0; i++) {
+    await page.waitForTimeout(250);
+    buildings = Number((await scene.getAttribute('data-buildings')) ?? 0);
+  }
+  check('scenery: the road view draws buildings', buildings > 0, `${buildings} buildings`);
+  check(
+    'scenery: attribution shown',
+    (await page.getByTestId('scene-attribution').isVisible()) &&
+      (await page.getByTestId('scene-attribution').innerText()) === '© OpenStreetMap contributors',
+  );
+  await page.reload();
+  await page.getByTestId('ride-kind-route').click();
+  const kept = await page
+    .getByTestId('route-row')
+    .filter({ hasText: 'Isar web test' })
+    .getByTestId('route-scenery-badge')
+    .waitFor({ timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('scenery: kept in IndexedDB across a reload', kept);
+  check('no console errors (scenery)', problems.length === 0, problems.join(' | '));
+  await context.close();
+}
+
 const server = await startServer();
 const browser = await chromium.launch();
 try {
@@ -502,6 +581,7 @@ try {
   await groupRide(browser, server.base);
   await pairingWithoutPicker(browser, server.base);
   await insecureNotice(server.base, server.port);
+  await scenery(browser, server.base);
 } catch (err) {
   check('run completed', false, err instanceof Error ? (err.stack ?? err.message) : String(err));
 } finally {

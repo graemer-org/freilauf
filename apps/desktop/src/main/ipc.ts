@@ -11,7 +11,9 @@ import { isLogLevel } from '../renderer/core/logFormat';
 import type { BluetoothChooser } from './bluetoothChooser';
 import type { DiagnosticLog } from './logFile';
 import type { OverlayController } from './overlay';
+import type { OverpassClient } from './overpassClient';
 import type { RideStore } from './rideStore';
+import { isRouteId, type SceneryStore } from './sceneryStore';
 import type { AppOrigin } from './security';
 import { isAppUrl } from './security';
 import { isDeviceKind, isPlainObject } from './settings';
@@ -33,6 +35,8 @@ export interface IpcDeps {
   openLogFolder(): Promise<void>;
   exportLog(): Promise<string | null>;
   log(m: string): void;
+  /** Scenery along routes: the Overpass request and the stored files. */
+  scenery?: { store: SceneryStore; overpass: OverpassClient };
   /** Share with my watch: the current status. */
   watchRelayStatus?(): WatchRelayStatus;
   /** Every accepted LiveState from the main window (feeds the watch relay). */
@@ -213,6 +217,33 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
       bad(IPC.diagReadRecent);
     return deps.diag.file.readRecent(maxBytes);
   });
+
+  // scenery (docs/adr/0011-osm-scenery.md)
+  const scenery = () => {
+    if (!deps.scenery) throw new Error('scenery is not available');
+    return deps.scenery;
+  };
+  handle(IPC.sceneryOverpass, mainOnly, (_who, requestId, query) => {
+    if (!isShortString(requestId) || typeof query !== 'string') bad(IPC.sceneryOverpass);
+    return scenery().overpass.query(requestId, query);
+  });
+  on(IPC.sceneryCancel, mainOnly, (_who, requestId) => {
+    if (!isShortString(requestId)) return deps.log('scenery.cancel: invalid request id');
+    deps.scenery?.overpass.cancel(requestId);
+  });
+  handle(IPC.sceneryLoad, mainOnly, (_who, routeId) => {
+    if (!isRouteId(routeId)) bad(IPC.sceneryLoad);
+    return scenery().store.load(routeId);
+  });
+  handle(IPC.scenerySave, mainOnly, async (_who, routeId, text) => {
+    if (!isRouteId(routeId) || typeof text !== 'string') bad(IPC.scenerySave);
+    await scenery().store.save(routeId, text);
+  });
+  handle(IPC.sceneryRemove, mainOnly, async (_who, routeId) => {
+    if (!isRouteId(routeId)) bad(IPC.sceneryRemove);
+    await scenery().store.remove(routeId);
+  });
+  handle(IPC.sceneryList, mainOnly, () => scenery().store.list());
 
   // share with my watch (settings go through settings:update)
   handle(

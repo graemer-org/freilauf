@@ -7,7 +7,7 @@
   its hotkey, simulation mode, where the log is
 - [routes.md](routes.md) — riding real routes from GPX files: importing, what happens to noisy
   elevation, starting part-way or jumping by clicking the profile, difficulty, loops and laps,
-  sharing limits, recording with a map
+  sharing limits, surroundings from OpenStreetMap, recording with a map
 - [group-rides.md](group-rides.md) — ride with friends: create a ride and send the link (no
   setup), what the public relay servers see, troubleshooting, and the advanced own-server option
 - [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
@@ -44,6 +44,7 @@ The rest of this page is technical: decisions, protocols and how features are bu
 | [0008](adr/0008-rumble-items.md)                 | Freilauf Rumble: feed bags, two item slots, items, compatibility with 0007's format   |
 | [0009](adr/0009-rumble-road-items.md)            | Rumble road items (energy bar, tacks, mini tool, chain, team car, rough), protocol v3 |
 | [0010](adr/0010-ghost-rider.md)                  | Ghost rider: route coordinates, continuous parts, jumps during a race, storage        |
+| [0011](adr/0011-osm-scenery.md)                  | Scenery from OpenStreetMap: fetched once on request, route-relative model, licence    |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.

@@ -56,3 +56,88 @@ export { haversineM, project, unproject, utf8ByteLength } from './geo';
 
 export type { MatchPoint, MatchResult } from './match';
 export { MATCH_TOLERANCE_M, MIN_MATCH_M, matchTrackToRoute } from './match';
+
+export type {
+  BuildingKind,
+  DecodeSceneryResult,
+  GroundKind,
+  PlaceKind,
+  SceneryBuilding,
+  SceneryModel,
+  SceneryPlace,
+  SceneryStretch,
+  SceneryStructure,
+  ScenerySummary,
+  StructureKind,
+  WaterKind,
+} from './scenery';
+export {
+  BUILDING_KINDS,
+  GROUND_KINDS,
+  MAX_SCENERY_BUILDINGS,
+  MAX_SCENERY_BYTES,
+  MAX_SCENERY_PLACES,
+  MAX_SCENERY_STRETCHES,
+  MAX_STRETCH_M,
+  OSM_ATTRIBUTION,
+  SCENERY_CORRIDOR_M,
+  SCENERY_FORMAT,
+  SCENERY_FORMAT_VERSION,
+  WATER_KINDS,
+  boundScenery,
+  decodeScenery,
+  emptyScenery,
+  encodeScenery,
+  forEachBuildingIn,
+  forEachStretchIn,
+  lowerBound,
+  sceneryIsEmpty,
+  summarizeScenery,
+} from './scenery';
+
+export type {
+  Bbox,
+  LatLon,
+  OsmElement,
+  OsmTags,
+  OverpassParseResult,
+  SceneryChunk,
+} from './overpass';
+export {
+  DEFAULT_OVERPASS_URL,
+  OVERPASS_TIMEOUT_S,
+  OVERPASS_USER_AGENT,
+  coveredSamples,
+  overpassBody,
+  overpassQuery,
+  parseOverpassJson,
+  routeXY,
+  sceneryChunks,
+} from './overpass';
+
+export type { SceneryBuildOptions } from './sceneryBuild';
+export {
+  BUILDING_MIN_OFFSET_M,
+  PROBE_M,
+  SceneryBuilder,
+  areaKind,
+  buildScenery,
+  buildingShape,
+  parseMetres,
+} from './sceneryBuild';
+
+export type {
+  CancelSignal,
+  FetchSceneryOptions,
+  FetchSceneryResult,
+  OverpassResponse,
+  OverpassTransport,
+  SceneryProgress,
+} from './sceneryFetch';
+export {
+  CancelSource,
+  CancelledError,
+  cancellableSleep,
+  fetchScenery,
+  isRetryableStatus,
+} from './sceneryFetch';

@@ -332,6 +332,41 @@ function sanitizeSignallingUrl(raw: unknown, fallback: string, problems: Problem
   return fallback;
 }
 
+/**
+ * The Overpass endpoint for scenery: an https URL, or http on this computer (an own server).
+ * Empty or invalid → the default (the public instance).
+ */
+export function isOverpassUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || raw.length > 300 || /\s/.test(raw)) return false;
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) return false;
+    if (u.protocol === 'https:') return u.hostname.length > 0;
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeScenery(
+  raw: unknown,
+  fallback: Settings['scenery'],
+  problems: Problems,
+): Settings['scenery'] {
+  const root = obj(raw, 'scenery', problems);
+  let overpassUrl = fallback.overpassUrl;
+  if (root.overpassUrl !== undefined) {
+    if (typeof root.overpassUrl === 'string' && root.overpassUrl.trim() === '')
+      overpassUrl = DEFAULT_SETTINGS.scenery.overpassUrl;
+    else if (isOverpassUrl(root.overpassUrl)) overpassUrl = root.overpassUrl;
+    else problems.push('scenery.overpassUrl: expected an https:// URL (or http://localhost)');
+  }
+  return {
+    enabled: bool(root.enabled, fallback.enabled, 'scenery.enabled', problems),
+    overpassUrl,
+  };
+}
+
 /** Advanced relay list: ws(s):// URLs only, de-duplicated, at most 16. */
 function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems): string[] {
   if (raw === undefined) return [...fallback];
@@ -568,6 +603,7 @@ export function sanitizeSettings(
     },
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
     ghost: sanitizeGhost(root.ghost, fallback.ghost ?? DEFAULT_SETTINGS.ghost, problems),
+    scenery: sanitizeScenery(root.scenery, fallback.scenery ?? DEFAULT_SETTINGS.scenery, problems),
   };
 }
 
