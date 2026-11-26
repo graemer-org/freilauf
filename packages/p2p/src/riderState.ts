@@ -6,6 +6,7 @@ import type {
   RiderRoute,
   RiderState,
   WirePuddle,
+  WireRough,
 } from './types';
 
 /** No update for this long -> `stale: true`. */
@@ -42,9 +43,15 @@ export const RIDER_STATE_LIMITS = {
   itemsVersion: [2, 1_000],
   /** Puddle positions: route metres or ridden-distance race metres (offset included). */
   puddleM: [-100_000, 11_000_000],
-  /** Puddles one rider can have on the road at once, on the wire. */
+  /** Puddles (and tacks) one rider can have on the road at once, on the wire. */
   puddles: [0, 4],
+  /** v3: rough sections per rider on the wire, and their length (m). */
+  roughSections: [0, 2],
+  roughLengthM: [1, 300],
 } as const;
+
+/** Rough-section looks on the wire: a short lowercase word (the app checks it knows it). */
+export const ROUGH_VARIANT_PATTERN = /^[a-z]{1,16}$/;
 
 /** Item kinds on the wire: a short camelCase word (the app checks it is one it knows). */
 export const RUMBLE_KIND_PATTERN = /^[a-z][a-zA-Z]{0,23}$/;
@@ -62,6 +69,32 @@ function sanitizePuddle(value: unknown): WirePuddle | undefined {
   }
   if (used !== undefined && typeof used !== 'boolean') return undefined;
   return { id, m, ...(routeId !== undefined ? { routeId } : {}), s, ...(used ? { used } : {}) };
+}
+
+function sanitizeRough(value: unknown): WireRough | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const { id, m, routeId, s, len, variant } = value as Record<string, unknown>;
+  const L = RIDER_STATE_LIMITS;
+  if (typeof id !== 'string' || !RUMBLE_ID_PATTERN.test(id)) return undefined;
+  if (!inRange(m, L.puddleM) || !inRange(s, L.itemTimerS)) return undefined;
+  if (!inRange(len, L.roughLengthM)) return undefined;
+  if (typeof variant !== 'string' || !ROUGH_VARIANT_PATTERN.test(variant)) return undefined;
+  if (routeId !== undefined && (typeof routeId !== 'string' || !ROUTE_ID.test(routeId))) {
+    return undefined;
+  }
+  return { id, m, ...(routeId !== undefined ? { routeId } : {}), len, s, variant };
+}
+
+/** A list of puddles (or tacks): at most 4, distinct ids; null when malformed. */
+function sanitizePuddles(value: unknown): WirePuddle[] | null {
+  if (!Array.isArray(value) || value.length > RIDER_STATE_LIMITS.puddles[1]) return null;
+  const list: WirePuddle[] = [];
+  for (const raw of value) {
+    const p = sanitizePuddle(raw);
+    if (!p || list.some((q) => q.id === p.id)) return null;
+    list.push(p);
+  }
+  return list;
 }
 
 /** Validates the optional `items` field; undefined when malformed (the packet is dropped). */
@@ -86,7 +119,7 @@ function sanitizeItems(value: unknown): RiderItems | undefined {
     }
     out.hit = { kind, s };
   }
-  for (const key of ['capeS', 'protectedS'] as const) {
+  for (const key of ['capeS', 'protectedS', 'repairS'] as const) {
     const t = c[key];
     if (t === undefined) continue;
     if (!inRange(t, L.itemTimerS)) return undefined;
@@ -102,16 +135,22 @@ function sanitizeItems(value: unknown): RiderItems | undefined {
     if (typeof away !== 'boolean') return undefined;
     if (away) out.away = true;
   }
-  const puddles = c['puddles'];
-  if (puddles !== undefined) {
-    if (!Array.isArray(puddles) || puddles.length > L.puddles[1]) return undefined;
-    const list: WirePuddle[] = [];
-    for (const raw of puddles) {
-      const p = sanitizePuddle(raw);
-      if (!p || list.some((q) => q.id === p.id)) return undefined;
-      list.push(p);
+  for (const key of ['puddles', 'tacks'] as const) {
+    if (c[key] === undefined) continue;
+    const list = sanitizePuddles(c[key]);
+    if (!list) return undefined;
+    if (list.length > 0) out[key] = list;
+  }
+  const rough = c['rough'];
+  if (rough !== undefined) {
+    if (!Array.isArray(rough) || rough.length > L.roughSections[1]) return undefined;
+    const list: WireRough[] = [];
+    for (const raw of rough) {
+      const r = sanitizeRough(raw);
+      if (!r || list.some((q) => q.id === r.id)) return undefined;
+      list.push(r);
     }
-    if (list.length > 0) out.puddles = list;
+    if (list.length > 0) out.rough = list;
   }
   return out;
 }

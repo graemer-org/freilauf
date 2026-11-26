@@ -20,7 +20,15 @@ import type {
   IncomingClaim,
   RiderItems,
 } from '@freilauf/p2p';
-import { MAX_LIVE_PUDDLES, PuddleLedger, PuddleWatch, claimPosition } from '@freilauf/p2p';
+import {
+  MAX_LIVE_PUDDLES,
+  MAX_LIVE_ROUGH,
+  PuddleLedger,
+  PuddleWatch,
+  RoughLedger,
+  attackEpoch,
+  claimPosition,
+} from '@freilauf/p2p';
 import type { RoutePosition, RouteTrack } from '@freilauf/routes';
 import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
 import type { EnergyTotals, RecordedRide, RideSnapshot } from '@freilauf/session';
@@ -50,10 +58,13 @@ import type {
   GroupMode,
   PowerUpBlock,
   PowerUpKind,
+  DropKind,
   PowerUpLive,
   PuddleLive,
+  RoughLive,
+  RoughVariant,
 } from '../../shared/powerUps';
-import { isAttackKind } from '../../shared/powerUps';
+import { ROUGH_LABEL, isAttackKind } from '../../shared/powerUps';
 import type { LocalRace } from './rumble';
 import {
   attackPosition,
@@ -64,6 +75,9 @@ import {
   puddleRace,
   puddlesLive,
   resolveTarget,
+  roughDropAt,
+  roughLive,
+  roughVariantFor,
 } from './rumble';
 import { combineSteering, leverOutput } from './levers';
 import type { LeverOutput } from './levers';
@@ -95,6 +109,8 @@ export interface GroupLink {
     items?: RiderItems;
   }): void;
   getRiders(): GroupRider[];
+  /** This rider's peer id in the group (seeds the look of its rough sections). */
+  readonly localPeerId?: string;
   /** The group's rules as the host set them; null when none were sent. */
   getRules?(): GroupRules | null;
   /** Rumble: sends an attack to a peer (GroupRide.sendAttack); null when it cannot. */
@@ -263,14 +279,23 @@ export class RideController {
   #groupCleanup: (() => void) | null = null;
   /** Rumble attacks this rider sent and is waiting to hear about, by id. */
   #attacks = new Map<string, { kind: PowerUpKind; target: string; targetId: string }>();
-  /** Rumble puddle claims this rider sent, by id: whose puddle. */
-  #claims = new Map<string, { dropperName: string }>();
+  /** Rumble claims (mud puddle, tacks) this rider sent, by id: whose and what. */
+  #claims = new Map<string, { dropperName: string; kind: DropKind }>();
   /** Rumble: this rider's own mud puddles on the road (it alone decides who they hit). */
   #puddles = new PuddleLedger();
-  /** Rumble: the others' puddles, to notice riding through one. */
-  #watch = new PuddleWatch();
-  /** Rumble: puddles around this rider at the last tick (for the scene). */
+  /** Rumble (v3): this rider's own tacks on the road, decided like its puddles. */
+  #tacks = new PuddleLedger();
+  /** Rumble (v3): this rider's own rough sections (no claims: everyone checks for itself). */
+  #rough = new RoughLedger();
+  /** Seeds the look of this rider's rough sections when the group gives no peer id. */
+  readonly #roughSeed = attackEpoch();
+  /** Rumble: the others' puddles and tacks, to notice riding through one. */
+  #watch = new PuddleWatch('puddles');
+  #tackWatch = new PuddleWatch('tacks');
+  /** Rumble: puddles and tacks around this rider at the last tick (for the scene). */
   #puddlesNear: PuddleLive[] = [];
+  /** Rumble: rough sections around this rider at the last tick. */
+  #roughNear: RoughLive[] = [];
   /** Where this rider was in the race at the last tick (attack payloads, plausibility). */
   #race: LocalRace = { distanceM: 0, offsetM: 0, route: null };
   /** Whether the last tick was a Rumble (for the broadcast and the handlers). */
@@ -349,8 +374,7 @@ export class RideController {
     this.#group?.setPuddleClaimHandler?.(null);
     this.#attacks.clear();
     this.#claims.clear();
-    this.#puddles.clear();
-    this.#watch.clear();
+    this.#clearRoad();
     this.#group = group;
     if (!group) return;
     group.setAttackHandler?.((attack) => this.#onAttack(attack));
@@ -557,7 +581,8 @@ export class RideController {
       this.#log.info(`item not used: ${side} slot empty (${source})`, { source });
       return false;
     }
-    if (kind === 'puddle') return this.#dropPuddle(slot, side, source);
+    if (kind === 'puddle' || kind === 'tacks') return this.#dropOnRoad(kind, slot, side, source);
+    if (kind === 'rough') return this.#dropRough(slot, side, source);
     if (!isAttackKind(kind)) {
       const used = engine.activate(slot);
       this.#log.info(used ? `item used: ${kind} (${side}, ${source})` : `item not used: ${kind}`, {
@@ -577,7 +602,9 @@ export class RideController {
     const id = group.sendAttack(target.peerId, () => {
       // Re-sends carry the latest positions (same id, applied once).
       const now = group.getRiders().find((r) => r.peerId === target.peerId);
-      const gapM = Math.max(0, now?.gapM ?? target.gapM);
+      const seen = now?.gapM ?? target.gapM;
+      // How far ahead the target is (the dropped chain: how far behind).
+      const gapM = Math.max(0, kind === 'chain' ? -seen : seen);
       return { kind, gapM, ...attackPosition(this.#race, now?.sameRoute ?? target.sameRoute) };
     });
     if (id === null) {
@@ -595,34 +622,76 @@ export class RideController {
     return true;
   }
 
-  /** Rumble: drops a mud puddle on the road behind this rider (a world object it broadcasts). */
-  #dropPuddle(slot: number, side: string, source: ShiftSource): boolean {
+  /**
+   * Rumble: drops a mud puddle or (v3) tacks on the road behind this rider (a world object it
+   * broadcasts, and alone decides whom it hits).
+   */
+  #dropOnRoad(kind: DropKind, slot: number, side: string, source: ShiftSource): boolean {
     const engine = this.#powerUps!;
-    const note = engine.playNote(slot) ?? this.#puddleNote();
+    const note = engine.playNote(slot) ?? this.#dropNote(kind);
     if (note !== null || engine.spendItem(slot) === null) {
-      this.#log.info(`item not used: puddle (${side}, ${source})`, { source, note });
+      this.#log.info(`item not used: ${kind} (${side}, ${source})`, { source, note });
       return false;
     }
-    const id = this.#puddles.drop(puddleDropAt(this.#race), this.#now());
+    const ledger = kind === 'tacks' ? this.#tacks : this.#puddles;
+    const id = ledger.drop(puddleDropAt(this.#race), this.#now());
     if (id === null) {
-      engine.returnItem('puddle');
+      engine.returnItem(kind);
       return false;
     }
-    engine.noteOutgoing('puddle', '', 'sent');
-    this.#log.info(`item used: puddle dropped (${side}, ${source})`, {
+    engine.noteOutgoing(kind, '', 'sent');
+    this.#log.info(`item used: ${kind} dropped (${side}, ${source})`, {
       source,
       ...(this.#race.route ? { routeM: round(this.#race.route.m, 0) } : {}),
     });
     return true;
   }
 
-  /** Why a puddle cannot be dropped now (besides the engine's reasons), or null. */
-  #puddleNote(): string | null {
+  /** Rumble (v3): lays a rough section behind this rider (its look seeded by who and when). */
+  #dropRough(slot: number, side: string, source: ShiftSource): boolean {
+    const engine = this.#powerUps!;
+    const note = engine.playNote(slot) ?? this.#dropNote('rough');
+    if (note !== null || engine.spendItem(slot) === null) {
+      this.#log.info(`item not used: rough (${side}, ${source})`, { source, note });
+      return false;
+    }
+    const variant = roughVariantFor(this.#group?.localPeerId ?? this.#roughSeed, this.#rough.count);
+    const id = this.#rough.drop(roughDropAt(this.#race), variant, this.#now());
+    if (id === null) {
+      engine.returnItem('rough');
+      return false;
+    }
+    engine.noteOutgoing('rough', ROUGH_LABEL[variant], 'sent');
+    this.#log.info(`item used: rough section laid (${side}, ${source})`, { source, variant });
+    return true;
+  }
+
+  /** Why a puddle, tacks or a rough section cannot be dropped now (besides the engine), or null. */
+  #dropNote(kind: DropKind | 'rough'): string | null {
     if (!this.#group) return 'Only in a group ride';
-    if (this.#puddles.live(this.#now()) >= MAX_LIVE_PUDDLES) {
-      return `${MAX_LIVE_PUDDLES} puddles already down`;
+    const now = this.#now();
+    if (kind === 'rough') {
+      return this.#rough.live(now) >= MAX_LIVE_ROUGH
+        ? `${MAX_LIVE_ROUGH} rough sections already down`
+        : null;
+    }
+    const ledger = kind === 'tacks' ? this.#tacks : this.#puddles;
+    if (ledger.live(now) >= MAX_LIVE_PUDDLES) {
+      return `${MAX_LIVE_PUDDLES} ${kind === 'tacks' ? 'tacks' : 'puddles'} already down`;
     }
     return null;
+  }
+
+  /** Rumble: everything this rider has on the road, and what it watches there, goes. */
+  #clearRoad(): void {
+    this.#puddles.clear();
+    this.#tacks.clear();
+    this.#rough.clear();
+    this.#watch.clear();
+    this.#tackWatch.clear();
+    this.#puddlesNear = [];
+    this.#roughNear = [];
+    this.#powerUps?.setTerrain(null);
   }
 
   /** Waves the effort challenge on offer away. */
@@ -903,9 +972,7 @@ export class RideController {
     this.#rumble = mode === 'rumble';
     if (wasRumble && !this.#rumble) {
       // Back to a normal ride: puddles dry up at once, nothing is claimed any more.
-      this.#puddles.clear();
-      this.#watch.clear();
-      this.#puddlesNear = [];
+      this.#clearRoad();
     }
     this.#powerUps?.setMode(mode);
     const driven = this.#drivePowerUps(ride, workout, braking, routePosition);
@@ -953,6 +1020,7 @@ export class RideController {
         this.#rumble,
         ride.state === 'riding',
         this.#rumble ? this.#puddles.wire(now) : [],
+        this.#rumble ? { tacks: this.#tacks.wire(now), rough: this.#rough.wire(now) } : {},
       ),
       // Riders on the same route are placed by where they are on it (docs/routes.md).
       ...(track && routeM !== null
@@ -1012,8 +1080,8 @@ export class RideController {
     const slotTargets = [...c.slotTargets];
     c.slots.forEach((kind, i) => {
       if (!kind || slotNotes[i] !== null) return;
-      if (kind === 'puddle') {
-        slotNotes[i] = this.#puddleNote();
+      if (kind === 'puddle' || kind === 'tacks' || kind === 'rough') {
+        slotNotes[i] = this.#dropNote(kind);
         return;
       }
       if (!isAttackKind(kind)) return;
@@ -1025,7 +1093,7 @@ export class RideController {
     return {
       ...pu,
       canActivate,
-      rumble: { ...c, slotNotes, slotTargets, puddles: this.#puddlesNear },
+      rumble: { ...c, slotNotes, slotTargets, puddles: this.#puddlesNear, rough: this.#roughNear },
     };
   }
 
@@ -1039,32 +1107,54 @@ export class RideController {
     const engine = this.#powerUps;
     if (!this.#rumble || !group || !engine) {
       this.#puddlesNear = [];
+      this.#roughNear = [];
+      engine?.setTerrain(null);
       return;
     }
-    const riders = group.getRiders().filter(inRace);
+    const all = group.getRiders();
+    const riders = all.filter(inRace);
     const me = puddleRace(this.#race);
-    const { crossed, near } = this.#watch.update(riders, me);
-    for (const c of crossed) {
-      const blocked = engine.hitCheck();
-      if (blocked !== null || !group.claimPuddle) {
-        this.#log.info(`rode through ${c.dropperName}’s puddle: ${blocked ?? 'no group'}`);
-        continue;
+    const now = this.#now();
+    const name = this.#settings.rider.name;
+    const near: PuddleLive[] = [];
+    for (const [kind, watch, ledger] of [
+      ['puddle', this.#watch, this.#puddles],
+      ['tacks', this.#tackWatch, this.#tacks],
+    ] as const) {
+      const seen = watch.update(riders, me);
+      for (const c of seen.crossed) {
+        const blocked = engine.hitCheck();
+        if (blocked !== null || !group.claimPuddle) {
+          this.#log.info(`rode through ${c.dropperName}’s ${kind}: ${blocked ?? 'no group'}`);
+          continue;
+        }
+        const at = c.puddle;
+        const id = group.claimPuddle(c.dropper, () => ({
+          puddle: at.id,
+          raceM: claimPosition(at, puddleRace(this.#race)),
+          ...(at.routeId ? { routeId: at.routeId } : {}),
+        }));
+        if (id !== null) this.#claims.set(id, { dropperName: c.dropperName, kind });
+        this.#log.info(`rode through ${c.dropperName}’s ${kind}: claimed`, { sent: id !== null });
       }
-      const at = c.puddle;
-      const id = group.claimPuddle(c.dropper, () => ({
-        puddle: at.id,
-        raceM: claimPosition(at, puddleRace(this.#race)),
-        ...(at.routeId ? { routeId: at.routeId } : {}),
-      }));
-      if (id !== null) this.#claims.set(id, { dropperName: c.dropperName });
-      this.#log.info(`rode through ${c.dropperName}’s puddle: claimed`, { sent: id !== null });
+      near.push(...puddlesLive(seen.near, ledger.wire(now), this.#race, name, kind));
     }
-    this.#puddlesNear = puddlesLive(
-      near,
-      this.#puddles.wire(this.#now()),
-      this.#race,
-      this.#settings.rider.name,
-    );
+    this.#puddlesNear = near.sort((a, b) => Math.abs(a.aheadM) - Math.abs(b.aheadM));
+    // Rough sections: everyone finds out for itself whether it rides on one (no claims).
+    const road = roughLive(all, this.#rough.wire(now), this.#race, name);
+    this.#roughNear = road.rough;
+    this.#setTerrain(road.terrain);
+  }
+
+  /** Tells the engine about the rough road under this rider (logged when it changes). */
+  #setTerrain(terrain: { variant: RoughVariant; by: string } | null): void {
+    const engine = this.#powerUps;
+    if (!engine) return;
+    const before = engine.toLive().rumble?.terrain ?? null;
+    engine.setTerrain(terrain);
+    if ((before?.variant ?? null) !== (terrain?.variant ?? null)) {
+      this.#log.info(terrain ? `rough section: ${terrain.variant}` : 'rough section: off');
+    }
   }
 
   /** Rumble: an attack aimed at this rider (already checked by the group link). */
@@ -1101,6 +1191,8 @@ export class RideController {
    */
   #onClaim(claim: IncomingClaim): ClaimVerdict {
     if (!this.#rumble) return 'gone';
+    const kind: DropKind = this.#tacks.has(claim.puddle) ? 'tacks' : 'puddle';
+    const ledger = kind === 'tacks' ? this.#tacks : this.#puddles;
     // Only a rider in the race can be hit: an app without Freilauf Rumble, or one paused, in an
     // ERG step or with items off, is refused (and the puddle stays for the next rider).
     const claimer = this.#group?.getRiders().find((r) => r.peerId === claim.from);
@@ -1110,9 +1202,9 @@ export class RideController {
     }
     const route = this.#race.route;
     const shape = route && claim.routeId === route.id ? route : null;
-    const d = this.#puddles.decide(claim, this.#now(), shape);
-    if (d.first) this.#powerUps?.noteOutgoing('puddle', claim.fromName, 'hit', claim.from);
-    this.#log.info(`puddle claim: ${d.result}`, { first: d.first });
+    const d = ledger.decide(claim, this.#now(), shape);
+    if (d.first) this.#powerUps?.noteOutgoing(kind, claim.fromName, 'hit', claim.from);
+    this.#log.info(`${kind} claim: ${d.result}`, { first: d.first });
     return d.result;
   }
 
@@ -1126,8 +1218,8 @@ export class RideController {
       this.#log.info(`puddle claim: ${o.result}`);
       return;
     }
-    const result = engine.receiveHit('puddle', sent.dropperName);
-    this.#log.info(`puddle hit: ${result}`, { raceOffsetM: round(engine.raceOffsetM, 1) });
+    const result = engine.receiveHit(sent.kind, sent.dropperName);
+    this.#log.info(`${sent.kind} hit: ${result}`, { raceOffsetM: round(engine.raceOffsetM, 1) });
   }
 
   #newPowerUps(): PowerUpEngine {

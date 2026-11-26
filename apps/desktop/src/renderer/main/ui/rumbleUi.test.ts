@@ -15,6 +15,7 @@ import { OverlayView } from '../../overlay/ui/OverlayView';
 import { groupRows, rumblePills } from '../../overlay/ui/logic';
 import {
   ItemSlotsView,
+  hitTitle,
   incomingText,
   itemCueText,
   outgoingText,
@@ -22,7 +23,7 @@ import {
   raceLine,
 } from './ItemSlots';
 import { GroupModeRow, ModeChoice } from './GroupMode';
-import { GroupTab } from './GroupTab';
+import { GroupTab, fxTag } from './GroupTab';
 import { AppContext } from './hooks';
 import { SummaryScreen } from './SummaryScreen';
 
@@ -455,5 +456,144 @@ describe('summary and overlay (SSR)', () => {
     );
     expect(stungHtml).toContain('Hornets from Anna');
     expect(stungHtml).toContain('gaps hidden');
+  });
+});
+
+describe('Rumble v3 items in the UI (ADR 0009)', () => {
+  it('slots: the new items with their names; the mini tool marked as of no use without a flat', () => {
+    const html = slots(
+      pu({
+        slots: ['tool', 'energyBar'],
+        slotNotes: ['Only with a flat or chain off', null],
+      }),
+    );
+    expect(html).toMatch(/data-testid="item-left"[^>]*data-kind="tool"[^>]*data-ready="false"/);
+    expect(html).toContain('is-unusable');
+    expect(html).toContain('Mini tool');
+    expect(html).toContain('Only with a flat or chain off');
+    expect(html).toMatch(
+      /data-testid="item-right"[^>]*data-kind="energyBar"[^>]*data-ready="true"/,
+    );
+    expect(html).toContain('Energy bar');
+    for (const [kind, name] of [
+      ['tacks', 'Tacks'],
+      ['chain', 'Dropped chain'],
+      ['teamCar', 'Team car'],
+      ['rough', 'Rough section'],
+    ] as const) {
+      expect(slots(pu({ slots: [kind, null] }))).toContain(name);
+    }
+  });
+
+  it('a flat tyre, the repair with its ring, a dropped chain and rough road under the rider', () => {
+    const flat = slots(pu({ hit: { kind: 'tacks', by: 'Ben', remainingS: 14, durationS: 20 } }));
+    expect(flat).toContain('Flat tyre!');
+    expect(flat).toContain('from Ben · 14 s');
+    expect(flat).toMatch(/data-testid="item-slots"[^>]*data-hit="tacks"[^>]*data-repair=""/);
+    const fixing = slots(
+      pu({
+        hit: {
+          kind: 'tacks',
+          by: 'Ben',
+          remainingS: 2,
+          durationS: 20,
+          repair: { remainingS: 2, durationS: 3 },
+        },
+      }),
+    );
+    expect(fixing).toContain('data-testid="rumble-repair"');
+    expect(fixing).toContain('Fixing the flat');
+    expect(fixing).toContain('Mini tool · 2 s');
+    expect(fixing).toContain('is-working');
+    expect(fixing).not.toContain('data-testid="rumble-hit"');
+    expect(hitTitle('chain')).toBe('Chain off!');
+    const rough = slots(pu({ terrain: { variant: 'gravel', by: 'Ben' } }));
+    expect(rough).toContain('data-testid="rumble-terrain"');
+    expect(rough).toContain('Gravel track');
+    expect(rough).toMatch(/data-terrain="gravel"/);
+  });
+
+  it('notices for the new items', () => {
+    const inc = (kind: 'tacks' | 'chain', result: 'hit' | 'blocked' = 'hit') =>
+      incomingText({ seq: 1, kind, by: 'Ben', result });
+    expect(inc('tacks')).toBe('Flat tyre! You rode over Ben’s tacks');
+    expect(inc('chain')).toBe('Chain off! Ben dropped your chain');
+    expect(inc('tacks', 'blocked')).toBe('Your rain cape kept off Ben’s tacks');
+    const out = (kind: 'tacks' | 'chain' | 'rough', result: 'sent' | 'hit', target = 'Cleo') =>
+      outgoingText({ seq: 1, kind, target, result });
+    expect(out('tacks', 'sent', '')).toBe('Tacks scattered behind you');
+    expect(out('tacks', 'hit')).toBe('Cleo rode over your tacks · flat tyre');
+    expect(out('chain', 'sent')).toBe('Dropped chain → Cleo');
+    expect(out('chain', 'hit')).toBe('Your dropped chain got Cleo');
+    expect(out('rough', 'sent', 'Cobbles')).toBe('Cobbles laid behind you');
+    const cue = (
+      type: 'repairing' | 'supplied' | 'ended' | 'activated',
+      kind: 'tool' | 'teamCar' | 'tacks' | 'chain' | 'energyBar',
+    ) =>
+      itemCueText(
+        pu({ supply: { seq: 1, kinds: ['tool', 'cape'] } }, { event: { seq: 2, type, kind } }),
+      );
+    expect(cue('repairing', 'tool')).toBe('Mini tool out · fixing it');
+    expect(cue('supplied', 'teamCar')).toBe('Team car: Mini tool and Rain cape');
+    expect(cue('ended', 'tacks')).toBe('Tyre fixed · back up to speed');
+    expect(cue('ended', 'chain')).toBe('Chain back on');
+    expect(cue('activated', 'energyBar')).toBe('Energy bar · fresh legs for 15 s');
+  });
+
+  it('what lies ahead: tacks, a rough section; others in the group panel', () => {
+    expect(
+      puddleAhead(
+        rumble({ puddles: [{ id: 't', kind: 'tacks', aheadM: 24.6, own: false, by: 'Ben' }] }),
+      ),
+    ).toBe('Ben’s tacks ahead · 25 m');
+    const rough = [
+      { id: 'r', fromM: 80, toM: 230, variant: 'roots' as const, own: false, by: 'Ben' },
+    ];
+    expect(puddleAhead(rumble({ rough }))).toBe('Forest path ahead · 80 m');
+    // Own sections are not announced; nor one the rider is already on.
+    expect(puddleAhead(rumble({ rough: [{ ...rough[0]!, own: true }] }))).toBeNull();
+    expect(fxTag({ v: 3, hit: { kind: 'tacks', s: 9 } })).toBe('Flat tyre');
+    expect(fxTag({ v: 3, hit: { kind: 'tacks', s: 2 }, repairS: 2 })).toBe('Fixing a flat');
+    expect(fxTag({ v: 3, hit: { kind: 'chain', s: 2 } })).toBe('Chain off');
+  });
+
+  it('the overlay during a flat, the repair, rough road and tacks ahead', () => {
+    const texts = (c: Partial<RumbleLive>) => rumblePills(pu(c)).map((p) => p.text);
+    expect(
+      texts({
+        slots: ['tool', null],
+        hit: { kind: 'tacks', by: 'Ben', remainingS: 12, durationS: 20 },
+      }),
+    ).toEqual(['Flat tyre from Ben', 'L Mini tool · R –']);
+    expect(
+      texts({
+        hit: {
+          kind: 'chain',
+          by: 'Ben',
+          remainingS: 0.6,
+          durationS: 6,
+          repair: { remainingS: 0.6, durationS: 1 },
+        },
+      })[0],
+    ).toBe('Chain going back on');
+    expect(texts({ terrain: { variant: 'debris', by: 'Ben' } })).toEqual([
+      'Branches and leaves',
+      'L – · R –',
+    ]);
+    expect(
+      texts({ puddles: [{ id: 't', kind: 'tacks', aheadM: 30, own: false, by: 'Ben' }] }),
+    ).toEqual(['L – · R –', 'Tacks ahead · 30 m']);
+    const live: LiveState = {
+      ride,
+      devices: { trainer: { name: 'T', state: 'connected' }, heartRate: null, controller: null },
+      group: { roomCode: 'X', mode: 'rumble', riders: [rider('Ben', 25)] },
+      localName: 'Me',
+      powerUps: pu({ hit: { kind: 'tacks', by: 'Ben', remainingS: 12, durationS: 20 }, lossM: -9 }),
+    };
+    const html = renderToString(
+      createElement(OverlayView, { live, settings: DEFAULT_SETTINGS.overlay, editMode: false }),
+    );
+    expect(html).toMatch(/data-testid="overlay-powerup-hit"[^>]*data-kind="tacks"/);
+    expect(html).toContain('Flat tyre from Ben');
   });
 });

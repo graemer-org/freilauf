@@ -70,9 +70,30 @@ export interface WirePuddle {
   used?: true;
 }
 
+/**
+ * A rough section of road laid by a rider (Rumble protocol v3, ADR 0009): it ends at `m` (the
+ * dropper's race position minus 2 m when laid, coordinates as for `WirePuddle`) and reaches
+ * `len` metres back from there. Not single-hit: every other rider is slowed while inside it.
+ */
+export interface WireRough {
+  /** `<epoch>.<seq>`, unique per dropper. */
+  id: string;
+  m: number;
+  routeId?: string;
+  /** Length back from `m`, metres (1 … 300). */
+  len: number;
+  /** Seconds until it is gone. */
+  s: number;
+  /** Its look: a short lowercase word ('cobbles', 'gravel', 'roots', 'debris'; others ignored). */
+  variant: string;
+}
+
 /** A rider's Freilauf Rumble state as broadcast (see `RiderState.items`). */
 export interface RiderItems {
-  /** Rumble protocol version the client speaks (2; 1 was ADR 0007's superseded format). */
+  /**
+   * Rumble protocol version the client speaks: 2 (ADR 0008) or 3 (ADR 0009: tacks, dropped
+   * chain, rough sections and the self items). 1 was ADR 0007's superseded format.
+   */
   v: number;
   /**
    * Rumble only: the signed race offset (m), negative after hits. Placed by this instead of
@@ -91,6 +112,12 @@ export interface RiderItems {
   away?: boolean;
   /** Mud puddles this rider dropped that are still on the road (or just used), at most 4. */
   puddles?: WirePuddle[];
+  /** v3: seconds until the mini tool has fixed the hit (`hit` is a flat tyre or a dropped chain). */
+  repairS?: number;
+  /** v3: tacks this rider scattered on the road (or just used), at most 4; like `puddles`. */
+  tacks?: WirePuddle[];
+  /** v3: rough sections this rider laid that are still there, at most 2. */
+  rough?: WireRough[];
 }
 
 /** A rider's place on a route, as broadcast. */

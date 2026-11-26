@@ -11,6 +11,7 @@ import {
   POWER_UP_KEY,
   formatSignedM,
   gapsHidden,
+  ROUGH_LABEL,
 } from '../../../shared/powerUps';
 import { formatGap } from '../../main/ui/format';
 
@@ -280,7 +281,7 @@ export function routeStrip(route: LiveState['route']): RouteStrip | null {
 
 /** One compact power-up line for the overlay: what is held, running or asked for. */
 export interface PowerUpPill {
-  key: 'challenge' | 'effect' | 'held' | 'hit' | 'slots' | 'guard' | 'puddle';
+  key: 'challenge' | 'effect' | 'held' | 'hit' | 'slots' | 'guard' | 'puddle' | 'terrain';
   kind: PowerUpKind | null;
   text: string;
   /** Quieter second part, e.g. "212 W now", "+38 m". */
@@ -306,13 +307,33 @@ export function rumblePills(pu: LiveState['powerUps']): PowerUpPill[] {
   const c = pu?.rumble;
   if (!pu || !c) return [];
   const out: PowerUpPill[] = [];
-  if (c.hit) {
-    const name = POWER_UP_INFO[c.hit.kind].label;
+  if (c.hit?.repair) {
     out.push({
       key: 'hit',
-      kind: c.hit.kind,
+      kind: 'tool',
+      text: c.hit.kind === 'chain' ? 'Chain going back on' : 'Fixing the flat',
+      detail: `${Math.ceil(c.hit.repair.remainingS)} s`,
+      active: true,
+      tone: 'guard',
+    });
+  } else if (c.hit) {
+    const k = c.hit.kind;
+    const name = k === 'tacks' ? 'Flat tyre' : k === 'chain' ? 'Chain off' : POWER_UP_INFO[k].label;
+    out.push({
+      key: 'hit',
+      kind: k,
       text: `${name} from ${c.hit.by}`,
-      detail: `${c.hit.kind === 'hornets' ? 'gaps hidden · ' : ''}${Math.ceil(c.hit.remainingS)} s`,
+      detail: `${k === 'hornets' ? 'gaps hidden · ' : ''}${Math.ceil(c.hit.remainingS)} s`,
+      active: true,
+      tone: 'attack',
+    });
+  }
+  if (c.terrain) {
+    out.push({
+      key: 'terrain',
+      kind: 'rough',
+      text: ROUGH_LABEL[c.terrain.variant],
+      detail: `${c.terrain.by}’s rough section`,
       active: true,
       tone: 'attack',
     });
@@ -374,10 +395,11 @@ export function rumblePills(pu: LiveState['powerUps']): PowerUpPill[] {
       active: pu.effect.phase === 'active',
     });
   } else if (puddle) {
+    const tacks = puddle.kind === 'tacks';
     out.push({
       key: 'puddle',
-      kind: 'puddle',
-      text: `Mud puddle ahead · ${Math.max(1, Math.round(puddle.aheadM))} m`,
+      kind: tacks ? 'tacks' : 'puddle',
+      text: `${tacks ? 'Tacks' : 'Mud puddle'} ahead · ${Math.max(1, Math.round(puddle.aheadM))} m`,
       detail: offset,
       active: false,
       tone: 'attack',

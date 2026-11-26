@@ -6,15 +6,15 @@
  * on the local rider. Pure bookkeeping; the renderers do the drawing.
  */
 import type { RiderItems } from '@freilauf/p2p';
-import type { PowerUpKind, PowerUpLive } from '../../../../shared/powerUps';
+import type { PowerUpKind, PowerUpLive, RoughVariant } from '../../../../shared/powerUps';
 
-/** The hits there are, as the scene draws them. */
-export type HitKind = 'bottle' | 'puddle' | 'hornets';
+/** The hits there are, as the scene draws them (v3: a flat tyre from tacks, a dropped chain). */
+export type HitKind = 'bottle' | 'puddle' | 'hornets' | 'tacks' | 'chain';
 /** The items that fly: a thrown bottle, the swarm of hornets. */
 export type FlyingKind = 'bottle' | 'hornets';
 
 const asHit = (k: string | undefined | null): HitKind | null =>
-  k === 'bottle' || k === 'puddle' || k === 'hornets' ? k : null;
+  k === 'bottle' || k === 'puddle' || k === 'hornets' || k === 'tacks' || k === 'chain' ? k : null;
 const asFlying = (k: string | undefined | null): FlyingKind | null =>
   k === 'bottle' || k === 'hornets' ? k : null;
 
@@ -52,8 +52,18 @@ export interface RumbleSceneFrame {
   incoming: { kind: FlyingKind; t: number } | null;
   /** This rider's own bottle or hornets on their way. */
   throw: ThrowFrame | null;
-  /** Mud puddles on the road, metres ahead (+) or behind (−), nearest first. */
-  puddles: { aheadM: number; own: boolean }[];
+  /** Mud puddles and tacks on the road, metres ahead (+) or behind (−), nearest first. */
+  puddles: { aheadM: number; own: boolean; kind: 'puddle' | 'tacks' }[];
+  /** The mini tool at work on a flat or the chain: 0 → 1 as it goes; −1 when not. */
+  repair: number;
+  /** The rough section under this rider (its look), or null. */
+  terrain: RoughVariant | null;
+  /** Rough sections on the road: from … to metres (− behind, + ahead), with their look. */
+  rough: { fromM: number; toM: number; variant: RoughVariant; own: boolean }[];
+  /** The team car's visit: 0 … 1 through it (pulls up, hands up the items, drops back); −1. */
+  supply: number;
+  /** What the team car hands up (drawn in the hand-up). */
+  supplyKinds: PowerUpKind[];
 }
 
 /** What is drawn on another rider in a Rumble (from that rider's own broadcast). */
@@ -61,6 +71,8 @@ export interface RiderFx {
   hit: HitKind | null;
   cape: boolean;
   protected: boolean;
+  /** v3: the mini tool is at work on their flat or chain. */
+  repair?: boolean;
 }
 
 /** The effects to draw on another rider, or undefined when there is nothing to draw. */
@@ -70,8 +82,11 @@ export function riderFx(items: RiderItems | undefined): RiderFx | undefined {
   const cape = (items.capeS ?? 0) > 0;
   const prot = !hit && (items.protectedS ?? 0) > 0;
   if (!hit && !cape && !prot) return undefined;
-  return { hit, cape, protected: prot };
+  return { hit, cape, protected: prot, ...((items.repairS ?? 0) > 0 ? { repair: true } : {}) };
 }
+
+/** How long the team car's visit is drawn (ms). */
+export const SUPPLY_MS = 3_200;
 
 /** Length of the hit / block splash, ms. */
 export const PULSE_MS = 900;
@@ -92,6 +107,8 @@ export interface PowerUpSceneFrame {
   flash: number;
   /** Seconds, for gently moving cues (streaks, chevrons). */
   timeS: number;
+  /** Seconds since the effect in progress started (the energy bar is unwrapped first). */
+  effectAgeS: number;
   /** Freilauf Rumble: the pick-ups are feed bags at the roadside instead of gates. */
   feedBags: boolean;
   /** Freilauf Rumble only. */
@@ -105,6 +122,7 @@ export const EMPTY_POWER_UP_FRAME: PowerUpSceneFrame = {
   phase: null,
   flash: -1,
   timeS: 0,
+  effectAgeS: 0,
   feedBags: false,
   rumble: null,
 };
@@ -127,6 +145,10 @@ export class PowerUpSceneState {
   #pulseKind: RumbleSceneFrame['pulseKind'] = null;
   #pulseItem: HitKind | null = null;
   #outgoingSeq: number | null = null;
+  /** Local time of the live sample (to run timers on between samples). */
+  #liveAt = 0;
+  #supplySeq: number | null = null;
+  #supplyAt = Number.NEGATIVE_INFINITY;
   #throw: {
     seq: number;
     kind: FlyingKind;
@@ -146,6 +168,11 @@ export class PowerUpSceneState {
     incoming: null,
     throw: null,
     puddles: [],
+    repair: -1,
+    terrain: null,
+    rough: [],
+    supply: -1,
+    supplyKinds: [],
   };
   readonly #throwFrame: ThrowFrame = {
     kind: 'bottle',
@@ -161,6 +188,7 @@ export class PowerUpSceneState {
   setLive(live: PowerUpLive | null | undefined, positionM: number, nowMs: number): void {
     this.#live = live ?? null;
     this.#at = positionM;
+    this.#liveAt = nowMs;
     const ev = this.#live?.event ?? null;
     if (ev && this.#seq !== null && ev.seq !== this.#seq) {
       if (ev.type === 'picked' || ev.type === 'challenge-won') this.#flashAt = nowMs;
@@ -184,6 +212,9 @@ export class PowerUpSceneState {
       }
     }
     this.#incomingSeq = inc?.seq ?? this.#incomingSeq ?? 0;
+    const sup = r?.supply ?? null;
+    if (sup && this.#supplySeq !== null && sup.seq !== this.#supplySeq) this.#supplyAt = nowMs;
+    this.#supplySeq = sup?.seq ?? this.#supplySeq ?? 0;
     const out = r?.outgoing ?? null;
     if (out && this.#outgoingSeq !== null && out.seq !== this.#outgoingSeq) {
       const flying = asFlying(out.kind);
@@ -236,6 +267,9 @@ export class PowerUpSceneState {
     f.holding = pu.hand.length >= pu.capacity;
     f.effect = pu.effect?.kind ?? null;
     f.phase = pu.effect?.phase ?? null;
+    f.effectAgeS = pu.effect
+      ? Math.max(0, pu.effect.durationS - pu.effect.remainingS + (nowMs - this.#liveAt) / 1000)
+      : 0;
     const t = (nowMs - this.#flashAt) / FLASH_MS;
     f.flash = t >= 0 && t <= 1 ? t : -1;
     const c = pu.rumble;
@@ -289,7 +323,25 @@ export class PowerUpSceneState {
     }
     // Puddles move with the scene between samples, like the gates.
     rf.puddles.length = 0;
-    for (const pd of c.puddles) rf.puddles.push({ aheadM: pd.aheadM - moved, own: pd.own });
+    for (const pd of c.puddles) {
+      rf.puddles.push({ aheadM: pd.aheadM - moved, own: pd.own, kind: pd.kind ?? 'puddle' });
+    }
+    rf.rough.length = 0;
+    for (const r of c.rough ?? []) {
+      rf.rough.push({ fromM: r.fromM - moved, toM: r.toM - moved, variant: r.variant, own: r.own });
+    }
+    rf.terrain = c.terrain?.variant ?? null;
+    const rep = c.hit?.repair;
+    rf.repair =
+      rep && rep.durationS > 0
+        ? Math.max(
+            0,
+            Math.min(1, 1 - (rep.remainingS - (nowMs - this.#liveAt) / 1000) / rep.durationS),
+          )
+        : -1;
+    const sp = (nowMs - this.#supplyAt) / SUPPLY_MS;
+    rf.supply = sp >= 0 && sp <= 1 ? sp : -1;
+    rf.supplyKinds = c.supply?.kinds ?? [];
     f.rumble = rf;
     return f;
   }
@@ -304,22 +356,39 @@ export function powerUpAttributes(f: PowerUpSceneFrame): {
   rumble: string;
   /** Rumble: metres to the nearest puddle ahead, or ''. */
   puddleAhead: string;
+  /** Rumble: metres to the nearest tacks ahead, or ''. */
+  tacksAhead: string;
+  /** Rumble: the look of the nearest rough section ahead or under the rider, or ''. */
+  roughAhead: string;
+  /** Rumble: 'yes' while the team car is drawn. */
+  supply: string;
   /** Rumble: the item in flight ("throw:bottle", "incoming:hornets"), or ''. */
   flying: string;
 } {
   const next = f.gates.find((g) => g > 0);
   const c = f.rumble;
-  const puddle = c?.puddles.find((p) => p.aheadM > 0 && !p.own);
+  const puddle = c?.puddles.find((p) => p.aheadM > 0 && !p.own && p.kind === 'puddle');
+  const tacks = c?.puddles.find((p) => p.aheadM > 0 && !p.own && p.kind === 'tacks');
+  const rough = c?.rough.find((r) => !r.own && r.toM >= 0 && r.fromM <= GATE_DRAW_M);
   return {
     effect: f.phase === 'active' && f.effect ? f.effect : '',
     effectPhase: f.phase ?? '',
     gateAhead: next === undefined ? '' : String(Math.round(next)),
     rumble: c
-      ? [c.hit, c.cape ? 'cape' : null, c.protection >= 0 ? 'protected' : null]
+      ? [
+          c.hit,
+          c.repair >= 0 ? 'repair' : null,
+          c.terrain ? `rough:${c.terrain}` : null,
+          c.cape ? 'cape' : null,
+          c.protection >= 0 ? 'protected' : null,
+        ]
           .filter(Boolean)
           .join(' ')
       : '',
     puddleAhead: puddle ? String(Math.round(puddle.aheadM)) : '',
+    tacksAhead: tacks ? String(Math.round(tacks.aheadM)) : '',
+    roughAhead: rough ? rough.variant : '',
+    supply: c && c.supply >= 0 ? 'yes' : '',
     flying: c?.throw ? `throw:${c.throw.kind}` : c?.incoming ? `incoming:${c.incoming.kind}` : '',
   };
 }
@@ -327,5 +396,5 @@ export function powerUpAttributes(f: PowerUpSceneFrame): {
 /** A key that changes whenever the Rumble part of the frame looks different. */
 export function rumbleKey(c: RumbleSceneFrame | null): string {
   if (!c) return '';
-  return `${c.hit}|${c.cape}|${Math.round(c.protection * 30)}|${c.pulse >= 0}|${Math.round(c.hitLeft * 20)}|${c.incoming ? 1 : 0}|${c.throw ? 1 : 0}|${c.puddles.map((p) => Math.round(p.aheadM)).join(',')}`;
+  return `${c.hit}|${c.cape}|${Math.round(c.protection * 30)}|${c.pulse >= 0}|${Math.round(c.hitLeft * 20)}|${c.incoming ? 1 : 0}|${c.throw ? 1 : 0}|${c.puddles.map((p) => Math.round(p.aheadM)).join(',')}|${Math.round(c.repair * 20)}|${c.terrain}|${c.rough.map((r) => Math.round(r.fromM)).join(',')}|${c.supply >= 0}`;
 }

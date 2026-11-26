@@ -13,7 +13,8 @@
 - [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
   fairness rule (only the race position changes, never the recording), settings
 - [rumble.md](rumble.md) — Freilauf Rumble, the battle mode for group rides: feed bags, two item
-  slots, water bottle, mud puddle, hornets, rain cape, protection, compatibility
+  slots, water bottle, mud puddle, hornets, rain cape, energy bar, tacks and the flat tyre, mini
+  tool, dropped chain, team car, rough sections, protection, compatibility
 - [energy.md](energy.md) — calories, fat and carbohydrate: what is shown where, how it is
   computed, how accurate it is
 - [watch-relay.md](watch-relay.md) — share with my watch: the app as a Bluetooth power meter,
@@ -28,16 +29,17 @@ The rest of this page is technical: decisions, protocols and how features are bu
 
 ## Architecture decisions (`adr/`)
 
-| ADR                                              | Topic                                                                               |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| [0001](adr/0001-architecture.md)                 | Package boundaries, device/transport layers, the BLE adapter in Electron            |
-| [0002](adr/0002-virtual-shifting.md)             | Software virtual shifting via FTMS simulation parameters                            |
-| [0003](adr/0003-signalling-via-public-relays.md) | Group-ride signalling via public relays (Trystero); removal plan for the own server |
-| [0004](adr/0004-routes.md)                       | Routes: elevation smoothing, gradient update policy, difficulty, storage, sharing   |
-| [0005](adr/0005-sensor-relay.md)                 | Share with my watch: a native helper as Bluetooth peripheral, services, packaging   |
-| [0006](adr/0006-power-ups.md)                    | Power-ups: race offset vs. recorded physics, determinism, battle-mode extension     |
-| [0007](adr/0007-card-race.md)                    | Card Race: attacks as events, signed race offset (**superseded** by 0008)           |
-| [0008](adr/0008-rumble-items.md)                 | Freilauf Rumble: feed bags, two item slots, items, compatibility with 0007's format |
+| ADR                                              | Topic                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| [0001](adr/0001-architecture.md)                 | Package boundaries, device/transport layers, the BLE adapter in Electron              |
+| [0002](adr/0002-virtual-shifting.md)             | Software virtual shifting via FTMS simulation parameters                              |
+| [0003](adr/0003-signalling-via-public-relays.md) | Group-ride signalling via public relays (Trystero); removal plan for the own server   |
+| [0004](adr/0004-routes.md)                       | Routes: elevation smoothing, gradient update policy, difficulty, storage, sharing     |
+| [0005](adr/0005-sensor-relay.md)                 | Share with my watch: a native helper as Bluetooth peripheral, services, packaging     |
+| [0006](adr/0006-power-ups.md)                    | Power-ups: race offset vs. recorded physics, determinism, battle-mode extension       |
+| [0007](adr/0007-card-race.md)                    | Card Race: attacks as events, signed race offset (**superseded** by 0008)             |
+| [0008](adr/0008-rumble-items.md)                 | Freilauf Rumble: feed bags, two item slots, items, compatibility with 0007's format   |
+| [0009](adr/0009-rumble-road-items.md)            | Rumble road items (energy bar, tacks, mini tool, chain, team car, rough), protocol v3 |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.

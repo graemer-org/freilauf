@@ -107,6 +107,14 @@ export interface ScenePalette {
   hornet: string;
   bag: string;
   bagLine: string;
+  /** Rumble v3: road stones and their joints, gravel, leaves, the metal of tacks and tools. */
+  stone: string;
+  stoneLine: string;
+  gravel: string;
+  leaf: string;
+  metal: string;
+  /** The team car's body. */
+  car: string;
 }
 
 const FALLBACK_LIGHT = {
@@ -209,5 +217,11 @@ export function buildPalette(
     hornet: css(hornet),
     bag: css(mix(surface, ink, dark ? 0.75 : 0.06)),
     bagLine: css(ink, dark ? 0.55 : 0.7),
+    stone: tone(dark ? 0.32 : 0.3),
+    stoneLine: tone(dark ? 0.08 : 0.5),
+    gravel: css(mix(mud, surface, dark ? 0.35 : 0.45)),
+    leaf: css(mix({ r: 86, g: 128, b: 52, a: 1 }, surface, dark ? 0.2 : 0.1)),
+    metal: tone(dark ? 0.7 : 0.55),
+    car: css(mix(accent, ink, 0.35)),
   };
 }

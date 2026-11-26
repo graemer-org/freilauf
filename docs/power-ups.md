@@ -70,10 +70,13 @@ Power-ups never change the trainer's resistance either.
 
 A group ride can be a [Freilauf Rumble](rumble.md): the gates become **feed bags** at the
 roadside (same spacing, same spots for everyone on a route), each gives a random **item**, and
-you hold two (left and right side button, or P and L). Next to the four boosts there are a water
-bottle for the rider directly ahead, a mud puddle to drop behind you, hornets for the leader and
-a rain cape. The fairness rule stays: only race positions move — there, after hits, also
-backwards ("−24 m from hits").
+you hold two (left and right side button, or P and L). Next to the four boosts there are an
+energy bar, a water bottle for the rider directly ahead, a mud puddle or tacks (a flat tyre) to
+drop behind you, a dropped chain for the rider directly behind, a rough section of road, hornets
+for the leader, a rain cape, a mini tool to fix a flat or a chain, and the team car that refills
+your slots. The fairness rule stays: only race positions move — there, after hits, also
+backwards ("−24 m from hits"). The energy bar's extra power, too, exists only in the race
+position: the trainer and the recording never see it.
 
 ## Settings
 

@@ -17,6 +17,7 @@ import type {
 import {
   ITEM_HINTS,
   POWER_UP_INFO,
+  ROUGH_LABEL,
   formatHitLoss,
   formatItemGain,
   isHitKind,
@@ -28,7 +29,8 @@ import { PowerUpIcon } from './PowerUpIcon';
 export type ItemRole = 'boost' | 'attack' | 'guard';
 
 export function itemRole(kind: PowerUpKind): ItemRole {
-  if (kind === 'cape') return 'guard';
+  if (kind === 'cape' || kind === 'tool') return 'guard';
+  if (kind === 'rough') return 'attack';
   return isHitKind(kind) ? 'attack' : 'boost';
 }
 
@@ -39,6 +41,9 @@ const IN_TEXT: Partial<Record<PowerUpKind, string>> = {
   bottle: 'water bottle',
   puddle: 'mud puddle',
   hornets: 'hornets',
+  tacks: 'tacks',
+  chain: 'dropped chain',
+  rough: 'rough section',
 };
 const inText = (k: PowerUpKind): string => IN_TEXT[k] ?? POWER_UP_INFO[k].label;
 
@@ -51,6 +56,8 @@ export function incomingText(a: IncomingHitLive): string {
   if (a.kind === 'bottle') return `${a.by} got you with a water bottle`;
   if (a.kind === 'hornets') return `${a.by} sent hornets after you`;
   if (a.kind === 'puddle') return `You rode through ${a.by}’s mud puddle`;
+  if (a.kind === 'tacks') return `Flat tyre! You rode over ${a.by}’s tacks`;
+  if (a.kind === 'chain') return `Chain off! ${a.by} dropped your chain`;
   return `${a.by} got you with ${what}`;
 }
 
@@ -60,9 +67,13 @@ export function outgoingText(o: OutgoingAttackLive): string | null {
   switch (o.result) {
     case 'sent':
       if (o.kind === 'puddle') return 'Mud puddle dropped behind you';
+      if (o.kind === 'tacks') return 'Tacks scattered behind you';
+      // A rough section: `target` is its look ("Cobbles").
+      if (o.kind === 'rough') return `${o.target || 'Rough section'} laid behind you`;
       return `${POWER_UP_INFO[o.kind].label} → ${o.target}`;
     case 'hit':
       if (o.kind === 'puddle') return `${o.target} rode through your mud puddle`;
+      if (o.kind === 'tacks') return `${o.target} rode over your tacks · flat tyre`;
       if (o.kind === 'hornets') return `Your hornets caught ${o.target}`;
       return `Your ${what} got ${o.target}`;
     case 'blocked':
@@ -85,6 +96,15 @@ export function itemCueText(pu: PowerUpLive): string | null {
   if (e.type === 'skipped') return 'Both slots full · use an item first';
   if (e.type === 'picked' && e.kind) return `${POWER_UP_INFO[e.kind].label} from the feed bag`;
   if (e.type === 'challenge-won' && e.kind) return `Challenge met · ${POWER_UP_INFO[e.kind].label}`;
+  if (e.type === 'repairing') return 'Mini tool out · fixing it';
+  if (e.type === 'supplied') {
+    const kinds = pu.rumble?.supply?.kinds ?? [];
+    const names = kinds.map((k) => POWER_UP_INFO[k].label);
+    return names.length > 0 ? `Team car: ${names.join(' and ')}` : 'Team car';
+  }
+  if (e.type === 'activated' && e.kind === 'energyBar') return 'Energy bar · fresh legs for 15 s';
+  if (e.type === 'ended' && e.kind === 'tacks') return 'Tyre fixed · back up to speed';
+  if (e.type === 'ended' && e.kind === 'chain') return 'Chain back on';
   if (
     e.type === 'played' ||
     e.type === 'dropped' ||
@@ -106,6 +126,9 @@ export interface ItemSlotProps {
 }
 
 /** One slot: the item in its pocket, its name, whom it hits, and the button/key that uses it. */
+/** Notes that say the item is of no use right now (not just: later), shown quieter. */
+export const UNUSABLE_NOTES: readonly string[] = ['Only with a flat or chain off'];
+
 export function ItemSlot({ slot, kind, note, target, onUse }: ItemSlotProps) {
   const side = SIDE_LABEL[slot];
   const s = side.toLowerCase();
@@ -127,7 +150,9 @@ export function ItemSlot({ slot, kind, note, target, onUse }: ItemSlotProps) {
   return (
     <button
       type="button"
-      className={`rb-item is-${role}${ready ? '' : ' is-waiting'} rb-${s}`}
+      className={`rb-item is-${role}${ready ? '' : ' is-waiting'}${
+        note !== null && UNUSABLE_NOTES.includes(note) ? ' is-unusable' : ''
+      } rb-${s}`}
       data-testid={`item-${s}`}
       data-kind={kind}
       data-ready={ready}
@@ -155,10 +180,20 @@ export function ItemSlot({ slot, kind, note, target, onUse }: ItemSlotProps) {
 const RING_R = 15;
 const RING_C = 2 * Math.PI * RING_R;
 
-function Ring({ left, kind, tone }: { left: number; kind: PowerUpKind | null; tone: ItemRole }) {
+function Ring({
+  left,
+  kind,
+  tone,
+  working = false,
+}: {
+  left: number;
+  kind: PowerUpKind | null;
+  tone: ItemRole;
+  working?: boolean;
+}) {
   const f = Math.max(0, Math.min(1, left));
   return (
-    <span className={`rb-ring is-${tone}`} aria-hidden="true">
+    <span className={`rb-ring is-${tone}${working ? ' is-working' : ''}`} aria-hidden="true">
       <svg viewBox="0 0 36 36">
         <circle className="rb-ring-track" cx="18" cy="18" r={RING_R} />
         <circle
@@ -182,6 +217,7 @@ function Chip({
   left,
   title,
   detail,
+  working,
 }: {
   testId: string;
   tone: ItemRole;
@@ -189,10 +225,11 @@ function Chip({
   left: number;
   title: string;
   detail: string;
+  working?: boolean;
 }) {
   return (
     <div className={`rb-chip is-${tone}`} data-testid={testId} role="status">
-      <Ring left={left} kind={kind} tone={tone} />
+      <Ring left={left} kind={kind} tone={tone} working={working} />
       <span className="rb-text">
         <strong className="rb-name">{title}</strong>
         <span className="rb-hint">{detail}</span>
@@ -201,8 +238,10 @@ function Chip({
   );
 }
 
-/** "Water bottle · slowed", "Hornets · gaps hidden", "Mud puddle · slowed". */
+/** "Water bottle · slowed", "Hornets · gaps hidden", "Flat tyre!", "Chain off!". */
 export function hitTitle(kind: PowerUpKind): string {
+  if (kind === 'tacks') return 'Flat tyre!';
+  if (kind === 'chain') return 'Chain off!';
   return `${POWER_UP_INFO[kind].label} · ${kind === 'hornets' ? 'gaps hidden' : 'slowed'}`;
 }
 
@@ -217,15 +256,46 @@ export function RumbleEffects({
   const chips = [];
   if (rumble.hit) {
     const a = rumble.hit;
+    if (a.repair) {
+      // The mini tool at work: a ring that fills as the repair goes on.
+      const r = a.repair;
+      chips.push(
+        <Chip
+          key="repair"
+          testId="rumble-repair"
+          tone="guard"
+          kind="tool"
+          working
+          left={r.durationS > 0 ? 1 - r.remainingS / r.durationS : 1}
+          title={a.kind === 'chain' ? 'Chain going back on' : 'Fixing the flat'}
+          detail={`Mini tool · ${Math.ceil(r.remainingS)} s`}
+        />,
+      );
+    } else {
+      chips.push(
+        <Chip
+          key="hit"
+          testId="rumble-hit"
+          tone="attack"
+          kind={a.kind}
+          left={a.durationS > 0 ? a.remainingS / a.durationS : 0}
+          title={hitTitle(a.kind)}
+          detail={`from ${a.by} · ${Math.ceil(a.remainingS)} s`}
+        />,
+      );
+    }
+  }
+  if (rumble.terrain) {
+    const t = rumble.terrain;
     chips.push(
       <Chip
-        key="hit"
-        testId="rumble-hit"
+        key="terrain"
+        testId="rumble-terrain"
         tone="attack"
-        kind={a.kind}
-        left={a.durationS > 0 ? a.remainingS / a.durationS : 0}
-        title={hitTitle(a.kind)}
-        detail={`from ${a.by} · ${Math.ceil(a.remainingS)} s`}
+        kind="rough"
+        left={1}
+        title={ROUGH_LABEL[t.variant]}
+        detail={`Rough road · ${t.by}’s section`}
       />,
     );
   }
@@ -291,10 +361,21 @@ export function raceLine(rumble: RumbleLive): string | null {
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** "Mud puddle ahead · 40 m": the nearest puddle of someone else ahead within 150 m. */
+/**
+ * "Ben’s mud puddle ahead · 40 m", "Ben’s tacks ahead · 25 m", "Cobbles ahead · 80 m": the
+ * nearest thing of someone else's on the road ahead within 150 m.
+ */
 export function puddleAhead(rumble: RumbleLive): string | null {
   const p = rumble.puddles.find((x) => !x.own && x.aheadM > 0 && x.aheadM <= 150);
-  return p ? `${p.by}’s mud puddle ahead · ${Math.max(1, Math.round(p.aheadM))} m` : null;
+  const r = rumble.terrain
+    ? undefined
+    : rumble.rough?.find((x) => !x.own && x.fromM > 0 && x.fromM <= 150);
+  if (r && (!p || r.fromM < p.aheadM)) {
+    return `${ROUGH_LABEL[r.variant]} ahead · ${Math.max(1, Math.round(r.fromM))} m`;
+  }
+  if (!p) return null;
+  const what = p.kind === 'tacks' ? 'tacks' : 'mud puddle';
+  return `${p.by}’s ${what} ahead · ${Math.max(1, Math.round(p.aheadM))} m`;
 }
 
 export interface ItemSlotsViewProps {
@@ -319,6 +400,8 @@ export function ItemSlotsView({ pu, notice, incoming, onUse, onDismiss }: ItemSl
       data-left={rumble.slots[0] ?? ''}
       data-right={rumble.slots[1] ?? ''}
       data-hit={rumble.hit?.kind ?? ''}
+      data-repair={rumble.hit?.repair ? 'yes' : ''}
+      data-terrain={rumble.terrain?.variant ?? ''}
       data-cape={rumble.cape ? 'on' : ''}
       data-protected={rumble.protection ? 'yes' : ''}
     >
@@ -419,7 +502,7 @@ function useRumbleNotice(pu: PowerUpLive | null): {
         key: `in${incSeq}`,
       };
       // A thrown bottle or the swarm comes from behind: mark where it comes from.
-      if (inc.kind !== 'puddle') {
+      if (inc.kind === 'bottle' || inc.kind === 'hornets') {
         setIncoming({ kind: inc.kind, by: inc.by });
         if (incTimer.current) clearTimeout(incTimer.current);
         incTimer.current = setTimeout(() => setIncoming(null), INCOMING_MS);
@@ -436,7 +519,8 @@ function useRumbleNotice(pu: PowerUpLive | null): {
     }
     if (!next) return;
     const shown = next;
-    shownHit.current = !next.key.startsWith('ev');
+    // A quiet line ("Tacks scattered behind you") may give way to the next item cue.
+    shownHit.current = !next.key.startsWith('ev') && next.tone !== 'quiet';
     setNotice(shown);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {

@@ -6544,6 +6544,24 @@ div.server-note {
   height: 1rem;
 }
 
+.rb-ring.is-working .pu-icon {
+  /* The mini tool at work: the wrench turns to and fro. */
+  animation: rb-wrench 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes rb-wrench {
+  from {
+    transform: rotate(-28deg);
+  }
+  to {
+    transform: rotate(22deg);
+  }
+}
+
+.rb-item.is-waiting.is-unusable .rb-hint {
+  font-style: italic;
+}
+
 .rb-ring-dot {
   width: 0.45rem;
   height: 0.45rem;
@@ -6883,6 +6901,10 @@ div.server-note {
   .rb-item,
   .rb-ring-fill {
     transition: none;
+  }
+
+  .rb-ring.is-working .pu-icon {
+    animation: none;
   }
 }
 

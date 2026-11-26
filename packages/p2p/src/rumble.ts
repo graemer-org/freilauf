@@ -18,10 +18,15 @@
  * Version 1 (`card-attack` / `card-ack`, the superseded format of ADR 0007) is not decoded:
  * an app that speaks it is an app without Freilauf Rumble.
  *
+ * Rumble protocol v3 (docs/adr/0009-rumble-road-items.md) keeps these messages as they are
+ * (`v: 2`): the dropped chain is one more attack `kind`, tacks are claimed with `puddle-claim`
+ * like a mud puddle (their ids come from the dropper's `items.tacks`), and rough sections need
+ * no message at all (`RoughLedger`, `roughSpan`). An app of v2 refuses an unknown kind.
+ *
  * Pure and clock-free (every method takes the local time), like `RemoteRiders`.
  */
 import { RUMBLE_ID_PATTERN, RUMBLE_KIND_PATTERN, gapAlongRoute } from './riderState';
-import type { RiderItems, WirePuddle } from './types';
+import type { RiderItems, WirePuddle, WireRough } from './types';
 
 export const RUMBLE_MESSAGE_VERSION = 2;
 export const MAX_RUMBLE_MESSAGE_LENGTH = 512;
@@ -629,6 +634,11 @@ export class PuddleLedger {
     return out.slice(-4);
   }
 
+  /** Whether `id` is one of this ledger's puddles (live, used or just dried up). */
+  has(id: string): boolean {
+    return this.#puddles.has(id);
+  }
+
   /** Who the puddle `id` hit (peer id), if anyone. */
   hitBy(id: string): string | null {
     return this.#puddles.get(id)?.hitBy ?? null;
@@ -694,6 +704,12 @@ export interface NearPuddle {
  */
 export class PuddleWatch {
   #last = new Map<string, number>();
+  /** Which list of the riders' broadcast it watches: mud puddles, or (v3) tacks. */
+  readonly field: 'puddles' | 'tacks';
+
+  constructor(field: 'puddles' | 'tacks' = 'puddles') {
+    this.field = field;
+  }
 
   update(
     riders: readonly { peerId: string; name: string; stale?: boolean; items?: RiderItems }[],
@@ -705,7 +721,7 @@ export class PuddleWatch {
     const seen = new Set<string>();
     for (const r of riders) {
       if (r.peerId === exclude) continue;
-      for (const puddle of r.items?.puddles ?? []) {
+      for (const puddle of r.items?.[this.field] ?? []) {
         if (puddle.used || puddle.s <= 0) continue;
         const gapM = puddleGap(puddle, me);
         if (gapM === null || !Number.isFinite(gapM)) continue;
@@ -727,6 +743,101 @@ export class PuddleWatch {
   clear(): void {
     this.#last.clear();
   }
+}
+
+// ───────────── rough sections (v3): road, evaluated by every rider for itself ─────────────
+
+/** A rough section's length and life, and how many one rider can have on the road at once. */
+export const ROUGH_TIMING = { lengthM: 150, lifeMs: 60_000 } as const;
+export const MAX_LIVE_ROUGH = 2;
+
+interface OwnRough {
+  id: string;
+  at: PuddleAt;
+  lenM: number;
+  variant: string;
+  expiresAt: number;
+}
+
+/**
+ * The dropper's rough sections (ADR 0009). No claims and no judge: a section is not used up by
+ * anyone, so the dropper only lays it and broadcasts it until it is gone; every other rider
+ * finds out for itself whether it rides on one (`roughSpan`). Pure and clock-free.
+ */
+export class RoughLedger {
+  #list: OwnRough[] = [];
+  #seq = 0;
+  readonly #epoch: string;
+
+  constructor(epoch: string = attackEpoch()) {
+    this.#epoch = epoch;
+  }
+
+  /** How many sections were laid so far (the next one's index). */
+  get count(): number {
+    return this.#seq;
+  }
+
+  live(now: number): number {
+    this.#prune(now);
+    return this.#list.length;
+  }
+
+  /** Lays a section ending at `at` (reaching `lenM` back); its id, or null when two are down. */
+  drop(
+    at: PuddleAt,
+    variant: string,
+    now: number,
+    lenM: number = ROUGH_TIMING.lengthM,
+    lifeMs: number = ROUGH_TIMING.lifeMs,
+  ): string | null {
+    this.#prune(now);
+    if (this.#list.length >= MAX_LIVE_ROUGH || !Number.isFinite(at.m)) return null;
+    this.#seq += 1;
+    const id = `${this.#epoch}.${this.#seq}`;
+    this.#list.push({
+      id,
+      at: { m: at.m, ...(at.routeId ? { routeId: at.routeId } : {}) },
+      lenM,
+      variant,
+      expiresAt: now + lifeMs,
+    });
+    return id;
+  }
+
+  wire(now: number): WireRough[] {
+    this.#prune(now);
+    return this.#list.map((r) => ({
+      id: r.id,
+      m: Math.round(r.at.m * 10) / 10,
+      ...(r.at.routeId ? { routeId: r.at.routeId } : {}),
+      len: r.lenM,
+      s: Math.round(Math.min(600, (r.expiresAt - now) / 1000) * 10) / 10,
+      variant: r.variant,
+    }));
+  }
+
+  clear(): void {
+    this.#list = [];
+  }
+
+  #prune(now: number): void {
+    this.#list = this.#list.filter((r) => now < r.expiresAt);
+  }
+}
+
+/**
+ * Where a rough section lies from the local rider: `fromM` … `toM` metres (+ ahead, − behind;
+ * from < to), or null when it is not on this rider's road. The rider is on it when
+ * `fromM ≤ 0 ≤ toM`.
+ */
+export function roughSpan(
+  r: Pick<WireRough, 'm' | 'routeId' | 'len'>,
+  me: PuddleRacePosition,
+): { fromM: number; toM: number } | null {
+  const end = puddleGap(r, me);
+  if (end === null || !Number.isFinite(end)) return null;
+  return { fromM: end - r.len, toM: end };
 }
 
 /** A random lowercase word for event ids (not a secret; only needs to differ per ride). */

@@ -338,3 +338,99 @@ describe.each(TEST_TRANSPORTS)('Puddle claims over GroupRide (%s)', (kind) => {
     w.cleo.leave();
   });
 });
+
+describe.each(TEST_TRANSPORTS)('Tacks claims over GroupRide (%s) (ADR 0009)', (kind) => {
+  /**
+   * Anna drops a puddle and tacks (two ledgers, as the app does); Ben and Cleo ride over the
+   * tacks. The dropper's handler routes each claim to the ledger that knows the id.
+   */
+  async function world(seed = 5) {
+    const clock = new FakeClock();
+    const net = createTestNetwork(kind, { clock, seed });
+    const anna = await net.create('Anna', 'peer-a');
+    const ben = await net.join(anna, 'Ben', 'peer-b');
+    const cleo = await net.join(anna, 'Cleo', 'peer-c');
+    await clock.advanceAsync(500);
+    for (const [r, m] of [
+      [anna, 1010],
+      [ben, 990],
+      [cleo, 995],
+    ] as const)
+      r.setLocalState({ ...local(m), items: { v: 3, offsetM: 0 } });
+    await clock.advanceAsync(1000);
+    const mud = new PuddleLedger('mudd0001');
+    const tacks = new PuddleLedger('tack0001');
+    mud.drop({ m: 1000 }, clock.now());
+    const tack = tacks.drop({ m: 1000 }, clock.now())!;
+    const firsts = { mud: 0, tacks: 0 };
+    anna.setPuddleClaimHandler((c): ClaimVerdict => {
+      const which = tacks.has(c.puddle) ? 'tacks' : 'mud';
+      const d = (which === 'tacks' ? tacks : mud).decide(c, clock.now());
+      if (d.first) firsts[which] += 1;
+      return d.result;
+    });
+    const results = new Map<string, ClaimOutcomeEvent[]>();
+    for (const r of [ben, cleo]) {
+      results.set(r.name, []);
+      r.onClaimResult((o) => results.get(r.name)!.push(o));
+    }
+    return {
+      clock,
+      net,
+      anna,
+      ben,
+      cleo,
+      tack,
+      tacks,
+      mud,
+      firsts,
+      results,
+      all: [anna, ben, cleo],
+    };
+  }
+
+  it('ties: two riders over the tacks at once, exactly one gets the flat; the puddle stays', async () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const w = await world(seed);
+      w.net.setConditions({ lossRate: 0.3, duplicateRate: 0.3, maxDelayMs: 300 });
+      const claim = () => ({ puddle: w.tack, raceM: 1001 });
+      w.ben.claimPuddle('peer-a', claim);
+      w.cleo.claimPuddle('peer-a', claim);
+      await w.clock.advanceAsync(8_000);
+      const outcome = [...w.results.get('Ben')!, ...w.results.get('Cleo')!].map((o) => o.result);
+      expect(outcome.sort()).toEqual(['granted', 'taken']);
+      expect(w.firsts).toEqual({ mud: 0, tacks: 1 });
+      expect(w.mud.live(w.clock.now())).toBe(1); // the puddle lies on the road still
+      for (const r of w.all) r.leave();
+    }
+  });
+
+  it('lost acks: the claimer hears granted once; the dropper is never a claimer of its own', async () => {
+    const w = await world();
+    if (kind === 'self-hosted')
+      w.net.setConditions({ lossRate: 0.5, duplicateRate: 0.2, maxDelayMs: 200 });
+    w.cleo.claimPuddle('peer-a', () => ({ puddle: w.tack, raceM: 1002 }));
+    await w.clock.advanceAsync(8_000);
+    expect(w.results.get('Cleo')!.map((o) => o.result)).toEqual(['granted']);
+    // The same rider again (a re-send under a new id): granted again, still one hit decided.
+    w.cleo.claimPuddle('peer-a', () => ({ puddle: w.tack, raceM: 1003 }));
+    await w.clock.advanceAsync(3_000);
+    expect(w.results.get('Cleo')!.map((o) => o.result)).toEqual(['granted', 'granted']);
+    expect(w.firsts.tacks).toBe(1);
+    // A claim the dropper sends to itself is not for anyone (no link to itself).
+    expect(w.anna.claimPuddle('peer-a', () => ({ puddle: w.tack, raceM: 1001 }))).toBeNull();
+    for (const r of w.all) r.leave();
+  });
+
+  it('the dropper leaves: open claims time out once and nobody is hit', async () => {
+    const w = await world();
+    w.anna.leave();
+    await w.clock.advanceAsync(100);
+    const sent = w.ben.claimPuddle('peer-a', () => ({ puddle: w.tack, raceM: 1001 }));
+    await w.clock.advanceAsync(8_000);
+    expect(w.results.get('Ben')!.map((o) => o.result)).toEqual(sent === null ? [] : ['timeout']);
+    expect(w.firsts.tacks).toBe(0);
+    w.ben.leave();
+    w.cleo.leave();
+  });
+});
