@@ -35,10 +35,13 @@ async function startSignalling(port: number): Promise<ChildProcess> {
   return child;
 }
 
-/** A fresh simulated install with a name and short feed bag spacing (simulation mode only). */
+/**
+ * A fresh simulated install with a name and short feed bag spacing (simulation mode only).
+ * `items`: the pool to draw from, or `{ order }` — these items in this order, the last repeating.
+ */
 async function rider(
   name: string,
-  itemPool: string[],
+  items: string[] | { order: string[] },
 ): Promise<{ app: ElectronApplication; main: Page; dir: string; errors: string[] }> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `freilauf-e2e-rumble-${name}-`));
   const app = await launch(dir);
@@ -49,13 +52,46 @@ async function rider(
   await main.getByTestId('first-run-name').fill(name);
   await main.getByTestId('first-run-save').click();
   await atStart(main);
-  await main.evaluate((pool) => {
-    localStorage.setItem(
-      'freilauf.powerUps.tuning',
-      JSON.stringify({ spacingM: [30, 40], itemPool: pool }),
-    );
-  }, itemPool);
+  const tuning = Array.isArray(items)
+    ? { spacingM: [30, 40], itemPool: items }
+    : { spacingM: [30, 40], itemOrder: items.order };
+  await main.evaluate((t) => {
+    localStorage.setItem('freilauf.powerUps.tuning', JSON.stringify(t));
+  }, tuning);
   return { app, main, dir, errors };
+}
+
+/**
+ * Anna creates a Freilauf Rumble on a local signalling server and Ben joins with the link;
+ * Ben starts first at 320 W (he leads), Anna at 200 W.
+ */
+async function rumblePair(a: Page, b: Page, port: number): Promise<void> {
+  await a.getByTestId('with-group').click();
+  await a.getByTestId('group-advanced').locator(':scope > summary').click();
+  await a.getByTestId('group-server-input').fill(`ws://127.0.0.1:${port}`);
+  await a.getByTestId('group-server-save').click();
+  await a.getByTestId('group-mode-create-rumble').click();
+  await a.getByTestId('group-create').click();
+  await expect(a.getByTestId('group-code')).toHaveText(/^[A-Z0-9]{3}-[A-Z0-9]{3}$/, {
+    timeout: 15_000,
+  });
+  const link = (await a.getByTestId('group-link').textContent())!;
+  await b.getByTestId('with-group').click();
+  await b.getByTestId('group-join-input').fill(link);
+  await b.getByTestId('group-join').click();
+  await expect(b.getByTestId('group-peer')).toHaveAttribute('data-state', 'connected', {
+    timeout: 30_000,
+  });
+  await expect(b.getByTestId('group-mode-badge')).toHaveAttribute('data-mode', 'rumble', {
+    timeout: 10_000,
+  });
+  await b.getByTestId('start-open-ride').click();
+  await b.getByTestId('sim-effort').fill('320');
+  await b.getByTestId('ride-start').click();
+  await b.waitForTimeout(6_000);
+  await a.getByTestId('start-open-ride').click();
+  await a.getByTestId('sim-effort').fill('200');
+  await a.getByTestId('ride-start').click();
 }
 
 /**
@@ -174,6 +210,142 @@ test('Freilauf Rumble: two apps, a bottle thrown at the rider ahead, a puddle ri
     // Used up: it is gone from Anna's road.
     await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-puddle-ahead', '', {
       timeout: 5_000,
+    });
+
+    expect(anna.errors).toEqual([]);
+    expect(ben.errors).toEqual([]);
+  } finally {
+    await anna.app.close();
+    await ben.app.close();
+    signalling.kill('SIGTERM');
+    fs.rmSync(anna.dir, { recursive: true, force: true });
+    fs.rmSync(ben.dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The road items of protocol v3 (docs/adr/0009-rumble-road-items.md) between two app instances:
+ * Anna eats an energy bar; her mini tool waits ("only for a flat"); Ben scatters tacks, Anna rides
+ * over them and has a flat, and fixes it with the tool; Ben drops Anna's chain and her next tool
+ * puts it back on; Ben lays a rough section that Anna rides on; Ben's team car fills a slot.
+ */
+test('Freilauf Rumble v3: energy bar, tacks to a flat and the mini tool, dropped chain, rough section, team car', async () => {
+  test.setTimeout(360_000);
+  const port = await freePort();
+  const signalling = await startSignalling(port);
+  const anna = await rider('Anna', { order: ['energyBar', 'tool'] });
+  const ben = await rider('Ben', { order: ['tacks', 'chain', 'rough', 'teamCar'] });
+  try {
+    const a = anna.main;
+    const b = ben.main;
+    await rumblePair(a, b, port);
+
+    // 1) Anna: the energy bar (left, P); the mini tool (right) waits, it is no use without a flat.
+    const aLeft = a.getByTestId('item-left');
+    const aRight = a.getByTestId('item-right');
+    await expect(aLeft).toHaveAttribute('data-kind', 'energyBar', { timeout: 40_000 });
+    await expect(aRight).toHaveAttribute('data-kind', 'tool', { timeout: 20_000 });
+    await expect(aRight).toHaveAttribute('data-ready', 'false');
+    await expect(a.getByTestId('item-right-hint')).toHaveText('Only with a flat or chain off');
+    await a.getByTestId('stat-power').click();
+    await a.keyboard.press('l'); // nothing happens: it stays
+    await expect(aRight).toHaveAttribute('data-kind', 'tool');
+    await expect(aLeft).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+    await a.keyboard.press('p');
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-effect', 'energyBar', {
+      timeout: 3_000,
+    });
+    await expect(a.getByTestId('rumble-boost')).toContainText('Energy bar');
+    await expect(a.getByTestId('rumble-race-line')).toContainText('from items', {
+      timeout: 20_000,
+    });
+
+    // 2) Ben scatters tacks behind him (left, P); Anna, faster now, rides over them.
+    const bLeft = b.getByTestId('item-left');
+    const bRight = b.getByTestId('item-right');
+    await expect(bLeft).toHaveAttribute('data-kind', 'tacks', { timeout: 30_000 });
+    await expect(bLeft).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+    await a.getByTestId('sim-effort').fill('380');
+    await a.getByTestId('stat-power').click();
+    await b.getByTestId('stat-power').click();
+    await b.keyboard.press('p');
+    await expect(b.getByTestId('rumble-notice')).toContainText('Tacks scattered behind you', {
+      timeout: 5_000,
+    });
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-tacks-ahead', /\d+/, {
+      timeout: 10_000,
+    });
+    await expect(a.getByTestId('rumble-notice')).toContainText(
+      'Flat tyre! You rode over Ben’s tacks',
+      { timeout: 60_000 },
+    );
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-hit', 'tacks');
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute('data-rumble', /tacks/, {
+      timeout: 3_000,
+    });
+    await expect(b.getByTestId('rumble-notice')).toContainText('Anna rode over your tacks', {
+      timeout: 10_000,
+    });
+    await a.getByTestId('sim-effort').fill('250');
+
+    // 3) Anna fixes it with the mini tool (right, L): 3 s, a ring that fills, then rolling again.
+    await expect(aRight).toHaveAttribute('data-ready', 'true', { timeout: 5_000 });
+    await a.getByTestId('stat-power').click();
+    await a.keyboard.press('l');
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-repair', 'yes', {
+      timeout: 2_000,
+    });
+    await expect(a.getByTestId('rumble-repair')).toContainText('Fixing the flat');
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-hit', '', { timeout: 6_000 });
+    await expect(a.getByTestId('rumble-protection')).toBeVisible({ timeout: 3_000 });
+
+    // 4) Ben drops Anna's chain (right, L: at the rider directly behind) once she is not
+    //    protected any more; Anna's next mini tool (her left slot by now) puts it back on.
+    await expect(bRight).toHaveAttribute('data-kind', 'chain');
+    await expect(b.getByTestId('item-right-hint')).toContainText('→ Anna', { timeout: 30_000 });
+    await expect(bRight).toHaveAttribute('data-ready', 'true');
+    await expect(aLeft).toHaveAttribute('data-kind', 'tool', { timeout: 30_000 });
+    await b.getByTestId('stat-power').click();
+    await b.keyboard.press('l');
+    await expect(a.getByTestId('rumble-notice')).toContainText(
+      'Chain off! Ben dropped your chain',
+      {
+        timeout: 10_000,
+      },
+    );
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-hit', 'chain');
+    await a.getByTestId('stat-power').click();
+    await a.keyboard.press('p');
+    await expect(a.getByTestId('item-slots')).toHaveAttribute('data-hit', '', { timeout: 4_000 });
+
+    // 5) Ben lays a rough section behind him (left, P); Anna rides on it: slowed, its look named.
+    await expect(bLeft).toHaveAttribute('data-kind', 'rough', { timeout: 30_000 });
+    await expect(bLeft).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+    await a.getByTestId('sim-effort').fill('380');
+    await b.getByTestId('stat-power').click();
+    await b.keyboard.press('p');
+    await expect(b.getByTestId('rumble-notice')).toContainText('laid behind you', {
+      timeout: 5_000,
+    });
+    await expect(a.getByTestId('ride-scene')).toHaveAttribute(
+      'data-rough-ahead',
+      /^(cobbles|gravel|roots|debris)$/,
+      { timeout: 10_000 },
+    );
+    await expect(a.getByTestId('item-slots')).toHaveAttribute(
+      'data-terrain',
+      /^(cobbles|gravel|roots|debris)$/,
+      { timeout: 45_000 },
+    );
+    await expect(a.getByTestId('rumble-terrain')).toContainText('Rough road · Ben’s section');
+
+    // 6) Ben's team car (right, L) pulls up and hands up an item.
+    await expect(bRight).toHaveAttribute('data-kind', 'teamCar', { timeout: 30_000 });
+    await b.getByTestId('stat-power').click();
+    await b.keyboard.press('l');
+    await expect(b.getByTestId('rumble-notice')).toContainText('Team car:', { timeout: 5_000 });
+    await expect(b.getByTestId('ride-scene')).toHaveAttribute('data-supply', 'yes', {
+      timeout: 2_000,
     });
 
     expect(anna.errors).toEqual([]);

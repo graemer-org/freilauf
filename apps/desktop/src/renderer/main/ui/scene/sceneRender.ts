@@ -17,8 +17,14 @@ import {
   drawProtection,
   drawPuddle,
   drawRiderFx,
+  drawEnergy,
+  drawProgressRing,
+  drawRoughPatch,
   drawSplash,
   drawSwarm,
+  drawTacks,
+  drawTeamCarSide,
+  drawWrench,
 } from './rumbleFx';
 import { BIKE, BODY, computePose, createPose, type Point, type Pose } from './riderPose';
 import {
@@ -68,6 +74,14 @@ interface Colours {
 }
 
 const TAU = Math.PI * 2;
+
+/** Rumble damage drawn on the local bike: a flat rear tyre (the bike sags, wobbles), the chain off. */
+interface Damage {
+  flat: boolean;
+  chain: boolean;
+  timeS: number;
+  reduced: boolean;
+}
 
 /** Parallax depth factors (1 = the road plane). Further layers move slower and are drawn smaller. */
 export const LAYERS = {
@@ -628,7 +642,8 @@ export class SceneRenderer {
    */
   private boostRoad(f: SceneFrame, pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
     if (!pu.feedBags) this.gates(pu, slope, p, false);
-    if (pu.rumble) this.puddles(pu, slope, p);
+    if (pu.rumble) this.roughRoad(pu, slope, p);
+    if (pu.rumble) this.puddles(pu, slope, p, f.reducedMotion);
     if (pu.effect !== 'downhill' || pu.phase === null) return;
     const ctx = this.ctx;
     const k = this.px;
@@ -672,6 +687,9 @@ export class SceneRenderer {
       ctx.beginPath();
       ctx.arc(x, y, 1.15 * k, 0, TAU);
       ctx.fill();
+    }
+    if (pu.effect === 'energyBar' && active) {
+      drawEnergy(ctx, p, x, y, k, pu.effectAgeS, pu.timeS, f.reducedMotion);
     }
     if (pu.effect === 'tailwind' && active && !f.reducedMotion) {
       ctx.save();
@@ -748,15 +766,52 @@ export class SceneRenderer {
     }
   }
 
-  /** Mud puddles on the road (own ones behind the rider, others' ahead), lying across the lane. */
-  private puddles(pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+  /**
+   * Mud puddles and tacks on the road (own ones behind the rider, others' ahead), lying across
+   * the lane.
+   */
+  private puddles(pu: PowerUpSceneFrame, slope: number, p: ScenePalette, reduced: boolean): void {
     const reach = (this.w - this.riderX) / this.px + 1;
     const back = this.riderX / this.px + 1;
     for (const pd of pu.rumble!.puddles) {
       if (pd.aheadM > reach || pd.aheadM < -back) continue;
       const x = this.aheadX(pd.aheadM);
       const y = this.roadY(x, slope) + 0.12 * this.halfDepth;
-      drawPuddle(this.ctx, p, x, y, 0.8 * this.px, this.halfDepth * 0.42, pd.own ? 0.8 : 1);
+      const alpha = pd.own ? 0.8 : 1;
+      if (pd.kind === 'tacks') {
+        drawTacks(this.ctx, p, x, y, 0.7 * this.px, this.halfDepth * 0.5, pu.timeS, reduced, alpha);
+      } else drawPuddle(this.ctx, p, x, y, 0.8 * this.px, this.halfDepth * 0.42, alpha);
+    }
+  }
+
+  /** Rough sections on the road, in one-metre patches (the pattern stays put on the road). */
+  private roughRoad(pu: PowerUpSceneFrame, slope: number, p: ScenePalette): void {
+    const reach = (this.w - this.riderX) / this.px + 1;
+    const back = this.riderX / this.px + 1;
+    const d = this.halfDepth * 0.92;
+    for (const r of pu.rumble!.rough) {
+      const from = Math.max(r.fromM, -back);
+      const to = Math.min(r.toM, reach);
+      if (to <= from) continue;
+      for (let j = Math.floor(from - r.fromM); r.fromM + j < to; j++) {
+        const m0 = Math.max(from, r.fromM + j);
+        const m1 = Math.min(to, r.fromM + j + 1);
+        const x0 = this.aheadX(m0);
+        const x1 = this.aheadX(m1);
+        const y0 = this.roadY(x0, slope);
+        const y1 = this.roadY(x1, slope);
+        drawRoughPatch(
+          this.ctx,
+          p,
+          r.variant,
+          { x: x0, y: y0 + d },
+          { x: x1, y: y1 + d },
+          { x: x1, y: y1 - d },
+          { x: x0, y: y0 - d },
+          j,
+          r.own ? 0.75 : 1,
+        );
+      }
     }
   }
 
@@ -802,8 +857,30 @@ export class SceneRenderer {
       drawSwarm(ctx, p, x + 0.1 * k, y - 0.8 * k, 0.6 * k, pu.timeS, reduced);
     if (c.cape) drawCape(ctx, p, x, y, 1.2 * k, 1.08 * k);
     if (c.protection >= 0) drawProtection(ctx, p, x, y, 1.25 * k, 1.12 * k, c.protection);
+    // The rear wheel (the bike faces right): where the flat is, and the mini tool works.
+    const wx = this.riderX - 0.5 * k;
+    const wy = y + 0.85 * k - BIKE.wheelRadius * k;
     if (c.pulse >= 0 && c.pulseKind) {
-      drawSplash(ctx, p, x, y - 0.2 * k, 1.0 * k, c.pulse, c.pulseKind, c.pulseItem, reduced);
+      if (c.pulseItem === 'tacks' && c.pulseKind === 'hit') {
+        drawSplash(ctx, p, wx, wy, 1.0 * k, c.pulse, c.pulseKind, c.pulseItem, reduced);
+      } else {
+        drawSplash(ctx, p, x, y - 0.2 * k, 1.0 * k, c.pulse, c.pulseKind, c.pulseItem, reduced);
+      }
+    }
+    if (c.repair >= 0) {
+      drawProgressRing(ctx, p, wx, wy, 0.46 * k, c.repair);
+      const swing = reduced ? 0 : Math.sin(pu.timeS * 9) * 0.6;
+      drawWrench(ctx, p, wx + 0.12 * k, wy - 0.05 * k, 0.42 * k, swing);
+    }
+    if (c.supply >= 0) {
+      // The team car pulls up on the near side, hands the items up, and drops back.
+      const t = c.supply;
+      const inT = Math.min(1, t / 0.25);
+      const outT = Math.max(0, (t - 0.8) / 0.2);
+      const at = reduced ? 0 : (1 - inT) * -this.riderX - outT * (this.riderX + 3 * k);
+      const carX = this.riderX - 0.4 * k + at;
+      const carY = this.roadY(carX, slope) + this.halfDepth * 0.95;
+      drawTeamCarSide(ctx, p, carX, carY, 4.2 * k, reduced ? 0.5 : t, c.supplyKinds);
     }
     const inc = c.incoming;
     if (inc) {
@@ -886,10 +963,33 @@ export class SceneRenderer {
 
   private localRider(f: SceneFrame, slope: number): void {
     const scale = this.place(this.riderX, f.lateral, slope, this.tmp);
-    computePose(this.pose, f.crank, f.standing, f.tuck, Math.atan(slope));
+    const c = f.powerUps?.rumble;
+    const damage: Damage | null =
+      c && (c.hit === 'tacks' || c.hit === 'chain')
+        ? {
+            flat: c.hit === 'tacks',
+            chain: c.hit === 'chain',
+            timeS: f.powerUps!.timeS,
+            reduced: f.reducedMotion,
+          }
+        : null;
+    // Chain off: the legs spin freely, faster than the road would turn them.
+    const crank = damage?.chain && !f.reducedMotion ? f.crank + damage.timeS * 11 : f.crank;
+    computePose(this.pose, crank, f.standing, f.tuck, Math.atan(slope));
     const lean = f.reducedMotion ? 0 : leanFor(f.lateralVel);
     this.shadow(this.tmp.x, this.tmp.y, scale, lean, slope);
-    this.rider(this.tmp.x, this.tmp.y, scale, slope, lean, this.pose, f.wheel, this.local!, true);
+    this.rider(
+      this.tmp.x,
+      this.tmp.y,
+      scale,
+      slope,
+      lean,
+      this.pose,
+      f.wheel,
+      this.local!,
+      true,
+      damage,
+    );
   }
 
   private others(f: SceneFrame, slope: number, lat: number): void {
@@ -972,11 +1072,19 @@ export class SceneRenderer {
     wheel: number,
     c: Colours,
     detailed: boolean,
+    damage: Damage | null = null,
   ): void {
     const ctx = this.ctx;
     const k = this.px * scale * this.dpr;
     ctx.setTransform(k, 0, 0, -k, x * this.dpr, y * this.dpr);
     ctx.rotate(Math.atan(slope));
+    if (damage?.flat) {
+      // A flat rear tyre: the bike sags at the back (about the front contact) and wobbles.
+      const wobble = damage.reduced ? 0 : Math.sin(damage.timeS * 7.5) * 0.012;
+      ctx.translate(BIKE.front.x, 0);
+      ctx.rotate(0.034 + wobble);
+      ctx.translate(-BIKE.front.x, 0);
+    }
     // Leaning towards the viewer foreshortens and lowers the figure a little.
     ctx.scale(1, Math.cos(lean) - 0.35 * Math.sin(lean));
     ctx.lineCap = 'round';
@@ -989,17 +1097,39 @@ export class SceneRenderer {
     this.crankArm(pose.pedal[1]!, c.frameFar);
 
     // Wheels.
-    this.wheel(BIKE.rear, wheel, c, detailed);
+    this.wheel(BIKE.rear, wheel, c, detailed, damage?.flat === true);
     this.wheel(BIKE.front, wheel, c, detailed);
 
     // Drivetrain.
     ctx.strokeStyle = c.frameFar;
     ctx.lineWidth = 0.008;
     ctx.beginPath();
-    ctx.moveTo(BIKE.bb.x, BIKE.bb.y + BIKE.chainringRadius);
-    ctx.lineTo(BIKE.rear.x, BIKE.rear.y + BIKE.cassetteRadius);
-    ctx.moveTo(BIKE.bb.x, BIKE.bb.y - BIKE.chainringRadius);
-    ctx.lineTo(BIKE.rear.x, BIKE.rear.y - BIKE.cassetteRadius);
+    if (damage?.chain) {
+      // Off the chainring: the chain hangs from the cassette in a loose, flapping loop.
+      const flap = damage.reduced ? 0.3 : Math.sin(damage.timeS * 6.5);
+      ctx.lineWidth = 0.012;
+      ctx.moveTo(BIKE.rear.x, BIKE.rear.y + BIKE.cassetteRadius);
+      ctx.bezierCurveTo(
+        BIKE.rear.x + 0.2,
+        BIKE.rear.y + 0.02,
+        BIKE.bb.x - 0.05 + flap * 0.05,
+        0.05 + flap * 0.02,
+        BIKE.bb.x - 0.12 + flap * 0.04,
+        0.07,
+      );
+      ctx.moveTo(BIKE.rear.x, BIKE.rear.y - BIKE.cassetteRadius);
+      ctx.quadraticCurveTo(
+        BIKE.rear.x + 0.12,
+        0.04 - flap * 0.02,
+        BIKE.bb.x - 0.12 + flap * 0.04,
+        0.07,
+      );
+    } else {
+      ctx.moveTo(BIKE.bb.x, BIKE.bb.y + BIKE.chainringRadius);
+      ctx.lineTo(BIKE.rear.x, BIKE.rear.y + BIKE.cassetteRadius);
+      ctx.moveTo(BIKE.bb.x, BIKE.bb.y - BIKE.chainringRadius);
+      ctx.lineTo(BIKE.rear.x, BIKE.rear.y - BIKE.cassetteRadius);
+    }
     ctx.stroke();
     ctx.lineWidth = 0.014;
     ctx.beginPath();
@@ -1082,14 +1212,32 @@ export class SceneRenderer {
     ctx.stroke();
   }
 
-  private wheel(at: Point, angle: number, c: Colours, detailed: boolean): void {
+  private wheel(at: Point, angle: number, c: Colours, detailed: boolean, flat = false): void {
     const ctx = this.ctx;
     const r = BIKE.wheelRadius;
-    // Tyre.
+    // Tyre (flat: squashed and bulging where it meets the road).
     ctx.strokeStyle = c.tyre;
-    ctx.lineWidth = 0.028;
+    ctx.lineWidth = flat ? 0.036 : 0.028;
     ctx.beginPath();
-    ctx.arc(at.x, at.y, r - 0.014, 0, TAU);
+    if (flat) {
+      ctx.arc(at.x, at.y, r - 0.014, -Math.PI * 0.18, Math.PI * 1.18);
+      ctx.bezierCurveTo(
+        at.x - r * 1.05,
+        at.y - r * 0.78,
+        at.x - r * 0.4,
+        at.y - r * 0.9,
+        at.x,
+        at.y - r * 0.9,
+      );
+      ctx.bezierCurveTo(
+        at.x + r * 0.4,
+        at.y - r * 0.9,
+        at.x + r * 1.05,
+        at.y - r * 0.78,
+        at.x + Math.cos(-Math.PI * 0.18) * (r - 0.014),
+        at.y + Math.sin(-Math.PI * 0.18) * (r - 0.014),
+      );
+    } else ctx.arc(at.x, at.y, r - 0.014, 0, TAU);
     ctx.stroke();
     // Deep rim.
     ctx.lineWidth = 0.022;

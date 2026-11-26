@@ -260,6 +260,196 @@ describe.each(TEST_TRANSPORTS)('Freilauf Rumble over GroupRide (%s)', (kind) => 
     for (const w of [hit.w, calm.w]) for (const r of w.riders) r.ride.leave();
   });
 
+  it('Anna’s tacks give Cleo a flat, exactly once; with or without her mini tool, Cleo’s recording is unchanged', async () => {
+    const play = async (drop: boolean, repair: boolean) => {
+      const w = await world(kind, { Anna: ['tacks'], Ben: ['tailwind'], Cleo: ['tool'] });
+      const { anna, ben, cleo, step, seen } = w;
+      expect(rumbleOf(anna).slots).toEqual(['tacks', 'tacks']);
+      expect(rumbleOf(cleo).slots[0]).toBe('tool');
+      // No flat yet: the mini tool waits in its slot.
+      expect(rumbleOf(cleo).slotNotes[0]).toBe('Only with a flat or chain off');
+      expect(cleo.c.useItem(0)).toBe(false);
+      if (drop) expect(anna.c.useItem(0, 'keyboard')).toBe(true);
+      await step(1);
+      if (drop) {
+        expect(rumbleOf(anna).outgoing).toMatchObject({ kind: 'tacks', result: 'sent' });
+        const forCleo = rumbleOf(cleo).puddles.find((p) => !p.own)!;
+        expect(forCleo).toMatchObject({ kind: 'tacks', by: 'Anna' });
+        expect(forCleo.aheadM).toBeGreaterThan(5);
+        expect(seen(cleo, anna)!.items?.tacks).toHaveLength(1);
+        expect(seen(cleo, anna)!.items?.puddles).toBeUndefined();
+      }
+      const incoming = new Set<number>();
+      let repaired = false;
+      let othersSawRepair = false;
+      for (let i = 0; i < 40; i++) {
+        await step(0.5);
+        othersSawRepair ||= (seen(anna, cleo)!.items?.repairS ?? 0) > 0;
+        const r = rumbleOf(cleo);
+        if (r.incoming) incoming.add(r.incoming.seq);
+        if (repair && !repaired && r.hit?.kind === 'tacks' && r.hit.remainingS < 19) {
+          expect(r.slotNotes[0]).toBeNull();
+          expect(cleo.c.useItem(0)).toBe(true);
+          repaired = true;
+          await step(0.5);
+          expect(rumbleOf(cleo).hit?.repair?.durationS).toBe(3);
+        }
+      }
+      if (drop) {
+        expect(incoming.size).toBe(1); // a flat exactly once
+        expect(rumbleOf(cleo).incoming).toMatchObject({ kind: 'tacks', by: 'Anna', result: 'hit' });
+        expect(rumbleOf(anna).outgoing).toMatchObject({
+          kind: 'tacks',
+          target: 'Cleo',
+          result: 'hit',
+        });
+        expect(rumbleOf(anna).incoming).toBeNull();
+        expect(rumbleOf(ben).incoming).toBeNull();
+        expect(rumbleOf(cleo).puddles).toEqual([]);
+        expect(repaired).toBe(repair);
+        expect(othersSawRepair).toBe(repair); // the mini tool at work, in Cleo's broadcast
+      }
+      await step(20);
+      const cleoLive = cleo.live();
+      await cleo.c.finish();
+      return { w, cleoLive, rec: recording(cleo, cleo.saved[0]!) };
+    };
+    const flat = await play(true, false);
+    const fixed = await play(true, true);
+    const calm = await play(false, false);
+    const loss = (r: typeof flat) => r.cleoLive.powerUps!.rumble!.lossM;
+    expect(loss(flat)).toBeLessThan(-12);
+    expect(loss(fixed)).toBeLessThan(-1);
+    expect(loss(fixed)).toBeGreaterThan(loss(flat) / 2);
+    expect(calm.cleoLive.powerUps!.raceOffsetM).toBe(0);
+    // A flat (repaired or not) changed Cleo's race position only.
+    expect(flat.rec).toEqual(calm.rec);
+    expect(fixed.rec).toEqual(calm.rec);
+    for (const w of [flat.w, fixed.w, calm.w]) for (const r of w.riders) r.ride.leave();
+  });
+
+  it('an energy bar moves Ben ahead in the race; his recording and trainer commands are unchanged', async () => {
+    const play = async (eat: boolean) => {
+      const w = await world(kind, { Anna: ['tailwind'], Ben: ['energyBar'], Cleo: ['tailwind'] });
+      const { anna, ben, step, seen } = w;
+      const before = seen(anna, ben)!.gapM;
+      if (eat) expect(ben.c.useItem(0)).toBe(true);
+      await step(1);
+      if (eat) expect(ben.live().powerUps!.effect).toMatchObject({ kind: 'energyBar' });
+      await step(30);
+      const gain = seen(anna, ben)!.gapM - before;
+      const benLive = ben.live();
+      await ben.c.finish();
+      return { w, gain, benLive, rec: recording(ben, ben.saved[0]!) };
+    };
+    const eaten = await play(true);
+    const calm = await play(false);
+    expect(eaten.benLive.powerUps!.rumble!.gainM).toBeGreaterThan(12);
+    expect(eaten.gain - calm.gain).toBeGreaterThan(10);
+    expect(eaten.rec).toEqual(calm.rec);
+    for (const w of [eaten.w, calm.w]) for (const r of w.riders) r.ride.leave();
+  });
+
+  it('Ben drops the chain of Anna, directly behind him; her mini tool puts it back on; recordings unchanged', async () => {
+    const play = async (attack: boolean, repair: boolean) => {
+      const w = await world(kind, { Anna: ['tool'], Ben: ['chain'], Cleo: ['tailwind'] });
+      const { anna, ben, cleo, step } = w;
+      expect(rumbleOf(ben).slotTargets[0]).toBe('Anna'); // nearest behind, not Cleo
+      if (attack) expect(ben.c.useItem(0)).toBe(true);
+      await step(1.5);
+      if (attack) {
+        expect(rumbleOf(anna).hit).toMatchObject({ kind: 'chain', by: 'Ben' });
+        expect(rumbleOf(ben).outgoing).toMatchObject({
+          kind: 'chain',
+          target: 'Anna',
+          result: 'hit',
+        });
+        expect(rumbleOf(cleo).incoming).toBeNull();
+        if (repair) expect(anna.c.useItem(0)).toBe(true);
+      }
+      await step(1.5); // the same ride either way
+      if (attack) {
+        if (repair) expect(rumbleOf(anna).hit).toBeNull();
+        else expect(rumbleOf(anna).hit?.kind).toBe('chain');
+      }
+      await step(20);
+      const annaLive = anna.live();
+      await anna.c.finish();
+      return { w, annaLive, rec: recording(anna, anna.saved[0]!) };
+    };
+    const off = await play(true, false);
+    const fixed = await play(true, true);
+    const calm = await play(false, false);
+    expect(off.annaLive.powerUps!.rumble!.lossM).toBeLessThan(-12);
+    expect(fixed.annaLive.powerUps!.rumble!.lossM).toBeGreaterThan(
+      off.annaLive.powerUps!.rumble!.lossM / 2,
+    );
+    expect(off.rec).toEqual(calm.rec);
+    expect(fixed.rec).toEqual(calm.rec);
+    for (const w of [off.w, fixed.w, calm.w]) for (const r of w.riders) r.ride.leave();
+  });
+
+  it('Anna’s rough section slows Cleo behind her while inside, never Anna or Ben; the same look for all; recording unchanged', async () => {
+    const play = async (lay: boolean) => {
+      const w = await world(kind, { Anna: ['rough'], Ben: ['tailwind'], Cleo: ['tailwind'] });
+      const { anna, ben, cleo, step, seen } = w;
+      if (lay) expect(anna.c.useItem(0)).toBe(true);
+      await step(1);
+      const looks = new Set<string>();
+      let cleoInside = 0;
+      for (let i = 0; i < 60; i++) {
+        await step(0.5);
+        const t = rumbleOf(cleo).terrain;
+        if (t) {
+          cleoInside += 0.5;
+          looks.add(t.variant);
+          expect(t.by).toBe('Anna');
+        }
+        expect(rumbleOf(anna).terrain).toBeNull();
+        expect(rumbleOf(ben).terrain).toBeNull();
+      }
+      if (lay) {
+        const own = rumbleOf(anna).rough!.find((r) => r.own)!;
+        expect(looks).toEqual(new Set([own.variant]));
+        expect(seen(cleo, anna)!.items?.rough?.[0]?.variant).toBe(own.variant);
+        expect(cleoInside).toBeGreaterThanOrEqual(3);
+        // Road, not a hit: nothing incoming, no protection.
+        expect(rumbleOf(cleo).incoming).toBeNull();
+        expect(rumbleOf(cleo).protection).toBeNull();
+        expect(rumbleOf(anna).outgoing).toMatchObject({ kind: 'rough', result: 'sent' });
+      }
+      await step(5);
+      const cleoLive = cleo.live();
+      const annaLive = anna.live();
+      await cleo.c.finish();
+      return { w, cleoLive, annaLive, rec: recording(cleo, cleo.saved[0]!) };
+    };
+    const rough = await play(true);
+    const calm = await play(false);
+    expect(rough.cleoLive.powerUps!.rumble!.lossM).toBeLessThan(-2);
+    expect(rough.annaLive.powerUps!.rumble!.lossM).toBe(0);
+    expect(calm.cleoLive.powerUps!.raceOffsetM).toBe(0);
+    expect(rough.rec).toEqual(calm.rec);
+    for (const w of [rough.w, calm.w]) for (const r of w.riders) r.ride.leave();
+  });
+
+  it('the team car refills Ben’s slot (the other one is full), never with a team car', async () => {
+    const { ben, step, riders } = await world(kind, {
+      Anna: ['tailwind'],
+      Ben: ['teamCar'],
+      Cleo: ['tailwind'],
+    });
+    expect(rumbleOf(ben).slots).toEqual(['teamCar', 'teamCar']);
+    expect(ben.c.useItem(0)).toBe(true);
+    await step(0.5);
+    const slots = rumbleOf(ben).slots;
+    expect(slots[1]).toBe('teamCar');
+    expect(slots[0]).not.toBeNull();
+    expect(slots[0]).not.toBe('teamCar');
+    expect(rumbleOf(ben).supply).toEqual({ seq: 1, kinds: [slots[0]] });
+    for (const r of riders) r.ride.leave();
+  });
+
   it('hornets chase the leader, past the rider in between, and hide the gaps on the leader’s screen only', async () => {
     const { anna, ben, cleo, step, riders } = await world(kind, {
       Anna: ['tailwind'],

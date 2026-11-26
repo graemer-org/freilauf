@@ -32,23 +32,23 @@ A ride uses one of the two; the invite says which (see "Invites").
 
 Layers inside `@freilauf/p2p`:
 
-| Module                     | Responsibility                                                                                                                            |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `roomCode.ts`              | Room codes, invite secrets, `freilauf://join/…` links, parsing incl. typos                                                                |
-| `transport.ts`             | `GroupTransport`: what `GroupRide` needs from the network; `GroupError`                                                                   |
-| `transports/relay.ts`      | `RelayTransport` (default): a Trystero room; `DEFAULT_RELAY_URLS`, app id                                                                 |
-| `transports/selfHosted.ts` | `SignallingMeshTransport` (fallback): signalling channel + `PeerMesh`                                                                     |
-| `ice.ts`                   | Default STUN servers                                                                                                                      |
-| `signalling/channel.ts`    | Fallback: `SignallingChannel` interface (pluggable)                                                                                       |
-| `signalling/websocket.ts`  | Fallback: `WebSocketSignalling`, reconnects                                                                                               |
-| `signalling/protocol.ts`   | Fallback: client copy of the wire protocol (see "Protocol source of truth")                                                               |
-| `webrtc.ts`                | Fallback: structural WebRTC types, default factory                                                                                        |
-| `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                     |
-| `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                      |
-| `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                                   |
-| `rumble.ts`                | Freilauf Rumble: attack and puddle-claim messages (v2), inboxes (exactly once, checks), outboxes (retries), `PuddleLedger`, `PuddleWatch` |
-| `group.ts`                 | `GroupRide`: the API the app uses                                                                                                         |
-| `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`)     |
+| Module                     | Responsibility                                                                                                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `roomCode.ts`              | Room codes, invite secrets, `freilauf://join/…` links, parsing incl. typos                                                                                                 |
+| `transport.ts`             | `GroupTransport`: what `GroupRide` needs from the network; `GroupError`                                                                                                    |
+| `transports/relay.ts`      | `RelayTransport` (default): a Trystero room; `DEFAULT_RELAY_URLS`, app id                                                                                                  |
+| `transports/selfHosted.ts` | `SignallingMeshTransport` (fallback): signalling channel + `PeerMesh`                                                                                                      |
+| `ice.ts`                   | Default STUN servers                                                                                                                                                       |
+| `signalling/channel.ts`    | Fallback: `SignallingChannel` interface (pluggable)                                                                                                                        |
+| `signalling/websocket.ts`  | Fallback: `WebSocketSignalling`, reconnects                                                                                                                                |
+| `signalling/protocol.ts`   | Fallback: client copy of the wire protocol (see "Protocol source of truth")                                                                                                |
+| `webrtc.ts`                | Fallback: structural WebRTC types, default factory                                                                                                                         |
+| `mesh.ts`                  | Fallback: `PeerMesh`, one `RTCPeerConnection` + data channel per peer                                                                                                      |
+| `riderState.ts`            | Validation, ordering, extrapolation, smoothing, gaps                                                                                                                       |
+| `documents.ts`             | Shared documents (e.g. workouts) and synchronised start                                                                                                                    |
+| `rumble.ts`                | Freilauf Rumble: attack and puddle-claim messages (v2), inboxes (exactly once, checks), outboxes (retries), `PuddleLedger`, `PuddleWatch`, `RoughLedger`, `roughSpan` (v3) |
+| `group.ts`                 | `GroupRide`: the API the app uses                                                                                                                                          |
+| `testing/`                 | Fake Trystero, fake WebRTC, in-memory signalling, fake clock, a harness that runs a test on both transports (`@freilauf/p2p/testing`)                                      |
 
 All host dependencies (Trystero, `WebSocket`, `RTCPeerConnection`, timers, clock) are
 injectable; the defaults use the renderer's globals. Trystero is loaded with a dynamic
@@ -289,7 +289,7 @@ rule. The `state` decoder rejects every `doc-*` message (wrong `type`), the docu
 rejects `state`, so old clients that only know `state` interoperate with new ones (they simply
 never see documents), and new clients do not send any `doc-*` traffic until something is shared.
 
-### Freilauf Rumble (`items`, `rumble-*`, `puddle-*`) — version 2
+### Freilauf Rumble (`items`, `rumble-*`, `puddle-*`) — versions 2 and 3
 
 Additive, for Freilauf Rumble ([ADR 0008](adr/0008-rumble-items.md); version 1, the `cards`
 field and `card-*` messages of [ADR 0007](adr/0007-card-race.md), is superseded and no longer
@@ -328,6 +328,26 @@ calling the app's handler (`setAttackHandler` / `setPuddleClaimHandler`) at most
 The dropper decides its own puddles with `PuddleLedger` (the first plausible claim is
 `granted`, later ones `taken`, a repeat by the same claimer `granted` again); each rider finds
 the puddles it rode through with `PuddleWatch`. ≤ 512 bytes per message.
+
+**Version 3** ([ADR 0009](adr/0009-rumble-road-items.md)) bumps the state's `items.v` to 3 and
+adds optional fields; the messages above stay exactly as they are (`v: 2`):
+
+```jsonc
+"hit": { "kind": "tacks", "s": 2.4 },     // a flat tyre; "chain": a dropped chain
+"repairS": 2.4,                          // the mini tool at work, s until fixed
+"tacks": [ { "id": "t4k3x9aa.1", "routeId": "isar-loop", "m": 4213.5, "s": 41.2 } ], // like "puddles"
+"rough": [ { "id": "r0q2m8zz.1", "m": 5120.0, "len": 150, "s": 52.0, "variant": "cobbles" } ] // ≤ 2
+```
+
+The dropped chain is a `rumble-attack` of kind `chain` (aimed at the rider directly behind; a v3
+app only aims it at riders whose `items.v` ≥ 3). Tacks are claimed with `puddle-claim` like a
+puddle (their ids come from `items.tacks`; the dropper keeps a second `PuddleLedger`). A rough
+section has no messages: each rider measures the others' `items.rough` with `roughSpan` (from
+`m − len` to `m`) and is slowed while on one; `RoughLedger` keeps the dropper's own. A v2 app
+reads a v3 state without the new fields (its validator drops unknown fields), so it never claims
+tacks or rides on a rough section, sees a flat as a protected rider, and refuses a `chain`
+attack as an unknown kind — tested against a frozen copy of the v2 decoder
+(`src/testing/riderStateV2.ts`).
 
 ### Shared-document messages (`doc-*`)
 

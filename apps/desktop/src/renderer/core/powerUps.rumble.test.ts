@@ -7,6 +7,7 @@ import {
   DEFAULT_POWER_UP_CONFIG,
   POWER_UP_DEFINITIONS,
   PROTECTION_S,
+  REPAIR_S,
   RUMBLE_POOL,
   PowerUpEngine,
   type PowerUpConfig,
@@ -135,21 +136,44 @@ describe('Rumble: two item slots', () => {
   it('feed bags and challenges draw from the Rumble pool with fixed weights, the same for everyone', () => {
     expect(new Set(RUMBLE_POOL)).toEqual(new Set(RUMBLE_ITEM_KINDS));
     const weight = (k: PowerUpKind) => RUMBLE_POOL.filter((x) => x === k).length;
-    // Boosts 2 each (8 of 15), water bottle 2, mud puddle 2, rain cape 2, hornets 1.
-    expect(RUMBLE_POOL).toHaveLength(15);
-    for (const k of POWER_UP_KINDS) expect(weight(k)).toBe(2);
-    expect([weight('bottle'), weight('puddle'), weight('cape'), weight('hornets')]).toEqual([
-      2, 2, 2, 1,
-    ]);
-    const kinds = Array.from({ length: 3000 }, (_, i) => kindFor('route:r', i, RUMBLE_POOL));
+    // 27 entries: the four boosts and the energy bar 2 each (10 of 27 help yourself), the
+    // attacks 2 each but hornets 1, rain cape 2, mini tool 3, team car 1.
+    expect(RUMBLE_POOL).toHaveLength(27);
+    const boosts: PowerUpKind[] = [...POWER_UP_KINDS, 'energyBar'];
+    for (const k of boosts) expect(weight(k)).toBe(2);
+    expect(
+      (['bottle', 'puddle', 'tacks', 'chain', 'rough', 'hornets'] as const).map(weight),
+    ).toEqual([2, 2, 2, 2, 2, 1]);
+    expect([weight('cape'), weight('tool'), weight('teamCar')]).toEqual([2, 3, 1]);
+    const kinds = Array.from({ length: 6000 }, (_, i) => kindFor('route:r', i, RUMBLE_POOL));
     const share = (k: PowerUpKind) => kinds.filter((x) => x === k).length / kinds.length;
-    expect(share('hornets')).toBeCloseTo(1 / 15, 1);
-    expect(share('bottle')).toBeCloseTo(2 / 15, 1);
-    expect(POWER_UP_KINDS.reduce((a, k) => a + share(k), 0)).toBeCloseTo(8 / 15, 1);
+    expect(share('hornets')).toBeCloseTo(1 / 27, 1);
+    expect(share('tool')).toBeCloseTo(3 / 27, 1);
+    const boostShare = boosts.reduce((a, k) => a + share(k), 0);
+    expect(boostShare).toBeGreaterThan(1 / 3);
+    expect(boostShare).toBeLessThan(1 / 2);
     // Riders on the same route meet the same item at the same feed bag.
     expect(kindFor('route:r', 7, RUMBLE_POOL)).toBe(kindFor('route:r', 7, RUMBLE_POOL));
     expect(powerUpConfig({ itemPool: ['bottle', 'bogus'] }).itemPool).toEqual(['bottle']);
     expect(powerUpConfig({ itemPool: ['headwind'] }).itemPool).toEqual(RUMBLE_POOL);
+  });
+
+  it('tests and the simulation can fix the order of the feed bags (the last item repeats)', () => {
+    expect(powerUpConfig({ itemOrder: ['energyBar', 'tool'] }).itemOrder).toEqual([
+      'energyBar',
+      'tool',
+    ]);
+    expect(powerUpConfig({ itemOrder: ['energyBar', 'bogus'] }).itemOrder).toBeNull();
+    expect(powerUpConfig({}).itemOrder).toBeNull();
+    const { e, r } = rumble({
+      spacing: { minM: 30, maxM: 30 },
+      itemOrder: ['energyBar', 'tool'],
+    });
+    r.ride(20);
+    expect(e.slots).toEqual(['energyBar', 'tool']);
+    e.activate(0);
+    r.ride(5);
+    expect(e.slots).toEqual(['tool', 'tool']);
   });
 });
 
@@ -191,7 +215,12 @@ describe('Rumble: what each item does', () => {
     (kind, durationS, drag, target) => {
       const def = POWER_UP_DEFINITIONS[kind];
       expect(def).toMatchObject({ durationS, target, role: 'attack' });
-      expect(def.modifiers(flat)).toEqual({ dragFactor: drag, massFactor: 1, rollingFactor: 1 });
+      expect(def.modifiers(flat)).toEqual({
+        dragFactor: drag,
+        massFactor: 1,
+        rollingFactor: 1,
+        powerFactor: 1,
+      });
       const hit = hitBy(kind);
       expect(hit.result).toBe('hit');
       expect(hit.hitS).toBeCloseTo(durationS, 0);
@@ -392,5 +421,240 @@ describe('normal mode is unchanged', () => {
     expect(e.toLive().rumble).toBeUndefined();
     e.setMode('rumble');
     expect(e.slots).toEqual(['slipstream', null]);
+  });
+});
+
+describe('Rumble v3 items (ADR 0009)', () => {
+  const flat = { gradePercent: 0, speedMps: 9 };
+  const calmTrace = () => {
+    const calm = rumble();
+    calm.r.ride(180);
+    return calm.r.trace;
+  };
+
+  it('energy bar: 15 s of 45 % more power in the shadow bike, about 22 m at 200 W; never the recording', () => {
+    const def = POWER_UP_DEFINITIONS.energyBar;
+    expect(def).toMatchObject({ durationS: 15, target: 'self', role: 'boost' });
+    expect(def.modifiers(flat)).toEqual({
+      dragFactor: 1,
+      massFactor: 1,
+      rollingFactor: 1,
+      powerFactor: 1.45,
+    });
+    const gain = boostGain('energyBar');
+    expect(gain).toBeGreaterThan(20);
+    expect(gain).toBeLessThan(25);
+    const { e, r } = rumble();
+    r.ride(60);
+    e.grant('energyBar');
+    e.grant('tailwind');
+    expect(e.activate(0)).toBe(true);
+    expect(e.toLive().effect).toMatchObject({ kind: 'energyBar', phase: 'active' });
+    // One boost at a time.
+    expect(e.playNote(1)).toBe('After your boost');
+    r.ride(120);
+    expect(e.toLive().rumble?.gainM).toBeCloseTo(gain, 1);
+    expect(r.trace).toEqual(calmTrace());
+  });
+
+  it('tacks: a flat tyre, 3.5× the rolling resistance for 20 s, about 27 m at 200 W; never the recording', () => {
+    const def = POWER_UP_DEFINITIONS.tacks;
+    expect(def).toMatchObject({ durationS: 20, target: 'behind', role: 'attack' });
+    expect(def.modifiers(flat)).toEqual({
+      dragFactor: 1,
+      massFactor: 1,
+      rollingFactor: 3.5,
+      powerFactor: 1,
+    });
+    const hit = hitBy('tacks');
+    expect(hit.result).toBe('hit');
+    expect(hit.hitS).toBeCloseTo(20, 0);
+    const live = hit.e.toLive();
+    expect(live.raceOffsetM).toBeLessThan(-25);
+    expect(live.raceOffsetM).toBeGreaterThan(-35);
+    expect(live.rumble?.incoming).toMatchObject({ kind: 'tacks', by: 'Ben', result: 'hit' });
+    expect(hit.r.trace).toEqual(calmTrace());
+  });
+
+  it('dropped chain: no power for 6 s (coasting), about 22 m at 200 W; never the recording', () => {
+    const def = POWER_UP_DEFINITIONS.chain;
+    expect(def).toMatchObject({ durationS: 6, target: 'chaser', role: 'attack' });
+    expect(def.modifiers(flat).powerFactor).toBe(0);
+    expect(def.modifiers(flat).dragFactor).toBe(1);
+    const hit = hitBy('chain');
+    expect(hit.result).toBe('hit');
+    expect(hit.hitS).toBeCloseTo(6, 0);
+    const loss = -hit.e.toLive().raceOffsetM;
+    expect(loss).toBeGreaterThan(20);
+    expect(loss).toBeLessThan(25);
+    expect(hit.r.trace).toEqual(calmTrace());
+  });
+
+  it('the rain cape keeps off tacks and a dropped chain; protection follows them like any hit', () => {
+    for (const kind of ['tacks', 'chain'] as const) {
+      const { e, r } = rumble();
+      r.ride(5);
+      e.grant('cape');
+      e.activate(0);
+      expect(e.receiveHit(kind, 'Ben')).toBe('blocked');
+      expect(e.toLive().rumble?.protection?.remainingS).toBeCloseTo(PROTECTION_S, 1);
+      expect(e.receiveHit(kind, 'Ben')).toBe('protected');
+    }
+  });
+
+  it('mini tool: does nothing without a flat or dropped chain (it stays); fixes a flat in 3 s', () => {
+    expect(REPAIR_S).toEqual({ tacks: 3, chain: 1 });
+    const { e, r } = rumble();
+    r.ride(60);
+    e.grant('tool');
+    e.grant('tool');
+    expect(e.playNote(0)).toBe('Only with a flat or chain off');
+    expect(e.activate(0)).toBe(false);
+    expect(e.slots).toEqual(['tool', 'tool']);
+    e.receiveHit('tacks', 'Ben');
+    r.ride(2);
+    expect(e.playNote(0)).toBeNull();
+    expect(e.activate(0)).toBe(true);
+    expect(e.slots).toEqual([null, 'tool']);
+    expect(e.toLive().event).toMatchObject({ type: 'repairing', kind: 'tool' });
+    const hit = e.toLive().rumble!.hit!;
+    expect(hit.kind).toBe('tacks');
+    expect(hit.repair).toEqual({ remainingS: 3, durationS: 3 });
+    expect(hit.remainingS).toBeCloseTo(3, 5);
+    // A second tool waits while the first one works.
+    expect(e.playNote(1)).toBe('Repairing');
+    r.ride(3);
+    expect(e.toLive().rumble?.hit).toBeNull();
+    // Protection runs on from the repair, 15 s.
+    expect(e.toLive().rumble?.protection?.remainingS).toBeGreaterThan(14);
+    r.ride(115);
+    // Repaired after 5 s instead of 20: a much smaller loss.
+    const loss = -e.raceOffsetM;
+    expect(loss).toBeGreaterThan(4);
+    expect(loss).toBeLessThan(10);
+    expect(loss).toBeLessThan(-hitBy('tacks').e.raceOffsetM / 3);
+    expect(r.trace).toEqual(calmTrace());
+  });
+
+  it('mini tool: puts a dropped chain back on in 1 s', () => {
+    const { e, r } = rumble();
+    r.ride(60);
+    e.grant('tool');
+    e.receiveHit('chain', 'Ben');
+    r.ride(1);
+    expect(e.activate(0)).toBe(true);
+    expect(e.toLive().rumble!.hit!.repair?.durationS).toBe(1);
+    r.ride(1);
+    expect(e.toLive().rumble?.hit).toBeNull();
+    r.ride(118);
+    expect(-e.raceOffsetM).toBeLessThan(10);
+    expect(-e.raceOffsetM).toBeGreaterThan(2);
+  });
+
+  it('a mini tool does not help against a bottle', () => {
+    const { e, r } = rumble();
+    r.ride(5);
+    e.grant('tool');
+    e.receiveHit('bottle', 'Ben');
+    expect(e.playNote(0)).toBe('Only with a flat or chain off');
+    expect(e.activate(0)).toBe(false);
+  });
+
+  it('team car: refills its slot and an empty other one, never with a team car, the same for the same ride', () => {
+    const run = () => {
+      const { e, r } = rumble({}, 'ride:car');
+      r.ride(5);
+      e.grant('teamCar');
+      expect(e.activate(0)).toBe(true);
+      return e;
+    };
+    const a = run();
+    const b = run();
+    expect(a.slots.every((k) => k !== null && k !== 'teamCar')).toBe(true);
+    expect(a.slots).toEqual(b.slots);
+    expect(a.toLive().event).toMatchObject({ type: 'supplied', kind: 'teamCar' });
+    expect(a.toLive().rumble?.supply).toEqual({ seq: 1, kinds: a.slots });
+    // The other slot full: only its own slot is refilled.
+    const { e, r } = rumble({}, 'ride:car');
+    r.ride(5);
+    e.grant('cape');
+    e.grant('teamCar');
+    expect(e.activate(1)).toBe(true);
+    expect(e.slots[0]).toBe('cape');
+    expect(e.slots[1]).not.toBeNull();
+    expect(e.slots[1]).not.toBe('teamCar');
+    expect(e.toLive().rumble?.supply?.kinds).toHaveLength(1);
+    // A pool of team cars only: it still never hands up a team car.
+    const only = rumble({ itemPool: ['teamCar'] });
+    only.r.ride(5);
+    only.e.grant('teamCar');
+    only.e.activate(0);
+    expect(only.e.slots.every((k) => k !== null && k !== 'teamCar')).toBe(true);
+  });
+
+  /** 200 W on the flat through a 150 m rough section starting 30 s in (by race position). */
+  function throughRough(setup: (r: Ride, e: PowerUpEngine) => void = () => {}) {
+    const { e, r } = rumble();
+    setup(r, e);
+    r.ride(30);
+    const from = r.distanceM + e.raceOffsetM + 1;
+    let insideS = 0;
+    let capeInside = false;
+    for (let i = 0; i < 4 * 150; i++) {
+      const at = r.distanceM + e.raceOffsetM;
+      const inside = at >= from && at <= from + 150;
+      e.setTerrain(inside ? { variant: 'cobbles', by: 'Ben' } : null);
+      if (e.toLive().rumble?.terrain) {
+        insideS += 0.25;
+        capeInside = e.toLive().rumble?.cape !== null;
+      }
+      r.tick();
+    }
+    return { e, r, insideS, capeInside };
+  }
+
+  it('rough section: 2.5× the rolling resistance while inside, 10–15 m through 150 m at 200 W; road, not a hit', () => {
+    expect(POWER_UP_DEFINITIONS.rough).toMatchObject({ target: 'behind', role: 'terrain' });
+    expect(POWER_UP_DEFINITIONS.rough.modifiers(flat).rollingFactor).toBe(2.5);
+    const t = throughRough((r, e) => {
+      e.grant('cape');
+      r.ride(1);
+      e.activate(0);
+    });
+    expect(t.insideS).toBeGreaterThan(14);
+    const loss = -t.e.raceOffsetM;
+    expect(loss).toBeGreaterThan(10);
+    expect(loss).toBeLessThan(15);
+    expect(t.e.toLive().rumble?.lossM).toBeCloseTo(t.e.raceOffsetM, 1);
+    // The cape was not used up, nothing was protected, no hit was noted.
+    expect(t.capeInside).toBe(true);
+    expect(t.e.toLive().rumble?.protection).toBeNull();
+    expect(t.e.toLive().rumble?.incoming).toBeNull();
+    expect(t.e.hitCheck()).toBeNull();
+    // The recording is the one without the rough road (151 s of the same ride).
+    const calm = rumble();
+    calm.r.ride(1 + 30 + 150);
+    expect(t.r.trace).toEqual(calm.r.trace);
+  });
+
+  it('rough section: nothing while paused or in ERG; a protected rider is slowed all the same', () => {
+    const { e, r } = rumble();
+    r.ride(30);
+    r.blocked = 'erg';
+    e.setTerrain({ variant: 'gravel', by: 'Ben' });
+    r.ride(20);
+    expect(e.raceOffsetM).toBe(0);
+    expect(e.toLive().rumble?.terrain).toBeNull();
+    r.blocked = null;
+    r.ride(1);
+    e.receiveHit('bottle', 'Cleo');
+    r.ride(12);
+    const afterHit = e.raceOffsetM;
+    r.ride(5); // protected now, still on rough road
+    expect(e.hitCheck()).toBe('protected');
+    expect(e.raceOffsetM).toBeLessThan(afterHit - 1);
+    e.setMode('normal');
+    e.setTerrain({ variant: 'gravel', by: 'Ben' });
+    expect(e.toLive().rumble).toBeUndefined();
   });
 });

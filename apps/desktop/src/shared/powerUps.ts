@@ -17,7 +17,14 @@ export type PowerUpKind =
   | 'bottle'
   | 'puddle'
   | 'hornets'
-  | 'cape';
+  | 'cape'
+  // Freilauf Rumble, protocol v3 (docs/adr/0009-rumble-road-items.md).
+  | 'energyBar'
+  | 'tacks'
+  | 'tool'
+  | 'chain'
+  | 'teamCar'
+  | 'rough';
 
 /** The power-ups of a normal ride: the four boosts (what pick-ups and challenges give). */
 export const POWER_UP_KINDS: readonly PowerUpKind[] = [
@@ -27,20 +34,52 @@ export const POWER_UP_KINDS: readonly PowerUpKind[] = [
   'downhill',
 ];
 
-/** Every item of Freilauf Rumble: the four boosts, the three attacks and the rain cape. */
+/**
+ * Every item of Freilauf Rumble: the four boosts and the energy bar, the attacks (water bottle,
+ * mud puddle, hornets, tacks, dropped chain), the rain cape, the mini tool, the team car and the
+ * rough section.
+ */
 export const RUMBLE_ITEM_KINDS: readonly PowerUpKind[] = [
   ...POWER_UP_KINDS,
   'bottle',
   'puddle',
   'hornets',
   'cape',
+  'energyBar',
+  'tacks',
+  'tool',
+  'chain',
+  'teamCar',
+  'rough',
+];
+
+/**
+ * Items that only riders whose app speaks Rumble protocol v3 know (ADR 0009). They are never
+ * aimed at, or laid for, an app of protocol v2; such an app ignores them on the wire.
+ */
+export const V3_ITEM_KINDS: readonly PowerUpKind[] = [
+  'energyBar',
+  'tacks',
+  'tool',
+  'chain',
+  'teamCar',
+  'rough',
 ];
 
 /** Items aimed at another rider (sent over the group, applied by that rider to itself). */
-export const ATTACK_KINDS: readonly PowerUpKind[] = ['bottle', 'hornets'];
+export const ATTACK_KINDS: readonly PowerUpKind[] = ['bottle', 'hornets', 'chain'];
 
-/** Everything that can hit a rider (slows them): the two aimed items and the mud puddle. */
-export const HIT_KINDS: readonly PowerUpKind[] = ['bottle', 'puddle', 'hornets'];
+/**
+ * Everything that can hit a rider (slows them): the aimed items, the mud puddle and the tacks
+ * (a flat tyre). The rough section is road, not a hit (see `RoughVariant`).
+ */
+export const HIT_KINDS: readonly PowerUpKind[] = ['bottle', 'puddle', 'hornets', 'tacks', 'chain'];
+
+/** Hits the mini tool fixes: a flat tyre (in 3 s) and a dropped chain (in 1 s). */
+export const REPAIRABLE_KINDS: readonly PowerUpKind[] = ['tacks', 'chain'];
+
+/** Road objects dropped behind a rider that hit exactly one rider (claimed from the dropper). */
+export type DropKind = 'puddle' | 'tacks';
 
 /** An item aimed at another rider (the water bottle, the hornets). */
 export function isAttackKind(kind: PowerUpKind): boolean {
@@ -77,7 +116,51 @@ export const POWER_UP_INFO: Record<PowerUpKind, { label: string; blurb: string }
     blurb: 'Chase the leader: slowed for 8 s, and they cannot see the gaps.',
   },
   cape: { label: 'Rain cape', blurb: 'Keeps off the next hit, for up to 60 s.' },
+  energyBar: {
+    label: 'Energy bar',
+    blurb: 'Eat it: 15 s of fresh legs, more power in your race position.',
+  },
+  tacks: {
+    label: 'Tacks',
+    blurb: 'Scattered behind you: the next rider over them gets a flat tyre for up to 20 s.',
+  },
+  tool: {
+    label: 'Mini tool',
+    blurb: 'Fixes a flat tyre in 3 s or puts a dropped chain back on in 1 s.',
+  },
+  chain: {
+    label: 'Dropped chain',
+    blurb: 'At the rider directly behind you: their chain comes off, 4 s pedalling into nothing.',
+  },
+  teamCar: {
+    label: 'Team car',
+    blurb: 'Your team car pulls up and fills your slots with new items.',
+  },
+  rough: {
+    label: 'Rough section',
+    blurb: 'Lays 150 m of rough road behind you for 60 s: slower for everyone riding through.',
+  },
 };
+
+/**
+ * What a rough section looks like (chosen when it is laid; the effect is the same): cobbles,
+ * a gravel farm track, a forest path with roots, branches and leaves on the road.
+ */
+export type RoughVariant = 'cobbles' | 'gravel' | 'roots' | 'debris';
+export const ROUGH_VARIANTS: readonly RoughVariant[] = ['cobbles', 'gravel', 'roots', 'debris'];
+export const ROUGH_LABEL: Record<RoughVariant, string> = {
+  cobbles: 'Cobbles',
+  gravel: 'Gravel track',
+  roots: 'Forest path',
+  debris: 'Branches and leaves',
+};
+
+/** A known rough-section look, or null (an unknown variant from a later app is ignored). */
+export function asRoughVariant(v: unknown): RoughVariant | null {
+  return typeof v === 'string' && (ROUGH_VARIANTS as readonly string[]).includes(v)
+    ? (v as RoughVariant)
+    : null;
+}
 
 /** Why power-ups do not apply right now (null: they do). */
 export type PowerUpBlock =
@@ -136,7 +219,11 @@ export type PowerUpEventType =
   /** This rider's rain cape kept off a hit. */
   | 'blocked'
   /** An item came back to its slot (an attack that could not land). */
-  | 'returned';
+  | 'returned'
+  /** The mini tool is at work on a flat tyre or a dropped chain. */
+  | 'repairing'
+  /** The team car filled the slots (`kind` 'teamCar'). */
+  | 'supplied';
 
 /** The latest thing that happened; `seq` grows by one per event (to play a cue once). */
 export interface PowerUpEventLive {
@@ -212,6 +299,8 @@ export interface RumbleHitLive {
   by: string;
   remainingS: number;
   durationS: number;
+  /** The mini tool at work on it (a flat tyre, a dropped chain): it ends when this does. */
+  repair?: RumbleTimerLive;
 }
 
 /** A countdown (rain cape up, protection). */
@@ -244,9 +333,11 @@ export interface OutgoingAttackLive {
   result: AttackResult | 'sent';
 }
 
-/** A mud puddle on the road near this rider (own or someone else's). */
+/** A mud puddle or tacks on the road near this rider (own or someone else's). */
 export interface PuddleLive {
   id: string;
+  /** What lies there (absent: a mud puddle). */
+  kind?: DropKind;
   /** Metres from this rider along the road: + ahead, − behind. */
   aheadM: number;
   /** Dropped by this rider (it never hits them). */
@@ -276,8 +367,24 @@ export interface RumbleLive {
   lossM: number;
   incoming: IncomingHitLive | null;
   outgoing: OutgoingAttackLive | null;
-  /** Mud puddles on the road within view, nearest first. */
+  /** Mud puddles and tacks on the road within view, nearest first. */
   puddles: PuddleLive[];
+  /** Rough sections on the road within view (own and the others'), nearest first. */
+  rough?: RoughLive[];
+  /** The rough section this rider rides on now (slowed while inside), or null. */
+  terrain?: { variant: RoughVariant; by: string } | null;
+  /** The team car's latest visit (to draw it): `seq` grows per visit, `kinds` it handed up. */
+  supply?: { seq: number; kinds: PowerUpKind[] } | null;
+}
+
+/** A rough section on the road near this rider: from `fromM` to `toM` (− behind, + ahead). */
+export interface RoughLive {
+  id: string;
+  fromM: number;
+  toM: number;
+  variant: RoughVariant;
+  own: boolean;
+  by: string;
 }
 
 /** "Press the side button or P": how to use a held power-up. */

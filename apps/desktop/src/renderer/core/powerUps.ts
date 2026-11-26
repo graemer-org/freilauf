@@ -39,6 +39,7 @@ import type {
   PowerUpEventType,
   PowerUpKind,
   PowerUpLive,
+  RoughVariant,
   RumbleLive,
 } from '../../shared/powerUps';
 import { POWER_UP_KINDS, RUMBLE_ITEM_KINDS } from '../../shared/powerUps';
@@ -53,13 +54,21 @@ export interface EffectModifiers {
   massFactor: number;
   /** × Crr: rolling resistance. */
   rollingFactor: number;
+  /** × the rider's power as the shadow bike gets it (energy bar > 1, dropped chain 0). */
+  powerFactor: number;
 }
 
 export const NO_MODIFIERS: Readonly<EffectModifiers> = Object.freeze({
   dragFactor: 1,
   massFactor: 1,
   rollingFactor: 1,
+  powerFactor: 1,
 });
+
+/** Modifiers from the factors that differ from 1. */
+function mods(m: Partial<EffectModifiers>): EffectModifiers {
+  return { ...NO_MODIFIERS, ...m };
+}
 
 /** What an effect may look at to decide how strongly it acts (and, armed, whether to start). */
 export interface EffectContext {
@@ -81,16 +90,20 @@ export interface PowerUpDefinition {
   modifiers(ctx: EffectContext): EffectModifiers;
   /**
    * Who the effect acts on: 'self', or (Rumble attacks) the rider directly ahead ('ahead'), the
-   * leader ('leader'), or whoever next rides through the spot behind this rider ('behind': the
-   * mud puddle). Hits are applied by the rider hit, to itself (`receiveHit`); nobody changes
-   * another rider's numbers.
+   * leader ('leader'), the rider directly behind ('chaser': the dropped chain), or whoever rides
+   * over the spot behind this rider ('behind': the mud puddle, the tacks, a rough section). Hits
+   * are applied by the rider hit, to itself (`receiveHit`); nobody changes another rider's
+   * numbers.
    */
-  target: 'self' | 'ahead' | 'leader' | 'behind';
+  target: 'self' | 'ahead' | 'leader' | 'chaser' | 'behind';
   /**
    * 'boost' helps this rider (its gain is the "+ m from items"), 'attack' slows whoever it hits
-   * (the "− m from hits"), 'guard' is the rain cape (no modifiers; it keeps off the next hit).
+   * (the "− m from hits"), 'guard' is the rain cape (no modifiers; it keeps off the next hit),
+   * 'repair' the mini tool (ends a flat tyre or a dropped chain early), 'supply' the team car
+   * (fills the slots), 'terrain' the rough section (road that slows everyone else on it, not a
+   * hit: no cape, no protection; see `setTerrain`).
    */
-  role: 'boost' | 'attack' | 'guard';
+  role: 'boost' | 'attack' | 'guard' | 'repair' | 'supply' | 'terrain';
 }
 
 /** A descent for Downhill momentum: at least this steep downhill, percent. */
@@ -107,7 +120,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 15,
     target: 'self',
     role: 'boost',
-    modifiers: () => ({ dragFactor: 0.6, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => mods({ dragFactor: 0.6 }),
   },
   /** 12 % less mass for 25 s, applied uphill only (downhill less mass would slow the bike). */
   lightLoad: {
@@ -115,8 +128,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 25,
     target: 'self',
     role: 'boost',
-    modifiers: (c) =>
-      c.gradePercent > 0.5 ? { dragFactor: 1, massFactor: 0.88, rollingFactor: 1 } : NO_MODIFIERS,
+    modifiers: (c) => (c.gradePercent > 0.5 ? mods({ massFactor: 0.88 }) : NO_MODIFIERS),
   },
   /** Moderate and long: 25 % less air resistance for 30 s, like sitting in a wheel. */
   slipstream: {
@@ -124,7 +136,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 30,
     target: 'self',
     role: 'boost',
-    modifiers: () => ({ dragFactor: 0.75, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => mods({ dragFactor: 0.75 }),
   },
   /**
    * Armed for up to 3 min; on the next descent (≤ −2 %) it acts for 20 s with 30 % less air
@@ -137,7 +149,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     fires: (c) => c.gradePercent <= DESCENT_GRADE_PERCENT,
     target: 'self',
     role: 'boost',
-    modifiers: () => ({ dragFactor: 0.7, massFactor: 1, rollingFactor: 0.5 }),
+    modifiers: () => mods({ dragFactor: 0.7, rollingFactor: 0.5 }),
   },
   /**
    * Rumble: thrown at the rider directly ahead (it homes in; only protection or a rain cape stops
@@ -149,7 +161,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 10,
     target: 'ahead',
     role: 'attack',
-    modifiers: () => ({ dragFactor: 2, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => mods({ dragFactor: 2 }),
   },
   /**
    * Rumble: dropped on the road behind this rider; the next rider through it is slowed: 3× the
@@ -160,7 +172,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 5,
     target: 'behind',
     role: 'attack',
-    modifiers: () => ({ dragFactor: 3, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => mods({ dragFactor: 3 }),
   },
   /**
    * Rumble: a swarm that chases the leader, however far ahead: 2.2× the air resistance for 8 s
@@ -171,7 +183,7 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     durationS: 8,
     target: 'leader',
     role: 'attack',
-    modifiers: () => ({ dragFactor: 2.2, massFactor: 1, rollingFactor: 1 }),
+    modifiers: () => mods({ dragFactor: 2.2 }),
   },
   /** Rumble: raised when used, it keeps off the next hit within 60 s, then it is used up. */
   cape: {
@@ -181,16 +193,86 @@ export const POWER_UP_DEFINITIONS: Record<PowerUpKind, PowerUpDefinition> = {
     role: 'guard',
     modifiers: () => NO_MODIFIERS,
   },
+  /**
+   * Rumble (v3): eaten at once, 45 % more power in the shadow bike for 15 s — about 22 m at
+   * 200 W on the flat, between a Tailwind (≈ 19 m) and a Slipstream (≈ 24 m). The trainer and
+   * the recording never see the extra watts.
+   */
+  energyBar: {
+    kind: 'energyBar',
+    durationS: 15,
+    target: 'self',
+    role: 'boost',
+    modifiers: () => mods({ powerFactor: 1.45 }),
+  },
+  /**
+   * Rumble (v3): scattered on the road behind this rider like a mud puddle (same placement and
+   * claim protocol: one rider, never the dropper, gone after 60 s). Whoever rides over them has a
+   * flat tyre: 3.5× the rolling resistance for 20 s (about 27 m at 200 W on the flat), unless a
+   * mini tool fixes it sooner.
+   */
+  tacks: {
+    kind: 'tacks',
+    durationS: 20,
+    target: 'behind',
+    role: 'attack',
+    modifiers: () => mods({ rollingFactor: 3.5 }),
+  },
+  /** Rumble (v3): used on a flat tyre (fixed 3 s later) or a dropped chain (back on in 1 s). */
+  tool: {
+    kind: 'tool',
+    durationS: 3,
+    target: 'self',
+    role: 'repair',
+    modifiers: () => NO_MODIFIERS,
+  },
+  /**
+   * Rumble (v3): at the rider directly behind, however far: their chain comes off and they
+   * pedal into nothing for 6 s (no power in the shadow bike, coasting with the usual drag) —
+   * about 22 m at 200 W on the flat. The mini tool puts it back on in 1 s.
+   */
+  chain: {
+    kind: 'chain',
+    durationS: 6,
+    target: 'chaser',
+    role: 'attack',
+    modifiers: () => mods({ powerFactor: 0 }),
+  },
+  /** Rumble (v3): the team car pulls up and fills this slot and the other one if it is empty. */
+  teamCar: {
+    kind: 'teamCar',
+    durationS: 0,
+    target: 'self',
+    role: 'supply',
+    modifiers: () => NO_MODIFIERS,
+  },
+  /**
+   * Rumble (v3): 150 m of rough road laid behind this rider, there for 60 s. Every other rider
+   * on it has 2.5× the rolling resistance while inside (about 12–14 m lost riding through at
+   * 200 W on the flat). Road, not a hit: no rain cape keeps it off, no protection follows.
+   */
+  rough: {
+    kind: 'rough',
+    durationS: 60,
+    target: 'behind',
+    role: 'terrain',
+    modifiers: () => mods({ rollingFactor: 2.5 }),
+  },
 };
+
+/** How long the mini tool takes, per hit it fixes (s). */
+export const REPAIR_S: Partial<Record<PowerUpKind, number>> = { tacks: 3, chain: 1 };
 
 /** After any hit (or one a rain cape kept off) nothing lands on that rider for this long, s. */
 export const PROTECTION_S = 15;
 /** Items a Rumble rider holds: one per side button. */
 export const RUMBLE_CAPACITY = 2;
 /**
- * What a feed bag or a challenge gives in a Rumble: every item, boosts most often (a pool entry
- * per chance). Four boosts × 2, water bottle × 2, mud puddle × 2, rain cape × 2, hornets × 1:
- * 8 of 15 help yourself, 5 slow someone else, 2 protect.
+ * What a feed bag or a challenge gives in a Rumble: every item, a pool entry per chance (27 in
+ * all). Boosts: the four power-ups and the energy bar × 2 each (10 of 27, about 37 %). Attacks:
+ * water bottle, mud puddle, tacks, dropped chain, rough section × 2 each, hornets × 1 (11 of
+ * 27). Help: rain cape × 2, mini tool × 3 (so a flat is now and then fixable), team car × 1.
+ * Plain weights: every rider on a route meets the same item at the same feed bag.
  */
 export const RUMBLE_POOL: readonly PowerUpKind[] = [
   'tailwind',
@@ -201,13 +283,25 @@ export const RUMBLE_POOL: readonly PowerUpKind[] = [
   'lightLoad',
   'downhill',
   'downhill',
+  'energyBar',
+  'energyBar',
   'bottle',
   'bottle',
   'puddle',
   'puddle',
-  'cape',
-  'cape',
+  'tacks',
+  'tacks',
+  'chain',
+  'chain',
+  'rough',
+  'rough',
   'hornets',
+  'cape',
+  'cape',
+  'tool',
+  'tool',
+  'tool',
+  'teamCar',
 ];
 
 /** Several effects at once multiply (only one at a time for now; see `maxEffects`). */
@@ -217,12 +311,13 @@ export function combineModifiers(list: readonly EffectModifiers[]): EffectModifi
     out.dragFactor *= m.dragFactor;
     out.massFactor *= m.massFactor;
     out.rollingFactor *= m.rollingFactor;
+    out.powerFactor *= m.powerFactor;
   }
   return out;
 }
 
 export function isNoModifier(m: EffectModifiers): boolean {
-  return m.dragFactor === 1 && m.massFactor === 1 && m.rollingFactor === 1;
+  return m.dragFactor === 1 && m.massFactor === 1 && m.rollingFactor === 1 && m.powerFactor === 1;
 }
 
 /** The shadow bike for the race position. */
@@ -284,6 +379,11 @@ export interface PowerUpConfig {
   pool: readonly PowerUpKind[];
   /** The same in a Rumble (entries may repeat: weights). */
   itemPool: readonly PowerUpKind[];
+  /**
+   * Tests and the simulation only: the n-th item a feed bag gives is `itemOrder[n]` (the last
+   * one from then on) instead of a draw from `itemPool`. Null: draw.
+   */
+  itemOrder: readonly PowerUpKind[] | null;
   /** Rumble: seconds of protection after a hit. */
   protectionS: number;
   /** Pick-up spots reported ahead (m). */
@@ -315,6 +415,7 @@ export const DEFAULT_POWER_UP_CONFIG: PowerUpConfig = {
   maxEffects: 1,
   pool: POWER_UP_KINDS,
   itemPool: RUMBLE_POOL,
+  itemOrder: null,
   protectionS: PROTECTION_S,
   lookAheadM: 600,
 };
@@ -330,6 +431,8 @@ export interface PowerUpTuning {
   pool?: PowerUpKind[];
   /** Rumble: only these items (any of RUMBLE_ITEM_KINDS). */
   itemPool?: PowerUpKind[];
+  /** Rumble: these items in this order, one per feed bag, the last one repeating. */
+  itemOrder?: PowerUpKind[];
 }
 
 export function powerUpConfig(tuning?: unknown): PowerUpConfig {
@@ -362,6 +465,12 @@ export function powerUpConfig(tuning?: unknown): PowerUpConfig {
   if (Array.isArray(itemPool)) {
     const kinds = RUMBLE_ITEM_KINDS.filter((k) => itemPool.includes(k));
     if (kinds.length > 0) config.itemPool = kinds;
+  }
+  const order = t.itemOrder;
+  if (Array.isArray(order) && order.length > 0 && order.length <= 32) {
+    if (order.every((k) => RUMBLE_ITEM_KINDS.includes(k as PowerUpKind))) {
+      config.itemOrder = order as PowerUpKind[];
+    }
   }
   const c = t.challenge;
   if (typeof c === 'object' && c !== null) {
@@ -504,6 +613,8 @@ interface Effect {
   durationS: number;
   /** Where it came from: 'self' (used an item) or, for a hit, the name of whose item it was. */
   source: string;
+  /** The mini tool at work on it (flat tyre, dropped chain): started at, ends at (ride s). */
+  repair?: { fromS: number; untilS: number };
 }
 
 interface Challenge {
@@ -574,7 +685,7 @@ class Shadow {
     }
     const step = stepBike(
       this.speedMps,
-      t.powerW,
+      t.powerW * mods.powerFactor,
       t.gradePercent,
       modifiedBike(t.bike, mods),
       dt,
@@ -615,6 +726,13 @@ export class PowerUpEngine {
   #attackSeq = 0;
   #picked = 0;
   #used = 0;
+  /** Rumble: the rough section this rider rides on (set by the controller each tick). */
+  #terrain: { variant: RoughVariant; by: string } | null = null;
+  /** Rumble: how often the team car came (seeds its items). */
+  #supplies = 0;
+  #supply: { seq: number; kinds: PowerUpKind[] } | null = null;
+  /** Items handed out by feed bags so far (for `itemOrder`). */
+  #ordered = 0;
   #seq = 0;
   #event: PowerUpEventLive | null = null;
   #last: PowerUpTick | null = null;
@@ -678,7 +796,8 @@ export class PowerUpEngine {
     this.#mode = mode;
     const held = this.hand;
     if (mode === 'normal') {
-      const keep = held.find((k) => POWER_UP_DEFINITIONS[k].role === 'boost') ?? null;
+      // Only the power-ups of a normal ride stay (not the Rumble's energy bar).
+      const keep = held.find((k) => POWER_UP_KINDS.includes(k)) ?? null;
       this.#slots = [keep];
       for (const e of this.#effects.filter((x) => x.role !== 'boost')) this.#removeEffect(e);
       this.#attack.offsetM = 0;
@@ -686,6 +805,8 @@ export class PowerUpEngine {
       this.#protectedUntilS = Number.NEGATIVE_INFINITY;
       this.#incoming = null;
       this.#outgoing = null;
+      this.#terrain = null;
+      this.#supply = null;
     } else {
       this.#slots = [...this.#slots, ...Array.from({ length: RUMBLE_CAPACITY }, () => null)].slice(
         0,
@@ -739,7 +860,13 @@ export class PowerUpEngine {
             .map((e) => POWER_UP_DEFINITIONS[e.kind].modifiers(ctx)),
         );
       this.#boost.step(t, dt, realDeltaM, mods('boost'));
-      if (this.#mode === 'rumble') this.#attack.step(t, dt, realDeltaM, mods('attack'));
+      if (this.#mode === 'rumble') {
+        const loss = [mods('attack')];
+        // Rough road under this rider (not while out of the race: paused, ERG, items off).
+        if (this.#terrain && t.blocked === null)
+          loss.push(POWER_UP_DEFINITIONS.rough.modifiers(ctx));
+        this.#attack.step(t, dt, realDeltaM, combineModifiers(loss));
+      }
     } else if (!riding) {
       this.#boost.speedMps = 0;
       this.#attack.speedMps = 0;
@@ -752,8 +879,12 @@ export class PowerUpEngine {
       const prev = this.#lastCoord;
       if (prev !== null && riding && t.blocked === null) {
         for (const index of this.#crossed(prev, coord)) {
-          const kind = kindFor(this.seed, index, this.#pool());
+          const order = this.#mode === 'rumble' ? this.config.itemOrder : null;
+          const kind = order
+            ? order[Math.min(this.#ordered, order.length - 1)]!
+            : kindFor(this.seed, index, this.#pool());
           if (this.#put(kind)) {
+            if (order) this.#ordered += 1;
             this.#picked += 1;
             emit('picked', kind);
           } else emit('skipped', kind);
@@ -816,7 +947,17 @@ export class PowerUpEngine {
     const role = POWER_UP_DEFINITIONS[kind].role;
     if (role === 'boost' && this.#boostEffects().length > 0) return 'After your boost';
     if (role === 'guard' && this.#effects.some((e) => e.role === 'guard')) return 'Cape is up';
+    if (role === 'repair') {
+      const hit = this.#repairable();
+      if (!hit) return 'Only with a flat or chain off';
+      if (hit.repair) return 'Repairing';
+    }
     return null;
+  }
+
+  /** The hit the mini tool could fix now (a flat tyre, a dropped chain), if any. */
+  #repairable(): Effect | undefined {
+    return this.#effects.find((e) => e.role === 'attack' && REPAIR_S[e.kind] !== undefined);
   }
 
   /**
@@ -828,11 +969,14 @@ export class PowerUpEngine {
   activate(index = 0): boolean {
     if (this.#mode === 'rumble') {
       const kind = this.#slots[index];
-      if (!kind || POWER_UP_DEFINITIONS[kind].role === 'attack' || !this.canPlay(index)) {
+      const role = kind ? POWER_UP_DEFINITIONS[kind].role : null;
+      if (!kind || role === 'attack' || role === 'terrain' || !this.canPlay(index)) {
         return false;
       }
       this.#slots[index] = null;
       this.#used += 1;
+      if (role === 'repair') return this.#repair();
+      if (role === 'supply') return this.#teamCar(index);
       this.#emit('activated', kind);
       return this.applyEffect(kind, 'self');
     }
@@ -854,7 +998,8 @@ export class PowerUpEngine {
    */
   spendItem(slot: number): PowerUpKind | null {
     const kind = this.#slots[slot];
-    if (this.#mode !== 'rumble' || !kind || POWER_UP_DEFINITIONS[kind].role !== 'attack') {
+    const role = kind ? POWER_UP_DEFINITIONS[kind].role : null;
+    if (this.#mode !== 'rumble' || !kind || (role !== 'attack' && role !== 'terrain')) {
       return null;
     }
     if (!this.canPlay(slot)) return null;
@@ -873,6 +1018,15 @@ export class PowerUpEngine {
     this.#used = Math.max(0, this.#used - 1);
     this.#emit('returned', kind);
     return true;
+  }
+
+  /**
+   * Rumble: the rough section this rider rides on now (null: none). The controller finds it from
+   * the others' broadcast every tick; while set, the rolling resistance of the loss shadow is
+   * 2.5× (only while riding in the race). Not a hit: no cape, no protection, nothing to claim.
+   */
+  setTerrain(terrain: { variant: RoughVariant; by: string } | null): void {
+    this.#terrain = this.#mode === 'rumble' && terrain ? { ...terrain } : null;
   }
 
   /** Rumble: notes what became of an item this rider used on someone (for the notice). */
@@ -1010,6 +1164,40 @@ export class PowerUpEngine {
     return true;
   }
 
+  /** The mini tool: the flat tyre or dropped chain ends REPAIR_S later (never later than it would). */
+  #repair(): boolean {
+    const hit = this.#repairable()!;
+    const now = this.#last!.elapsedS;
+    const untilS = Math.min(hit.untilS, now + (REPAIR_S[hit.kind] ?? 0));
+    hit.repair = { fromS: now, untilS };
+    hit.untilS = untilS;
+    // Protection runs on from when it is fixed, as after any hit.
+    this.#protectedUntilS = untilS + this.config.protectionS;
+    this.#emit('repairing', 'tool');
+    return true;
+  }
+
+  /**
+   * The team car: refills its own slot and the other one if empty, from the Rumble pool without
+   * the team car (seeded by the ride and the visit, so the same ride gives the same items).
+   */
+  #teamCar(slot: number): boolean {
+    const pool = this.config.itemPool.filter((k) => k !== 'teamCar');
+    const from = pool.length > 0 ? pool : RUMBLE_POOL.filter((k) => k !== 'teamCar');
+    const kinds: PowerUpKind[] = [];
+    const visit = this.#supplies++;
+    for (const i of [slot, ...this.#slots.keys()]) {
+      if (this.#slots[i] !== null) continue;
+      const kind = kindFor(this.seed, visit * 2 + kinds.length, from, 'teamCar');
+      this.#slots[i] = kind;
+      kinds.push(kind);
+    }
+    this.#picked += kinds.length;
+    this.#supply = { seq: (this.#supply?.seq ?? 0) + 1, kinds };
+    this.#emit('supplied', 'teamCar');
+    return true;
+  }
+
   /** Plain, serialisable state for the UI, the overlay and the network. */
   toLive(): PowerUpLive {
     const t = this.#last;
@@ -1072,6 +1260,14 @@ export class PowerUpEngine {
             by: attack.source,
             remainingS: Math.max(0, attack.untilS - now),
             durationS: attack.durationS,
+            ...(attack.repair
+              ? {
+                  repair: {
+                    remainingS: Math.max(0, attack.repair.untilS - now),
+                    durationS: attack.repair.untilS - attack.repair.fromS,
+                  },
+                }
+              : {}),
           }
         : null,
       cape: cape ? { remainingS: Math.max(0, cape.untilS - now), durationS: cape.durationS } : null,
@@ -1087,6 +1283,9 @@ export class PowerUpEngine {
       incoming: this.#incoming,
       outgoing: this.#outgoing,
       puddles: [],
+      rough: [],
+      terrain: this.#terrain && this.#last?.blocked === null ? { ...this.#terrain } : null,
+      supply: this.#supply,
     };
   }
 

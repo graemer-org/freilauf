@@ -12,6 +12,9 @@ import {
   puddleRace,
   puddlesLive,
   resolveTarget,
+  roughLive,
+  roughVariantFor,
+  speaksV3,
   type LocalRace,
 } from './rumble';
 
@@ -152,10 +155,10 @@ describe('compatibility and the broadcast', () => {
     expect(incompatibleNote([])).toBeNull();
   });
 
-  it('always tells the group it speaks Freilauf Rumble (v2); the details and puddles only in one', () => {
-    expect(itemsWire(null, false, true)).toEqual({ v: 2 });
-    expect(itemsWire(null, false, true, [{ id: 'abcd1234.1', m: 5, s: 9 }])).toEqual({ v: 2 });
-    expect(itemsWire(null, true, false)).toEqual({ v: 2, away: true });
+  it('always tells the group it speaks Freilauf Rumble (v3); the details and puddles only in one', () => {
+    expect(itemsWire(null, false, true)).toEqual({ v: 3 });
+    expect(itemsWire(null, false, true, [{ id: 'abcd1234.1', m: 5, s: 9 }])).toEqual({ v: 3 });
+    expect(itemsWire(null, true, false)).toEqual({ v: 3, away: true });
     const pu = {
       blocked: null,
       raceOffsetM: -12.34,
@@ -169,7 +172,7 @@ describe('compatibility and the broadcast', () => {
     } as unknown as PowerUpLive;
     const puddles = [{ id: 'abcd1234.1', m: 990, s: 42 }];
     expect(itemsWire(pu, true, true, puddles)).toEqual({
-      v: 2,
+      v: 3,
       offsetM: -12.3,
       hit: { kind: 'bottle', s: 4.4 },
       protectedS: 19.4,
@@ -220,5 +223,153 @@ describe('mud puddles: where they land and who sees them', () => {
       { id: 'self|bbbb2222.1', aheadM: -3, own: true, by: 'Ben' },
       { id: 'peer-anna|aaaa1111.1', aheadM: 40, own: false, by: 'Anna' },
     ]);
+  });
+});
+
+describe('Rumble v3 (ADR 0009): dropped chain, tacks, rough sections', () => {
+  const v3 = { v: 3 };
+
+  it('the dropped chain goes to the nearest rider behind, however far; only to apps of v3', () => {
+    const list = [rider('Ben', 40, v3), rider('Cleo', -30, v3), rider('Dora', -900, v3)];
+    expect(resolveTarget('chain', list)).toMatchObject({ ok: true, name: 'Cleo', gapM: -30 });
+    expect(resolveTarget('chain', [rider('Dora', -900, v3)])).toMatchObject({
+      ok: true,
+      name: 'Dora',
+    });
+    expect(resolveTarget('chain', [rider('Ben', 40, v3)])).toEqual({
+      ok: false,
+      note: 'Nobody behind you',
+    });
+    // An app of v2 does not know it: passed over (it would refuse an unknown kind).
+    expect(resolveTarget('chain', [rider('Cleo', -30, { v: 2 })])).toMatchObject({ ok: false });
+    expect(resolveTarget('chain', [rider('Cleo', -6, v3)])).toMatchObject({ ok: false }); // level
+    expect(resolveTarget('chain', [rider('Cleo', -30, { v: 3, protectedS: 3 })])).toEqual({
+      ok: false,
+      note: 'Cleo is protected · 3 s',
+    });
+    // A flat tyre on the rider counts as a hit: they are protected.
+    expect(
+      resolveTarget('chain', [rider('Cleo', -30, { v: 3, hit: { kind: 'tacks', s: 9 } })]),
+    ).toMatchObject({ ok: false, note: 'Cleo is protected · 9 s' });
+    expect(speaksV3(rider('A', 0, v3))).toBe(true);
+    expect(speaksV3(rider('A', 0, { v: 2 }))).toBe(false);
+    expect(speaksV3(rider('A', 0, null))).toBe(false);
+  });
+
+  it('target side: the dropped chain must come from directly ahead', () => {
+    // This rider (Cleo) at 1000 m; Ben, 40 m ahead, sent it.
+    const me: LocalRace = { distanceM: 1000, offsetM: 0, route: null };
+    const fromBen = { from: 'peer-ben', kind: 'chain', gapM: 40, raceM: 1040 };
+    expect(checkAttack(fromBen, me, [rider('Ben', 40, v3)])).toBeNull();
+    expect(checkAttack({ ...fromBen, raceM: 900 }, me, [])).toBe('not-behind');
+    expect(checkAttack({ ...fromBen, gapM: 500 }, me, [])).toBe('gap-mismatch');
+    expect(checkAttack(fromBen, me, [rider('Ben', 40, v3), rider('Anna', 20, v3)])).toBe(
+      'not-directly-behind',
+    );
+    // A tool, a team car or tacks are never sent as an attack.
+    for (const kind of ['tool', 'teamCar', 'tacks', 'rough', 'energyBar']) {
+      expect(checkAttack({ ...fromBen, kind }, me, [])).toBe('unknown-kind');
+    }
+  });
+
+  it('the broadcast carries tacks, rough sections and the repair (v3 fields, bounded)', () => {
+    const pu = {
+      blocked: null,
+      raceOffsetM: -3,
+      rumble: {
+        slots: ['tool', null],
+        hit: {
+          kind: 'tacks',
+          by: 'Anna',
+          remainingS: 2.5,
+          durationS: 20,
+          repair: { remainingS: 2.5, durationS: 3 },
+        },
+        cape: null,
+        protection: null,
+        immuneS: 17.5,
+      },
+    } as unknown as PowerUpLive;
+    const tacks = Array.from({ length: 5 }, (_, i) => ({ id: `abcd1234.${i + 1}`, m: i, s: 9 }));
+    const rough = Array.from({ length: 3 }, (_, i) => ({
+      id: `abcd1234.${i + 10}`,
+      m: 500,
+      len: 150,
+      s: 50,
+      variant: 'cobbles',
+    }));
+    const wire = itemsWire(pu, true, true, [], { tacks, rough });
+    expect(wire).toMatchObject({ v: 3, hit: { kind: 'tacks', s: 2.5 }, repairS: 2.5 });
+    expect(wire.tacks).toHaveLength(4);
+    expect(wire.rough).toHaveLength(2);
+    expect(itemsWire(pu, false, true, [], { tacks, rough })).toEqual({ v: 3 });
+  });
+
+  it('tacks near the rider are marked as tacks', () => {
+    const me: LocalRace = { distanceM: 1000, offsetM: 0, route: null };
+    const near = [
+      {
+        dropper: 'peer-ben',
+        dropperName: 'Ben',
+        puddle: { id: 'a1b2c3d4.1', m: 1040, s: 30 },
+        gapM: 40,
+      },
+    ];
+    expect(puddlesLive(near, [], me, 'Anna', 'tacks')).toEqual([
+      { kind: 'tacks', id: 'peer-ben|a1b2c3d4.1', aheadM: 40, own: false, by: 'Ben' },
+    ]);
+    expect(puddlesLive(near, [], me, 'Anna')[0]).not.toHaveProperty('kind');
+  });
+
+  it('rough sections: where they lie, whether this rider is on one, never its own; unknown looks ignored', () => {
+    const me: LocalRace = { distanceM: 1000, offsetM: -10, route: null };
+    const section = (m: number, variant = 'gravel') => ({
+      id: 'a1b2c3d4.1',
+      m,
+      len: 150,
+      s: 40,
+      variant,
+    });
+    const ben = (m: number, variant?: string) => ({
+      peerId: 'peer-ben',
+      name: 'Ben',
+      items: { v: 3, rough: [section(m, variant)] },
+    });
+    // Ends at 1100 (race position): this rider is at 990, 110 m before its end, inside it.
+    const inside = roughLive([ben(1100)], [], me, 'Anna');
+    expect(inside.terrain).toEqual({ variant: 'gravel', by: 'Ben' });
+    expect(inside.rough).toEqual([
+      { id: 'peer-ben|a1b2c3d4.1', fromM: -40, toM: 110, variant: 'gravel', own: false, by: 'Ben' },
+    ]);
+    // Still ahead of this rider: drawn, not on it.
+    const ahead = roughLive([ben(1300)], [], me, 'Anna');
+    expect(ahead.terrain).toBeNull();
+    expect(ahead.rough[0]).toMatchObject({ fromM: 160, toM: 310 });
+    // Behind and far away: not in view.
+    expect(roughLive([ben(100)], [], me, 'Anna').rough).toEqual([]);
+    // An unknown look from a later app: left out entirely.
+    expect(roughLive([ben(1100, 'lava')], [], me, 'Anna')).toEqual({ rough: [], terrain: null });
+    // This rider's own section: drawn, never ridden on.
+    const own = roughLive([], [section(1100)], me, 'Anna');
+    expect(own.terrain).toBeNull();
+    expect(own.rough[0]).toMatchObject({ own: true, by: 'Anna' });
+    // On a loop route: measured along it.
+    const loop: LocalRace = {
+      distanceM: 50,
+      offsetM: 0,
+      route: { id: 'loop', m: 20, lengthM: 10_000, loop: true },
+    };
+    const onLoop = {
+      peerId: 'peer-ben',
+      name: 'Ben',
+      items: { v: 3, rough: [{ ...section(80), routeId: 'loop' }] },
+    };
+    expect(roughLive([onLoop], [], loop, 'Anna').terrain).toEqual({ variant: 'gravel', by: 'Ben' });
+  });
+
+  it('the look of a rough section is chosen by who lays it and when, the same every time', () => {
+    const looks = new Set(Array.from({ length: 40 }, (_, i) => roughVariantFor('peer-a', i)));
+    expect([...looks].sort()).toEqual(['cobbles', 'debris', 'gravel', 'roots']);
+    expect(roughVariantFor('peer-a', 3)).toBe(roughVariantFor('peer-a', 3));
   });
 });

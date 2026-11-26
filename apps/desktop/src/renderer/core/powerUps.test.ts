@@ -233,6 +233,7 @@ describe('effects', () => {
       dragFactor: 0.6,
       massFactor: 1,
       rollingFactor: 1,
+      powerFactor: 1,
     });
     const g = gainOf('tailwind');
     expect(g.activeS).toBeCloseTo(15, 0);
@@ -338,7 +339,9 @@ describe('race offset vs. recorded physics', () => {
   });
 
   it('shadow bike uses the modifiers only', () => {
-    expect(modifiedBike(BIKE, { dragFactor: 0.5, massFactor: 0.9, rollingFactor: 0.5 })).toEqual({
+    expect(
+      modifiedBike(BIKE, { dragFactor: 0.5, massFactor: 0.9, rollingFactor: 0.5, powerFactor: 1 }),
+    ).toEqual({
       ...BIKE,
       cdaM2: BIKE.cdaM2 * 0.5,
       totalMassKg: BIKE.totalMassKg * 0.9,

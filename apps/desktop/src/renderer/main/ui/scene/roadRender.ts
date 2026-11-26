@@ -38,11 +38,25 @@ import {
   drawProtection,
   drawPuddle,
   drawRiderFx,
+  drawEnergy,
+  drawProgressRing,
+  drawRoughPatch,
   drawSplash,
   drawSwarm,
+  drawTacks,
+  drawTeamCarBehind,
+  drawWrench,
 } from './rumbleFx';
 
 const TAU = Math.PI * 2;
+
+/** Rumble damage drawn on the local bike seen from behind: a flat rear tyre, the chain off. */
+interface Damage {
+  flat: boolean;
+  chain: boolean;
+  timeS: number;
+  reduced: boolean;
+}
 /** Fog levels (each is one batch of fills). */
 const FOG_LEVELS = 6;
 /** How far the colours go towards the haze at the far end. */
@@ -283,6 +297,7 @@ export class RoadRenderer {
 
     const pu = f.powerUps;
     if (pu) {
+      if (pu.rumble) this.roughAhead(f, pu, p);
       if (pu.rumble) this.puddlesAhead(f, pu, p);
       if (pu.feedBags) this.feedBagsAhead(f, pu, p);
       else this.gatesAhead(f, pu, p);
@@ -767,16 +782,29 @@ export class RoadRenderer {
       TAU,
     );
     ctx.fill();
+    const c = f.powerUps?.rumble;
+    const damage: Damage | null =
+      c && (c.hit === 'tacks' || c.hit === 'chain')
+        ? {
+            flat: c.hit === 'tacks',
+            chain: c.hit === 'chain',
+            timeS: f.powerUps!.timeS,
+            reduced: f.reducedMotion,
+          }
+        : null;
+    // Chain off: the legs spin freely.
+    const crank = damage?.chain && !f.reducedMotion ? f.crank + damage.timeS * 11 : f.crank;
     this.riderFromBehind(
       this.a.x,
       this.a.y,
       ppm,
       f.lean,
-      f.crank,
+      crank,
       f.standing,
       f.tuck,
       this.local!,
       true,
+      damage,
     );
   }
 
@@ -796,6 +824,7 @@ export class RoadRenderer {
     tuck: number,
     c: RiderColours,
     detailed: boolean,
+    damage: Damage | null = null,
   ): void {
     const ctx = this.ctx;
     const pose = this.pose;
@@ -803,8 +832,11 @@ export class RoadRenderer {
     const k = ppm * this.dpr;
     // Out of the saddle the bike rocks under the rider, twice per revolution.
     const rock = standing * 0.09 * Math.sin(crank);
+    // A flat rear tyre: the bike sits lower and wobbles from side to side.
+    const wobble = damage?.flat && !damage.reduced ? Math.sin(damage.timeS * 7.5) * 0.035 : 0;
     ctx.setTransform(k, 0, 0, -k, x * this.dpr, y * this.dpr);
-    ctx.rotate(-(lean + rock));
+    if (damage?.flat) ctx.translate(0, -0.025);
+    ctx.rotate(-(lean + rock + wobble));
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -927,11 +959,26 @@ export class RoadRenderer {
     ctx.fill();
     ctx.restore();
 
-    // Rear wheel, edge-on, nearest to the camera: drawn last.
+    // Rear wheel, edge-on, nearest to the camera: drawn last (flat: bulging at the road).
     ctx.fillStyle = c.tyre;
     ctx.beginPath();
     ctx.ellipse(0, r, 0.03, r, 0, 0, TAU);
     ctx.fill();
+    if (damage?.flat) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0.05, 0.095, 0.06, 0, 0, TAU);
+      ctx.fill();
+    }
+    if (damage?.chain) {
+      // The chain off the chainring, hanging loose on the right and flapping.
+      const flap = damage.reduced ? 0.3 : Math.sin(damage.timeS * 6.5);
+      ctx.strokeStyle = c.frameFar;
+      ctx.lineWidth = 0.014;
+      ctx.beginPath();
+      ctx.moveTo(0.06, r - 0.1);
+      ctx.quadraticCurveTo(0.12 + flap * 0.05, 0.1, 0.07 + flap * 0.03, 0.04);
+      ctx.stroke();
+    }
     // Seat stays and the saddle's tail.
     ctx.strokeStyle = c.frame;
     ctx.lineWidth = 0.022;
@@ -1134,6 +1181,9 @@ export class RoadRenderer {
       ctx.arc(x, y, r, 0, TAU);
       ctx.fill();
     }
+    if (pu.effect === 'energyBar') {
+      drawEnergy(ctx, p, x, y, ppm * 0.9, pu.effectAgeS, pu.timeS, f.reducedMotion);
+    }
     if (pu.effect === 'tailwind' && !f.reducedMotion) {
       // Streaks from the vanishing point outwards, as air rushing past.
       const vx = this.vp.cx;
@@ -1228,7 +1278,55 @@ export class RoadRenderer {
       const rx = Math.abs(this.a.x - this.b.x);
       const ry = Math.max(0.8, Math.abs(this.a.y - this.c.y));
       const fade = Math.max(0.35, 1 - this.a.depth / (GATE_DRAW_M * 1.1));
-      drawPuddle(this.ctx, p, this.a.x, this.a.y, rx, ry, (pd.own ? 0.8 : 1) * fade);
+      const alpha = (pd.own ? 0.8 : 1) * fade;
+      if (pd.kind === 'tacks') {
+        drawTacks(this.ctx, p, this.a.x, this.a.y, rx, ry, pu.timeS, f.reducedMotion, alpha);
+      } else drawPuddle(this.ctx, p, this.a.x, this.a.y, rx, ry, alpha);
+    }
+  }
+
+  /**
+   * Rough sections on the road ahead (and under the rider), across the whole road, in patches
+   * of two metres that stay put on the road; fading with distance.
+   */
+  private roughAhead(f: RoadFrame, pu: PowerUpSceneFrame, p: ScenePalette): void {
+    const strip = this.strip;
+    const d = f.camera.distanceM;
+    const half = ROAD.halfWidthM - 0.15;
+    const step = 2;
+    const p0 = { x: 0, y: 0 };
+    const p1 = { x: 0, y: 0 };
+    const q0 = { x: 0, y: 0 };
+    const q1 = { x: 0, y: 0 };
+    for (const r of pu.rumble!.rough) {
+      const from = Math.max(r.fromM, -2.5);
+      const to = Math.min(r.toM, GATE_DRAW_M);
+      if (to <= from) continue;
+      // Farthest first, so nearer patches cover farther ones on a crest.
+      const first = Math.floor((from - r.fromM) / step);
+      const last = Math.ceil((to - r.fromM) / step);
+      for (let j = last - 1; j >= first; j--) {
+        const m0 = Math.max(from, r.fromM + j * step);
+        const m1 = Math.min(to, r.fromM + (j + 1) * step);
+        if (m1 <= m0) continue;
+        const k0 = strip.pointAt(this.vp, f.camera, d + m0, -half, 0, this.a);
+        const k0b = strip.pointAt(this.vp, f.camera, d + m0, half, 0, this.b);
+        const k1 = strip.pointAt(this.vp, f.camera, d + m1, half, 0, this.c);
+        if (k0 === 0 || k0b === 0 || k1 === 0) continue;
+        if (strip.hiddenAt(k1, this.c.y)) continue;
+        p0.x = this.a.x;
+        p0.y = this.a.y;
+        p1.x = this.b.x;
+        p1.y = this.b.y;
+        q1.x = this.c.x;
+        q1.y = this.c.y;
+        const depth = this.a.depth;
+        if (strip.pointAt(this.vp, f.camera, d + m1, -half, 0, this.a) === 0) continue;
+        q0.x = this.a.x;
+        q0.y = this.a.y;
+        const fade = Math.max(0.35, 1 - depth / (GATE_DRAW_M * 1.1));
+        drawRoughPatch(this.ctx, p, r.variant, p0, p1, q1, q0, j, (r.own ? 0.75 : 1) * fade);
+      }
     }
   }
 
@@ -1254,8 +1352,50 @@ export class RoadRenderer {
     // Around the rider seen from behind: narrow and tall (shoulders to wheels).
     if (c.cape) drawCape(ctx, p, x, cy, 0.6 * ppm, 0.95 * ppm);
     if (c.protection >= 0) drawProtection(ctx, p, x, cy, 0.68 * ppm, 1.02 * ppm, c.protection);
+    // The rear wheel, nearest the camera: where the flat is and the mini tool works.
+    const wy = this.c.y - 0.3 * ppm;
     if (c.pulse >= 0 && c.pulseKind) {
-      drawSplash(ctx, p, x, cy, 0.75 * ppm, c.pulse, c.pulseKind, c.pulseItem, reduced);
+      if (c.pulseItem === 'tacks' && c.pulseKind === 'hit') {
+        drawSplash(
+          ctx,
+          p,
+          x + 0.55 * ppm,
+          cy - 0.2 * ppm,
+          0.75 * ppm,
+          c.pulse,
+          c.pulseKind,
+          'tacks',
+          reduced,
+        );
+      } else {
+        drawSplash(ctx, p, x, cy, 0.75 * ppm, c.pulse, c.pulseKind, c.pulseItem, reduced);
+      }
+    }
+    if (c.repair >= 0) {
+      drawProgressRing(ctx, p, x, wy, 0.42 * ppm, c.repair);
+      const swing = reduced ? 0 : Math.sin(pu.timeS * 9) * 0.6;
+      drawWrench(ctx, p, x + 0.28 * ppm, wy + 0.02 * ppm, 0.38 * ppm, swing);
+    }
+    if (c.supply >= 0) {
+      // The team car comes up from behind on the left, hands the items up, drops back.
+      const t = c.supply;
+      const inT = Math.min(1, t / 0.25);
+      const outT = Math.max(0, (t - 0.8) / 0.2);
+      const off = reduced ? 0.4 : -7 * (1 - inT) + 0.4 - 9 * outT;
+      const d = f.camera.distanceM;
+      const k = this.strip.pointAt(this.vp, f.camera, d + off, f.riderX - 2.1, 0, this.b);
+      if (k !== 0) {
+        const cppm = this.vp.focalPx / this.b.depth;
+        drawTeamCarBehind(
+          ctx,
+          p,
+          this.b.x,
+          this.b.y,
+          1.75 * cppm,
+          reduced ? 0.5 : t,
+          c.supplyKinds,
+        );
+      }
     }
     const inc = c.incoming;
     if (inc) {

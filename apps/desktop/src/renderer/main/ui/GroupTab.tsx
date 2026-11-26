@@ -82,6 +82,8 @@ interface Row {
 export function fxTag(items: RiderItems | undefined): string | null {
   if (!items) return null;
   const k = items.hit?.kind;
+  if (k === 'tacks') return (items.repairS ?? 0) > 0 ? 'Fixing a flat' : 'Flat tyre';
+  if (k === 'chain') return 'Chain off';
   if (k !== undefined && isHitKind(k)) return POWER_UP_INFO[k].label;
   if ((items.capeS ?? 0) > 0) return 'Rain cape';
   if ((items.protectedS ?? 0) > 0) return 'Protected';

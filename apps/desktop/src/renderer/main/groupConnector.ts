@@ -13,6 +13,9 @@ export function adaptGroupRide(ride: GroupRide): JoinedGroup {
     inviteCode: ride.inviteCode,
     secret: ride.secret,
     transport: ride.transport,
+    get localPeerId() {
+      return ride.localPeerId;
+    },
     getConnectionState: () => ride.signallingState,
     getProblems: () => ride.getProblems().map((p) => p.code),
     onFailure: (listener) => ride.onFailure(listener),

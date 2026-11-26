@@ -8,7 +8,11 @@ import {
   ClaimInbox,
   ClaimOutbox,
   MAX_LIVE_PUDDLES,
+  MAX_LIVE_ROUGH,
   PUDDLE_TIMING,
+  ROUGH_TIMING,
+  RoughLedger,
+  roughSpan,
   PuddleLedger,
   PuddleWatch,
   attackEpoch,
@@ -24,11 +28,13 @@ import {
   type ClaimOutcomeEvent,
 } from './rumble';
 import {
+  MAX_STATE_MESSAGE_LENGTH,
   decodeStateMessage,
   encodeStateMessage,
   raceOffsetOf,
   sanitizeRiderState,
 } from './riderState';
+import * as v2 from './testing/riderStateV2';
 
 const attack = (over: Partial<AttackMessage> = {}): AttackMessage => ({
   v: 2,
@@ -538,5 +544,159 @@ describe('PuddleWatch (each rider checks for themselves)', () => {
     expect(puddleGap({ m: 50 }, { raceM: 40, route })).toBe(10);
     expect(claimPosition({ m: 5, routeId: 'loop' }, { raceM: 3, route })).toBe(995);
     expect(claimPosition({ m: 5 }, { raceM: 3, route })).toBe(3);
+  });
+});
+
+describe('Rumble protocol v3 on the wire (ADR 0009)', () => {
+  const base = {
+    name: 'Ben',
+    sentAt: 5,
+    distanceM: 100,
+    speedMps: 9,
+    powerW: 200,
+    cadenceRpm: 90,
+    heartRateBpm: null,
+    gear: 11,
+  };
+  const tack = (i: number) => ({ id: `tack0001.${i}`, m: 1000 + i, routeId: 'isar', s: 59.9 });
+  const rough = (i: number) => ({
+    id: `ruff0001.${i}`,
+    m: 2000 + i,
+    routeId: 'isar',
+    len: 150,
+    s: 59.9,
+    variant: 'cobbles',
+  });
+  const v3Items = {
+    v: 3,
+    offsetM: -31.5,
+    hit: { kind: 'tacks', s: 2.4 },
+    repairS: 2.4,
+    protectedS: 17.4,
+    held: 1,
+    puddles: [1, 2, 3, 4].map((i) => ({ ...tack(i), id: `pudl0001.${i}` })),
+    tacks: [1, 2, 3, 4].map(tack),
+    rough: [1, 2].map(rough),
+  };
+
+  it('validates the v3 fields: tacks like puddles, at most two rough sections, the repair', () => {
+    const s = sanitizeRiderState({ ...base, items: v3Items });
+    expect(s?.items).toEqual(v3Items);
+    expect(
+      sanitizeRiderState({ ...base, items: { v: 3, rough: [{ ...rough(1), extra: 1 }] } })?.items,
+    ).toEqual({ v: 3, rough: [rough(1)] });
+    // A look this decoder does not know still travels (the app ignores it), as a plain word.
+    expect(
+      sanitizeRiderState({ ...base, items: { v: 3, rough: [{ ...rough(1), variant: 'lava' }] } }),
+    ).not.toBeNull();
+    for (const items of [
+      { v: 3, repairS: -1 },
+      { v: 3, tacks: [tack(1), tack(1)] },
+      { v: 3, tacks: [1, 2, 3, 4, 5].map(tack) },
+      { v: 3, tacks: [{ ...tack(1), id: 'x' }] },
+      { v: 3, rough: [1, 2, 3].map(rough) },
+      { v: 3, rough: [rough(1), rough(1)] },
+      { v: 3, rough: [{ ...rough(1), len: 0 }] },
+      { v: 3, rough: [{ ...rough(1), len: 301 }] },
+      { v: 3, rough: [{ ...rough(1), variant: 'Cobbles!' }] },
+      { v: 3, rough: [{ ...rough(1), variant: 7 }] },
+      { v: 3, rough: [{ ...rough(1), s: 601 }] },
+      { v: 3, rough: {} },
+    ]) {
+      expect(sanitizeRiderState({ ...base, items })).toBeNull();
+    }
+  });
+
+  it('the fullest v3 state still fits in one message', () => {
+    const raw = encodeStateMessage({
+      ...base,
+      name: 'A rider with a long name',
+      route: { id: 'a-route-with-quite-a-long-identifier-0123456789', m: 123456.7 },
+      raceOffsetM: 99.9,
+      rules: { powerUps: true, mode: 'rumble' },
+      items: v3Items,
+    });
+    expect(raw.length).toBeLessThan(MAX_STATE_MESSAGE_LENGTH);
+    expect(decodeStateMessage(raw)?.items).toEqual(v3Items);
+  });
+
+  it('an app of v2 reads a v3 state: still a Rumble app, the new fields ignored, nothing crashes', () => {
+    const raw = encodeStateMessage({ ...base, items: v3Items });
+    const old = v2.decodeStateMessage(raw);
+    expect(old).not.toBeNull();
+    // It speaks Freilauf Rumble (v ≥ 2), its race offset and timers are read …
+    expect(old!.items).toMatchObject({ v: 3, offsetM: -31.5, protectedS: 17.4, held: 1 });
+    // … the flat tyre is a hit of a kind v2 does not know (its app shows "protected" only) …
+    expect(old!.items!.hit).toEqual({ kind: 'tacks', s: 2.4 });
+    // … and tacks, rough sections and the repair are not there for it: it can never claim
+    // tacks as a mud puddle, nor ride on a rough section.
+    expect(old!.items).not.toHaveProperty('tacks');
+    expect(old!.items).not.toHaveProperty('rough');
+    expect(old!.items).not.toHaveProperty('repairS');
+    expect(old!.items!.puddles).toHaveLength(4);
+    // A v3 app reads a v2 state as before.
+    const fromOld = sanitizeRiderState({ ...base, items: { v: 2, puddles: [tack(1)] } });
+    expect(fromOld?.items).toEqual({ v: 2, puddles: [tack(1)] });
+  });
+
+  it('the dropped chain is one more attack kind in the unchanged v2 messages', () => {
+    const raw = encodeAttack({
+      id: 'abcd1234.9',
+      to: 'peer-c',
+      kind: 'chain',
+      gapM: 30,
+      raceM: 900,
+    });
+    expect(decodeRumbleMessage(raw)).toMatchObject({ v: 2, type: 'rumble-attack', kind: 'chain' });
+  });
+
+  it('tacks are watched in their own list; a ledger knows its ids', () => {
+    const tacks = new PuddleWatch('tacks');
+    const mud = new PuddleWatch();
+    const anna = {
+      peerId: 'peer-a',
+      name: 'Anna',
+      items: { v: 3, tacks: [{ id: 'tack0001.1', m: 100, s: 50 }] },
+    };
+    const me = (raceM: number) => ({ raceM, route: null });
+    tacks.update([anna], me(95));
+    mud.update([anna], me(95));
+    expect(tacks.update([anna], me(101)).crossed.map((c) => c.puddle.id)).toEqual(['tack0001.1']);
+    expect(mud.update([anna], me(101)).near).toEqual([]);
+    const book = new PuddleLedger('tack0001');
+    const id = book.drop({ m: 10 }, 0)!;
+    expect(book.has(id)).toBe(true);
+    expect(book.has('tack0001.99')).toBe(false);
+  });
+
+  it('RoughLedger: lays at most two sections, broadcasts them until they are gone after 60 s', () => {
+    const book = new RoughLedger('ruff0001');
+    expect(ROUGH_TIMING).toEqual({ lengthM: 150, lifeMs: 60_000 });
+    expect(book.drop({ m: 500, routeId: 'isar' }, 'gravel', 0)).toBe('ruff0001.1');
+    expect(book.drop({ m: 900 }, 'roots', 1_000)).toBe('ruff0001.2');
+    expect(book.drop({ m: 950 }, 'roots', 2_000)).toBeNull();
+    expect(book.live(2_000)).toBe(MAX_LIVE_ROUGH);
+    expect(book.count).toBe(2);
+    expect(book.wire(10_000)).toEqual([
+      { id: 'ruff0001.1', m: 500, routeId: 'isar', len: 150, s: 50, variant: 'gravel' },
+      { id: 'ruff0001.2', m: 900, len: 150, s: 51, variant: 'roots' },
+    ]);
+    expect(book.wire(60_500).map((r) => r.id)).toEqual(['ruff0001.2']);
+    expect(book.drop({ m: 990 }, 'debris', 60_500)).toBe('ruff0001.3');
+    expect(book.wire(70_000)).toHaveLength(1);
+    expect(book.drop({ m: Number.NaN }, 'debris', 70_000)).toBeNull();
+  });
+
+  it('roughSpan: from 150 m behind its end up to its end, measured like a puddle', () => {
+    expect(roughSpan({ m: 1100, len: 150 }, { raceM: 1000, route: null })).toEqual({
+      fromM: -50,
+      toM: 100,
+    });
+    const route = { id: 'loop', m: 990, lengthM: 1000, loop: true };
+    expect(roughSpan({ m: 40, routeId: 'loop', len: 150 }, { raceM: 0, route })).toEqual({
+      fromM: -100,
+      toM: 50,
+    });
+    expect(roughSpan({ m: 40, routeId: 'other', len: 150 }, { raceM: 0, route })).toBeNull();
   });
 });

@@ -387,7 +387,7 @@ function startScene(
     frame.lateral = lat.pos;
     frame.lateralVel = lat.vel;
     frame.powerUps = boost.update(frame.distanceM, t);
-    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${rumbleKey(frame.powerUps.rumble)}|${frame.others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}` : '')).join(',')}`;
+    const boostKey = `${frame.powerUps.gates.map((g) => Math.round(g)).join(',')}|${frame.powerUps.effect}|${frame.powerUps.phase}|${frame.powerUps.flash >= 0}|${rumbleKey(frame.powerUps.rumble)}|${frame.others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}${o.fx.repair}` : '')).join(',')}`;
 
     // Reduced motion: draw only when something visible changed.
     const changed =
@@ -439,6 +439,9 @@ function startScene(
       root.dataset.gateAhead = pa.gateAhead;
       root.dataset.rumble = pa.rumble;
       root.dataset.puddleAhead = pa.puddleAhead;
+      root.dataset.tacksAhead = pa.tacksAhead;
+      root.dataset.roughAhead = pa.roughAhead;
+      root.dataset.supply = pa.supply;
       root.dataset.flying = pa.flying;
     }
     if (t - lastLabel >= LABEL_MS) {

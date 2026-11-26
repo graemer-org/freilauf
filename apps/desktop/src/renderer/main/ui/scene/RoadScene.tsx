@@ -365,7 +365,7 @@ function startRoadScene(
     frame.reducedMotion = reducedMotion;
     frame.powerUps = boost.update(distance, t);
     const pu = frame.powerUps;
-    const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}|${rumbleKey(pu.rumble)}|${others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}` : '')).join(',')}`;
+    const boostKey = `${pu.gates.map((g) => Math.round(g)).join(',')}|${pu.effect}|${pu.phase}|${pu.flash >= 0}|${rumbleKey(pu.rumble)}|${others.map((o) => (o.fx ? `${o.fx.hit}${o.fx.cape}${o.fx.protected}${o.fx.repair}` : '')).join(',')}`;
 
     const changed =
       !reducedMotion ||
@@ -404,6 +404,9 @@ function startRoadScene(
       ds.gateAhead = pa.gateAhead;
       ds.rumble = pa.rumble;
       ds.puddleAhead = pa.puddleAhead;
+      ds.tacksAhead = pa.tacksAhead;
+      ds.roughAhead = pa.roughAhead;
+      ds.supply = pa.supply;
       ds.flying = pa.flying;
       ds.nextSign = frame.next
         ? `${frame.next.gradePercent.toFixed(1)}@${Math.round(frame.next.inM)}`
