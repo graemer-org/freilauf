@@ -11,6 +11,7 @@ import {
   easeToward,
   integrateAngle,
   type LateralState,
+  placeGhost,
   placeRiders,
   type PlacedRider,
   ProfileHistory,
@@ -19,6 +20,7 @@ import {
   stepLateral,
   tuckTarget,
   wheelRate,
+  withGhost,
 } from './sceneMath';
 
 /** Keys held for steering without paddles. ←/→ move between tabs when the tab bar has focus. */
@@ -236,6 +238,7 @@ function startScene(
   // ── live input (4 Hz) ──
   let live: LiveState | null = null;
   const history = new ProfileHistory(400, 5);
+  let group: readonly PlacedRider[] = EMPTY_RIDERS;
   let placed: readonly PlacedRider[] = EMPTY_RIDERS;
   let profileDirty = true;
   const boost = new PowerUpSceneState();
@@ -250,7 +253,8 @@ function startScene(
     history.add(next.ride.distanceM, next.ride.gradePercent);
     const riders = next.group?.riders;
     if (riders !== prevGroup)
-      placed = riders && riders.length > 0 ? placeRiders(riders) : EMPTY_RIDERS;
+      group = riders && riders.length > 0 ? placeRiders(riders) : EMPTY_RIDERS;
+    placed = withGhost(group, placeGhost(next.ghost));
     profileDirty = true;
   };
   onLive(app.store.getState().live);

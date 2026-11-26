@@ -7,7 +7,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { RecordedRide } from '@freilauf/session';
-import { encodeFit, rideSummary } from '@freilauf/session';
+import { encodeFit, rideRouteInfo, rideSummary } from '@freilauf/session';
 import type { RideListItem } from '../shared/contract';
 import { writeFileAtomic } from './atomicWrite';
 import { isPlainObject } from './settings';
@@ -132,6 +132,7 @@ export class RideStore {
           avgPowerW: summary.avgPowerW,
           ...(summary.caloriesKcal > 0 ? { kcal: Math.round(summary.caloriesKcal) } : {}),
           finished,
+          ...routeOf(ride),
         });
       } catch (e) {
         this.log(`skipping unreadable ride ${file}: ${String(e)}`);
@@ -161,4 +162,10 @@ export class RideStore {
   async ensureDir(): Promise<void> {
     await fsp.mkdir(this.dir, { recursive: true });
   }
+}
+
+/** The route a ride followed and what it offers as a ghost (docs/ghost.md); {} without one. */
+function routeOf(ride: RecordedRide): Pick<RideListItem, 'route'> {
+  const route = rideRouteInfo(ride);
+  return route ? { route } : {};
 }

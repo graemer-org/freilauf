@@ -210,6 +210,27 @@ function startRoadScene(
       }))
       .sort((a, b) => a.gapM - b.gapM);
     cadences = new Map(riders.map((r) => [r.peerId, r.cadenceRpm]));
+    // The ghost rider (docs/ghost.md): on the road while racing, translucent.
+    const g = next.ghost;
+    if (
+      g &&
+      (g.status === 'racing' || g.status === 'finished') &&
+      g.aheadM !== null &&
+      g.aheadM > 0
+    ) {
+      others = [
+        ...others,
+        {
+          id: 'ghost',
+          name: 'Ghost',
+          gapM: g.aheadM,
+          stale: false,
+          crank: prev.get('ghost') ?? 1.1,
+          ghost: true,
+        },
+      ].sort((a, b) => a.gapM - b.gapM);
+      cadences.set('ghost', g.speedMps > 0.5 ? 86 : 0);
+    }
   };
   let cadences = new Map<string, number>();
   onLive(app.store.getState().live);

@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { workoutStats } from '@freilauf/workouts';
 import { DEFAULT_SETTINGS } from '../../../shared/contract';
+import { GhostPicker, NoRouteGhostNote } from './GhostUi';
 import { GroupTab } from './GroupTab';
 import { workoutSharing } from './groupShare';
 import { Brand, DeviceChips } from './Header';
@@ -207,10 +208,13 @@ function WhatSection({
       </div>
       <div className="start-choice" data-testid="start-summary" aria-live="polite">
         {workout === null && route === null ? (
-          <p>
-            <strong>Free ride.</strong>{' '}
-            <span className="hint">No targets and no route — gear and gradient are yours.</span>
-          </p>
+          <>
+            <p>
+              <strong>Free ride.</strong>{' '}
+              <span className="hint">No targets and no route — gear and gradient are yours.</span>
+            </p>
+            {hasRoutes && <NoRouteGhostNote />}
+          </>
         ) : (
           <>
             {workout && (
@@ -245,6 +249,8 @@ function WhatSection({
                 </button>
               </p>
             )}
+            {route && <GhostPicker locked={locked} />}
+            {workout && !route && hasRoutes && <NoRouteGhostNote />}
             {workout && route && (
               <p className="hint" data-testid="start-combined-note">
                 {COMBINED_NOTE}

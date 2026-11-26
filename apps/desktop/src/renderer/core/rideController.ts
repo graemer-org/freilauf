@@ -47,6 +47,7 @@ import {
 import type {
   DeviceStatus,
   FtpTestOutcome,
+  GhostLive,
   LiveEnergy,
   LiveState,
   RideCountdown,
@@ -85,6 +86,17 @@ import { RateLimiter } from './logFormat';
 import type { ScopedLog } from './logger';
 import { NULL_LOG } from './logger';
 import { PowerUpEngine, powerUpConfig, powerUpSeed } from './powerUps';
+import type { GhostResult } from './ghost';
+import { GhostRace } from './ghost';
+import type { GhostTrace } from '@freilauf/session';
+
+/** A ghost to race on the selected route (docs/ghost.md). */
+export interface GhostSpec {
+  /** routeBaseId of the route the trace belongs to; ignored on another route. */
+  routeId: string;
+  trace: GhostTrace;
+  label: string;
+}
 
 /** The part of a group ride the controller needs; implemented by @freilauf/p2p's GroupRide. */
 export interface GroupLink {
@@ -199,6 +211,8 @@ interface RoutePlan {
   offsetM: number;
   /** Route segment for the recording: +1 at every jump (RideSample.segment). */
   segment: number;
+  /** offsetM of every segment so far (RecordedRide.route.offsetsM). */
+  offsets: number[];
   /** Jumps during this ride and where the last one went (m). */
   jumps: number;
   lastJumpM: number | null;
@@ -228,6 +242,8 @@ export interface FinishedRide {
     gainM?: number;
     lossM?: number;
   } | null;
+  /** The race against the ghost (never part of `ride`); null without a ghost. */
+  ghost?: GhostResult | null;
 }
 
 const INVALID_REASONS: Record<string, string> = {
@@ -304,6 +320,8 @@ export class RideController {
   #countdown: { kind: RideCountdown['kind']; endsAt: number; totalS: number } | null = null;
   /** The live state last published, to show a countdown change at once (between ticks). */
   #lastLive: LiveState | null = null;
+  /** The ghost to race on the selected route and its race in progress (docs/ghost.md). */
+  #ghost: { spec: GhostSpec; race: GhostRace } | null = null;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -445,6 +463,9 @@ export class RideController {
   selectRoute(track: RouteTrack | null, startM = 0): boolean {
     if (this.#session.state !== 'idle') return false;
     const before = this.#route?.track.id ?? null;
+    if (this.#ghost && (!track || routeBaseId(track.id) !== this.#ghost.spec.routeId)) {
+      this.#ghost = null;
+    }
     const start = track ? normalizeRouteStart(track, startM) : 0;
     this.#route = track
       ? {
@@ -452,6 +473,7 @@ export class RideController {
           startM: start,
           offsetM: start,
           segment: 0,
+          offsets: [start],
           jumps: 0,
           lastJumpM: null,
           sendNow: false,
@@ -484,6 +506,43 @@ export class RideController {
 
   get selectedRoute(): RouteTrack | null {
     return this.#route?.track ?? null;
+  }
+
+  /**
+   * The ghost to race on the selected route (null = none). Only while no ride is in progress;
+   * the ghost only reads the ride (moving time, place on the route) and never changes the
+   * recording, the trainer or points. Returns false when it cannot be set now.
+   */
+  setGhost(spec: GhostSpec | null): boolean {
+    if (this.#session.state !== 'idle') return false;
+    if (!spec) {
+      if (this.#ghost) this.#log.info('ghost cleared');
+      this.#ghost = null;
+      return true;
+    }
+    const track = this.#route?.track;
+    if (!track || routeBaseId(track.id) !== spec.routeId || spec.trace.distanceM.length < 2) {
+      return false;
+    }
+    this.#ghost = { spec, race: this.#newGhostRace(spec, track) };
+    this.#log.info('ghost set', {
+      points: spec.trace.distanceM.length,
+      fromKm: round((spec.trace.distanceM[0] ?? 0) / 1000, 2),
+      toKm: round((spec.trace.distanceM.at(-1) ?? 0) / 1000, 2),
+    });
+    return true;
+  }
+
+  get ghost(): GhostSpec | null {
+    return this.#ghost?.spec ?? null;
+  }
+
+  #newGhostRace(spec: GhostSpec, track: RouteTrack): GhostRace {
+    return new GhostRace(
+      spec.trace,
+      { lengthM: track.totalDistanceM, loop: track.loop },
+      spec.label,
+    );
   }
 
   /**
@@ -521,6 +580,7 @@ export class RideController {
     const lapBase = track.loop ? (from.lap - 1) * track.totalDistanceM : 0;
     route.offsetM = lapBase + to - ridden;
     route.segment += 1;
+    route.offsets.push(route.offsetM);
     route.jumps += 1;
     route.lastJumpM = to;
     route.sendNow = true;
@@ -854,6 +914,7 @@ export class RideController {
       if (route) {
         route.offsetM = route.startM;
         route.segment = 0;
+        route.offsets = [route.startM];
         route.jumps = 0;
         route.lastJumpM = null;
         route.lastLap = positionAt(route.track, 0, route.startM).lap;
@@ -865,6 +926,14 @@ export class RideController {
           const p = pointAt(track, route.offsetM + d);
           return { lat: p.lat, lon: p.lon, altitudeM: p.elevationM, segment: route.segment };
         });
+        // The saved ride names its route and where each segment started (docs/ghost.md).
+        this.#session.setRouteSource(() => ({
+          id: routeBaseId(track.id),
+          lengthM: track.totalDistanceM,
+          loop: track.loop,
+          offsetsM: route.offsets,
+        }));
+        if (this.#ghost) this.#ghost.race = this.#newGhostRace(this.#ghost.spec, track);
       }
       this.#session.start();
       this.#powerUps = this.#newPowerUps();
@@ -898,6 +967,10 @@ export class RideController {
     const plan = this.#plan;
     const powerUps = this.#powerUps?.toLive() ?? null;
     this.#powerUps = null;
+    const ghost = this.#ghost?.race.result() ?? null;
+    if (this.#ghost && this.#route) {
+      this.#ghost.race = this.#newGhostRace(this.#ghost.spec, this.#route.track);
+    }
     this.#session = this.#newSession();
     this.#distanceM = 0;
     // The next ride starts at the chosen start point again.
@@ -906,6 +979,7 @@ export class RideController {
       this.#route.jumps = 0;
       this.#route.lastJumpM = null;
       this.#route.segment = 0;
+      this.#route.offsets = [this.#route.startM];
     }
     // The workout is done with; the next ride is a free ride unless one is chosen again.
     this.#plan = null;
@@ -928,10 +1002,18 @@ export class RideController {
       workout: plan?.workout.name ?? null,
       route: this.#route?.track.name ?? null,
     });
+    if (ghost) {
+      this.#log.info('ghost race finished', {
+        gapS: ghost.gapS === null ? null : round(ghost.gapS, 1),
+        complete: ghost.complete,
+        splits: ghost.splits.length,
+      });
+    }
     if (ride.samples.length < MIN_RIDE_SAMPLES) return null;
     await this.#options.saveRide(ride, true);
     return {
       ride,
+      ghost,
       ftpTest: plan?.ftpTest ? this.#evaluateFtpTest(plan.ftpTest, ride) : null,
       powerUps: powerUps
         ? {
@@ -1055,12 +1137,26 @@ export class RideController {
       ...(this.#route ? { route: routePosition, routeControl: this.#routeControl() } : {}),
       ...(powerUps ? { powerUps } : {}),
       ...(ride.state !== 'idle' ? { energy: liveEnergy(this.#session.energy()) } : {}),
+      ...(this.#ghost && this.#route ? { ghost: this.#driveGhost(ride) } : {}),
     };
     const countdown = this.countdown;
     if (countdown) live.countdown = countdown;
     this.#lastLive = live;
     this.#options.onLive(live);
     return live;
+  }
+
+  /** The ghost's race for this tick: it only reads the ride's moving time and place. */
+  #driveGhost(ride: RideSnapshot): GhostLive | null {
+    const ghost = this.#ghost;
+    const route = this.#route;
+    if (!ghost || !route) return null;
+    return ghost.race.update({
+      state: ride.state,
+      elapsedS: ride.elapsedS,
+      routeM: route.offsetM + ride.distanceM,
+      jumps: route.jumps,
+    });
   }
 
   dispose(): void {

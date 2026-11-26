@@ -14,6 +14,13 @@ import {
   ROUGH_LABEL,
 } from '../../../shared/powerUps';
 import { formatGap } from '../../main/ui/format';
+import { ghostPill } from '../../main/ui/ghostView';
+
+/** The ghost rider's pill (docs/ghost.md): "Ghost  +12 m · +2.1 s"; null without a race. */
+export function overlayGhostPill(live: LiveState | null | undefined) {
+  if (!live || live.ride.state === 'idle') return null;
+  return ghostPill(live.ghost);
+}
 
 export const MIN_WIDTH = 160;
 export const MIN_HEIGHT = 80;

@@ -6929,3 +6929,154 @@ div.server-note {
 .energy-info-body p {
   margin: 0;
 }
+
+/* ───────────── Ghost rider (docs/ghost.md) ───────────── */
+
+.start-ghost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-3);
+}
+
+.start-ghost-body {
+  display: flex;
+  flex: 1 1 18rem;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.start-ghost-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.start-ghost-switch {
+  font-weight: 600;
+}
+
+.start-ghost-select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2rem;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--separator-strong, var(--separator));
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.start-ghost-hint {
+  margin: 0;
+}
+
+.ghost-chip {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 8.5rem;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+  pointer-events: none;
+}
+
+.ghost-chip-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ghost-glyph {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+.ghost-chip-gap {
+  font-family: var(--font-display, inherit);
+  font-size: var(--text-lg, 1.125rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ghost-chip.is-ahead .ghost-chip-gap,
+.summary-ghost-verdict.is-ahead strong {
+  color: var(--ok);
+}
+
+.ghost-chip.is-behind .ghost-chip-gap,
+.summary-ghost-verdict.is-behind strong {
+  color: var(--danger);
+}
+
+.ghost-chip.is-quiet .ghost-chip-gap {
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: normal;
+  text-align: right;
+}
+
+.ghost-chip-split {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+@container scene-view (max-width: 560px) {
+  .ghost-chip {
+    top: var(--s-2);
+    right: var(--s-2);
+    min-width: 0;
+    padding: var(--s-1) var(--s-2);
+  }
+}
+
+.summary-ghost {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3) var(--s-4);
+}
+
+.summary-ghost p {
+  margin: 0;
+}
+
+.summary-ghost-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+  font-size: var(--text-lg, 1.125rem);
+}
+
+.summary-ghost-verdict .ghost-glyph {
+  color: var(--text-2);
+}
+
+.summary-ghost-splits {
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-ghost-best {
+  font-weight: 600;
+}

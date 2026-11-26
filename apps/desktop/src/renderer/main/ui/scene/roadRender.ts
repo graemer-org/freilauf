@@ -82,7 +82,12 @@ export interface RoadRider {
   crank: number;
   /** Rumble effects on that rider, if any. */
   fx?: RiderFx;
+  /** The ghost rider (docs/ghost.md): drawn translucent, labelled with its gap. */
+  ghost?: boolean;
 }
+
+/** How opaque the ghost rider is drawn (both views). */
+export const GHOST_ALPHA = 0.4;
 
 export interface RoadFrame {
   track: RouteTrack;
@@ -720,7 +725,11 @@ export class RoadRenderer {
         jersey: fog.ghostJersey[level]!,
         jerseyShade: fog.ghost[level]!,
       };
-      ctx.globalAlpha = o.stale ? 0.45 : 1;
+      if (o.ghost) {
+        colours.jersey = p.accent;
+        colours.jerseyShade = p.accent;
+      }
+      ctx.globalAlpha = o.ghost ? GHOST_ALPHA : o.stale ? 0.45 : 1;
       this.clipped(k, this.a.y, headY, () => {
         this.riderFromBehind(this.a.x, this.a.y, ppm, 0, o.crank, 0, 0, colours, false);
       });
@@ -737,8 +746,11 @@ export class RoadRenderer {
           f.reducedMotion,
         );
       }
-      const label =
-        o.gapM >= 100 ? `${o.name} · ${f.hideGaps ? '?' : `${Math.round(o.gapM)} m`}` : o.name;
+      const label = o.ghost
+        ? `${o.name} · ${Math.round(o.gapM)} m`
+        : o.gapM >= 100
+          ? `${o.name} · ${f.hideGaps ? '?' : `${Math.round(o.gapM)} m`}`
+          : o.name;
       this.labels.push({ x: this.a.x, y: headY - 4, text: label, stale: o.stale });
     }
     // Names above the heads, nearest first; a name that would overlap a nearer one is left out.

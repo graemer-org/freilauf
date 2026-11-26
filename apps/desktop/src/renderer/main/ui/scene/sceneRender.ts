@@ -1003,7 +1003,7 @@ export class SceneRenderer {
       const scale = this.place(x, lat, slope, this.tmp) * 0.94;
       const angles = f.otherAngles.get(o.id);
       computePose(this.ghostPose, angles?.crank ?? 0, 0, 0, Math.atan(slope));
-      ctx.globalAlpha = o.stale ? 0.45 : 0.9;
+      ctx.globalAlpha = o.ghost ? 0.38 : o.stale ? 0.45 : 0.9;
       this.rider(
         this.tmp.x,
         this.tmp.y,

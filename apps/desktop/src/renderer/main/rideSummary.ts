@@ -3,6 +3,7 @@ import { BEST_EFFORT_KEYS } from '@freilauf/community';
 import type { RecordedRide } from '@freilauf/session';
 import { rideEnergy } from '@freilauf/session';
 import type { LiveEnergy } from '../../shared/contract';
+import type { GhostResult } from '../core/ghost';
 
 /** A best effort this ride improved on (over the rides the community ledger still holds). */
 export interface RideBest {
@@ -41,6 +42,13 @@ export interface RideSummary {
    * heart-rate estimate (nothing is shown then).
    */
   energy?: LiveEnergy | null;
+  /** The race against the ghost (docs/ghost.md); null/absent without one. */
+  ghost?: GhostResult | null;
+  /**
+   * This ride's time for the whole route (start to finish, or a full lap) and the best one
+   * before it; null when it did not ride the whole route in one go.
+   */
+  routeTime?: { timeS: number; previousS: number | null } | null;
 }
 
 export interface SummarizeInput {
@@ -58,6 +66,10 @@ export interface SummarizeInput {
   powerUpGainM?: number;
   /** Rumble: gain from items and loss to hits at the finish (m). */
   rumble?: { gainM: number; lossM: number } | null;
+  /** The ghost race at the finish; absent = none. */
+  ghost?: GhostResult | null;
+  /** See RideSummary.routeTime. */
+  routeTime?: { timeS: number; previousS: number | null } | null;
   /** Age and sex for the heart-rate estimate (Settings.rider); absent = none. */
   rider?: { ageYears?: number | null; sex?: string | null; ftpW?: number | null } | null;
 }
@@ -126,5 +138,7 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
         }
       : {}),
     energy,
+    ...(ride && input.ghost ? { ghost: input.ghost } : {}),
+    ...(ride && input.routeTime ? { routeTime: input.routeTime } : {}),
   };
 }

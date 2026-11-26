@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { GhostHud } from '../GhostUi';
 import { PowerUpHud } from '../PowerUpHud';
 import { useRouteTrack } from '../routesApi';
 import { RoadScene } from './RoadScene';
@@ -62,6 +63,7 @@ export function RideScene() {
         </button>
       </div>
       <PowerUpHud />
+      <GhostHud />
     </>
   );
   return mode === 'road' ? (

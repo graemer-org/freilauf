@@ -111,6 +111,25 @@ describe('RideStore', () => {
     expect(log).toHaveBeenCalledTimes(2);
   });
 
+  it('lists the route of a route ride and what it offers as a ghost (docs/ghost.md)', async () => {
+    const onRoute: RecordedRide = {
+      ...ride('route', 3_000_000, 40),
+      route: { id: 'builtin-x', lengthM: 300, loop: false, offsetsM: [0] },
+    };
+    await store.save(onRoute, true);
+    await store.save(ride('free', 1_000_000), true);
+    const [withRoute, free] = await store.list();
+    expect(withRoute!.route).toEqual({
+      id: 'builtin-x',
+      fromM: 0,
+      toM: 300,
+      fullTimeS: 30,
+      continuous: true,
+      ghost: true,
+    });
+    expect(free!.route).toBeUndefined();
+  });
+
   it('overwrites on re-save (autosave → finished)', async () => {
     await store.save(ride('r', 1), false);
     await store.save(ride('r', 1, 5), true);
