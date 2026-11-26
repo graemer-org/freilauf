@@ -56,6 +56,8 @@ function liveState(overrides: Partial<LiveState> = {}): LiveState {
       speedMps: 9.5,
       powerW: 213,
       power3sW: 207,
+      displayPowerW: 213,
+      avgPowerW: 213,
       wattsPerKg: 2.84,
       cadenceRpm: 90,
       heartRateBpm: 142,
@@ -202,7 +204,7 @@ describe('MainApp (SSR)', () => {
       'dot-trainer',
       'panel-ride',
       'stat-power',
-      'stat-power3s',
+      'stat-avgPower',
       'stat-wattsPerKg',
       'stat-cadence',
       'stat-speed',
@@ -847,5 +849,38 @@ describe('Countdown before the ride starts or resumes (SSR)', () => {
     }
     expect(html).toMatch(/aria-checked="true"[^>]*data-testid="settings-countdown-5"/);
     expect(html).toMatch(/data-testid="settings-countdown-0">Off</);
+  });
+
+  it('offers power smoothing in Settings → Ride (Off, 1, 3, 5 s; 3 s by default)', () => {
+    const state = { ...baseState(), live: idle };
+    let html = renderScreen(state, 'settings');
+    expect(html).toContain('Power smoothing');
+    for (const v of ['0', '1', '3', '5']) {
+      expect(html).toContain(`data-testid="settings-power-smoothing-${v}"`);
+    }
+    expect(html).toMatch(/aria-checked="true"[^>]*data-testid="settings-power-smoothing-3"/);
+    expect(html).toMatch(/data-testid="settings-power-smoothing-0">Off</);
+    state.settings!.ride.powerSmoothingS = 0;
+    html = renderScreen(state, 'settings');
+    expect(html).toMatch(/aria-checked="true"[^>]*data-testid="settings-power-smoothing-0"/);
+  });
+
+  it('the ride view shows the smoothed power large with the ride average under it', () => {
+    const live = liveState();
+    live.ride = {
+      ...live.ride,
+      powerW: 480,
+      displayPowerW: 244.4,
+      avgPowerW: 198,
+      wattsPerKg: 3.26,
+    };
+    const html = renderScreen({ ...baseState(), live }, 'ride');
+    expect(html).toMatch(/data-testid="stat-power".*?class="tile-number">244</);
+    expect(html).toMatch(
+      /data-testid="stat-avgPower"><span class="tile-label">Avg power<\/span>.*?>198</,
+    );
+    expect(html).toMatch(/data-testid="stat-wattsPerKg".*?>3.3</);
+    expect(html).not.toContain('data-testid="stat-power3s"');
+    expect(html).not.toContain('>480<');
   });
 });

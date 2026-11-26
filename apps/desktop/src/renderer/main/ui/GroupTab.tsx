@@ -98,7 +98,7 @@ function RiderTable() {
   const me = useAppState(
     useShallow((s) => ({
       name: s.live?.localName ?? 'You',
-      powerW: s.live?.ride.powerW ?? 0,
+      powerW: s.live?.ride.displayPowerW ?? s.live?.ride.powerW ?? 0,
       heartRateBpm: s.live?.ride.heartRateBpm ?? null,
       speedMps: s.live?.ride.speedMps ?? 0,
     })),

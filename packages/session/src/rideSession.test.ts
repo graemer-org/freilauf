@@ -276,3 +276,91 @@ describe('RideSession energy', () => {
     expect(session.energy().kcal).toBeCloseTo(12 / 1.00416, 6);
   });
 });
+
+describe('RideSession display smoothing (displayPowerW)', () => {
+  function run(powerSmoothingS: number, changeTo?: number) {
+    let now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const session = new RideSession({
+      bike: DEFAULT_BIKE,
+      riderMassKg: 75,
+      now: () => now,
+      id: 'r',
+      powerSmoothingS,
+    });
+    const shown: { displayPowerW: number; powerW: number; power3sW: number; wkg: number }[] = [];
+    session.start();
+    // Jumpy power at irregular intervals (180–420 ms), a dropout and a pause.
+    let i = 0;
+    const step = (ms: number, watts: number | null) => {
+      now += ms;
+      if (watts !== null) session.setPower(watts);
+      session.setCadence(90);
+      const s = session.tick();
+      shown.push({
+        displayPowerW: s.displayPowerW,
+        powerW: s.powerW,
+        power3sW: s.power3sW,
+        wkg: s.wattsPerKg,
+      });
+    };
+    for (; i < 300; i++) step(180 + ((i * 37) % 240), 150 + ((i * 53) % 200));
+    if (changeTo !== undefined) session.setPowerSmoothing(changeTo);
+    for (let k = 0; k < 30; k++) step(250, null); // dropout
+    for (; i < 500; i++) step(250, 200 + ((i * 71) % 150));
+    session.pause();
+    for (let k = 0; k < 40; k++) step(250, 0); // stopped pedalling while paused
+    session.resume();
+    for (; i < 700; i++) step(300, 250);
+    return { ride: session.finish(), shown, session };
+  }
+
+  it('off: displayPowerW is the raw reading and W/kg follows it', () => {
+    const { shown } = run(0);
+    for (const s of shown) {
+      expect(s.displayPowerW).toBe(s.powerW);
+      expect(s.wkg).toBeCloseTo(s.powerW / 75, 9);
+    }
+  });
+
+  it('smoothed: jumps less than the raw reading, W/kg follows the shown power', () => {
+    const { shown } = run(3);
+    const jumps = (k: 'displayPowerW' | 'powerW') =>
+      shown.slice(1, 300).reduce((a, s, j) => a + Math.abs(s[k] - shown[j]![k]), 0);
+    expect(jumps('displayPowerW')).toBeLessThan(jumps('powerW') / 4);
+    for (const s of shown) expect(s.wkg).toBeCloseTo(s.displayPowerW / 75, 9);
+  });
+
+  it('decays to 0 in a dropout and while paused without pedalling', () => {
+    const { shown } = run(3);
+    // 30 ticks of 250 ms without readings: the hold (3 s) then the 3 s window have passed.
+    expect(shown[299 + 30]!.displayPowerW).toBe(0);
+    // Pause with 0 W readings for 10 s.
+    const pausedEnd = 300 + 30 + 200 + 40 - 1;
+    expect(shown[pausedEnd]!.displayPowerW).toBe(0);
+    // Then 250 W steady again.
+    expect(shown.at(-1)!.displayPowerW).toBeCloseTo(250, 6);
+  });
+
+  it('records the same ride, power and energy whatever the smoothing (also when changed)', () => {
+    const off = run(0);
+    for (const other of [run(1), run(3), run(5), run(1, 5), run(5, 0)]) {
+      expect(other.ride).toEqual(off.ride);
+      expect(other.session.energy()).toEqual(off.session.energy());
+      expect(other.shown.map((s) => [s.powerW, s.power3sW])).toEqual(
+        off.shown.map((s) => [s.powerW, s.power3sW]),
+      );
+    }
+  });
+
+  it('avgPowerW is the mean of the recorded samples', () => {
+    const { session, ride } = setup();
+    expect(session.tick().avgPowerW).toBe(0);
+    session.start();
+    ride(10, 100);
+    const snap = ride(10, 300);
+    const samples = session.toRecordedRide().samples;
+    const mean = samples.reduce((a, s) => a + s.powerW, 0) / samples.length;
+    expect(snap.avgPowerW).toBeCloseTo(mean, 9);
+    expect(snap.avgPowerW).toBeCloseTo(200, 0);
+  });
+});

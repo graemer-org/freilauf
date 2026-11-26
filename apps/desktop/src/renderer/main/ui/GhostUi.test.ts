@@ -186,6 +186,8 @@ function live(over: Partial<LiveState> = {}): LiveState {
       speedMps: 9,
       powerW: 220,
       power3sW: 220,
+      displayPowerW: 220,
+      avgPowerW: 220,
       wattsPerKg: 3,
       cadenceRpm: 90,
       heartRateBpm: null,

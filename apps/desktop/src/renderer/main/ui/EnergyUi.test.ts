@@ -63,6 +63,8 @@ function live(overrides: Partial<LiveState> = {}): LiveState {
       speedMps: 9.5,
       powerW: 213,
       power3sW: 207,
+      displayPowerW: 213,
+      avgPowerW: 213,
       wattsPerKg: 2.84,
       cadenceRpm: 90,
       heartRateBpm: 142,

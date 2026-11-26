@@ -65,6 +65,7 @@ export function formatGap(meters: number): string {
 const LABELS: Record<StatId, string> = {
   power: 'Power',
   power3s: '3 s power',
+  avgPower: 'Avg power',
   wattsPerKg: 'W/kg',
   cadence: 'Cadence',
   speed: 'Speed',
@@ -85,6 +86,7 @@ const LABELS: Record<StatId, string> = {
 const UNITS: Record<StatId, string> = {
   power: 'W',
   power3s: 'W',
+  avgPower: 'W',
   wattsPerKg: 'W/kg',
   cadence: 'rpm',
   speed: 'km/h',
@@ -125,9 +127,12 @@ export function statValue(
 ): string {
   switch (stat) {
     case 'power':
-      return round(ride.powerW);
+      // Smoothed for display (Settings → Ride → Power smoothing); the raw reading when off.
+      return round(ride.displayPowerW ?? ride.powerW);
     case 'power3s':
       return round(ride.power3sW);
+    case 'avgPower':
+      return round(ride.avgPowerW ?? 0);
     case 'wattsPerKg':
       return dec(ride.wattsPerKg, 1);
     case 'cadence':

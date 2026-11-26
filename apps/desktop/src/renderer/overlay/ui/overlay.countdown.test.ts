@@ -17,6 +17,8 @@ function live(
       speedMps: 0,
       powerW: 160,
       power3sW: 158,
+      displayPowerW: 160,
+      avgPowerW: 160,
       wattsPerKg: 2.1,
       cadenceRpm: 80,
       heartRateBpm: 110,

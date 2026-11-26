@@ -2,6 +2,7 @@ import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
 import type { EnergyTotals } from './energy';
 import { EnergyAccumulator } from './energy';
+import { PowerSmoother } from './powerSmoother';
 import type { RecordedRide, RideRoute, RideSample, RideSnapshot, RoutePositionFix } from './types';
 
 export interface RideSessionOptions {
@@ -17,6 +18,11 @@ export interface RideSessionOptions {
    * heart-rate estimate (not stored). Absent = power-based kcal only, no fat/carbohydrate split.
    */
   energy?: { ftpW?: number | null; ageYears?: number | null; sex?: string | null };
+  /**
+   * Display smoothing of power in seconds (0 = off, default): the window of the moving average
+   * shown as RideSnapshot.displayPowerW and used for W/kg. Changes nothing that is recorded.
+   */
+  powerSmoothingS?: number;
 }
 
 /** Sensor values older than this are treated as "no signal" (device dropped). */
@@ -65,8 +71,12 @@ export class RideSession {
   #samples: RideSample[] = [];
   #positionAt: ((distanceM: number) => RoutePositionFix | null) | null = null;
   #route: (() => RideRoute | null) | null = null;
+  /** Sum of the recorded samples' power, for the ride average. */
+  #samplePowerSumW = 0;
   readonly #ftpW: number | null;
   readonly #energy: EnergyAccumulator;
+  /** Display only: smooths the incoming power readings (displayPowerW, W/kg). */
+  readonly #smoother: PowerSmoother;
 
   constructor(options: RideSessionOptions) {
     this.#bike = options.bike;
@@ -82,6 +92,15 @@ export class RideSession {
       sex: options.energy?.sex ?? null,
       ftpW: this.#ftpW,
     });
+    this.#smoother = new PowerSmoother({
+      windowS: options.powerSmoothingS ?? 0,
+      holdMs: SENSOR_TIMEOUT_MS,
+    });
+  }
+
+  /** Changes the display smoothing window (seconds, 0 = off); applies at once. */
+  setPowerSmoothing(windowS: number): void {
+    this.#smoother.setWindow(windowS);
   }
 
   /** Energy estimates over the samples recorded so far (the same as rideEnergy of the ride). */
@@ -90,7 +109,9 @@ export class RideSession {
   }
 
   setPower(watts: number): void {
-    if (Number.isFinite(watts)) this.#power = { value: Math.max(0, watts), at: this.#now() };
+    if (!Number.isFinite(watts)) return;
+    this.#power = { value: Math.max(0, watts), at: this.#now() };
+    this.#smoother.add(this.#power.value, this.#power.at);
   }
 
   setCadence(rpm: number): void {
@@ -232,6 +253,7 @@ export class RideSession {
           ...this.#position(),
         });
         const sample = this.#samples.at(-1)!;
+        this.#samplePowerSumW += sample.powerW;
         this.#energy.add({
           powerW: sample.powerW,
           heartRateBpm: sample.heartRateBpm,
@@ -272,6 +294,9 @@ export class RideSession {
       }
     }
     const power3sW = this.#state === 'riding' && time > 0 ? energy / time : powerW;
+    // Display only; off = the raw value, exactly as before.
+    const displayPowerW = this.#smoother.windowS > 0 ? this.#smoother.value(now) : powerW;
+    const samples = this.#samples.length;
     return {
       state: this.#state,
       elapsedS: this.#elapsedS,
@@ -279,7 +304,9 @@ export class RideSession {
       speedMps: this.#state === 'riding' ? this.#speedMps : 0,
       powerW,
       power3sW,
-      wattsPerKg: this.#riderMassKg > 0 ? power3sW / this.#riderMassKg : 0,
+      displayPowerW,
+      avgPowerW: samples > 0 ? this.#samplePowerSumW / samples : 0,
+      wattsPerKg: this.#riderMassKg > 0 ? displayPowerW / this.#riderMassKg : 0,
       cadenceRpm: this.#fresh(this.#cadence, now, SENSOR_TIMEOUT_MS) ?? 0,
       heartRateBpm: this.#fresh(this.#heartRate, now, HEART_RATE_TIMEOUT_MS),
       gear: this.#gear,

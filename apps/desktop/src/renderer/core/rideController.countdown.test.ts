@@ -32,7 +32,7 @@ describe('RideController: the countdown before a ride starts or resumes', () => 
           ...DEFAULT_SETTINGS.shifting,
           buttons: { ...DEFAULT_SETTINGS.shifting.buttons, a: 'startPause' },
         },
-        ride: { countdownS },
+        ride: { ...DEFAULT_SETTINGS.ride, countdownS },
       },
       onLive: (s) => void published.push(s),
       saveRide: async () => undefined,
@@ -152,7 +152,10 @@ describe('RideController: the countdown before a ride starts or resumes', () => 
 
   it('a changed setting applies to the next countdown', async () => {
     const { controller } = await setup(3);
-    controller.updateSettings({ ...DEFAULT_SETTINGS, ride: { countdownS: 10 } });
+    controller.updateSettings({
+      ...DEFAULT_SETTINGS,
+      ride: { ...DEFAULT_SETTINGS.ride, countdownS: 10 },
+    });
     controller.requestStart();
     expect(controller.countdown).toMatchObject({ totalS: 10, remainingS: 10 });
   });

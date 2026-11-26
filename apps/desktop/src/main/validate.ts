@@ -33,6 +33,10 @@ export function isLiveState(v: unknown): v is LiveState {
   ]) {
     if (!isNum(ride[key])) return false;
   }
+  // Newer fields: optional here, so a publisher without them still reaches the overlay.
+  for (const key of ['displayPowerW', 'avgPowerW']) {
+    if (ride[key] !== undefined && !isNum(ride[key])) return false;
+  }
   return ride.heartRateBpm === null || isNum(ride.heartRateBpm);
 }
 

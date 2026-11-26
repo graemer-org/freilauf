@@ -156,13 +156,16 @@ function StatTile({ stat, variant = 'tile' }: { stat: StatId; variant?: StatVari
   );
 }
 
-/** Power dominates; 3 s power and W/kg sit underneath as its context. */
+/**
+ * Power dominates (smoothed, Settings → Ride → Power smoothing); the ride's average power and
+ * W/kg sit underneath as its context.
+ */
 function PowerHero() {
   return (
     <section className="hero card" aria-label="Power">
       <StatTile stat="power" variant="hero" />
       <div className="hero-subs">
-        <StatTile stat="power3s" variant="sub" />
+        <StatTile stat="avgPower" variant="sub" />
         <StatTile stat="wattsPerKg" variant="sub" />
       </div>
       {/* Energy so far (docs/energy.md): kcal from power, fat as a rough estimate. */}

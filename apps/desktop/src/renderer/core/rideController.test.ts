@@ -51,7 +51,7 @@ describe('RideController with the simulated rig', () => {
     expect(live.ride.heartRateBpm).toBeGreaterThan(60);
     expect(live.ride.speedMps).toBeGreaterThan(5);
     expect(live.ride.distanceM).toBeGreaterThan(300);
-    expect(live.ride.wattsPerKg).toBeCloseTo(live.ride.power3sW / 75, 6);
+    expect(live.ride.wattsPerKg).toBeCloseTo(live.ride.displayPowerW / 75, 6);
     expect(live.devices.trainer).toEqual({ name: rig.trainer.name, state: 'connected' });
     // Battery levels per device (the simulated trainer has none).
     expect(live.devices.heartRate?.battery).toMatchObject({ percent: 64 });
@@ -371,7 +371,7 @@ describe('RideController with the simulated rig', () => {
           buttons: { a: 'startPause', b: 'workoutSkip', y: 'intensityUp', z: 'intensityDown' },
         },
         // The countdown has its own tests (rideController.countdown.test.ts).
-        ride: { countdownS: 0 },
+        ride: { ...DEFAULT_SETTINGS.ride, countdownS: 0 },
       },
       onLive: (state) => (live = state),
       saveRide: async () => undefined,

@@ -19,6 +19,8 @@ const ride: RideSnapshot = {
   speedMps: 10,
   powerW: 201.6,
   power3sW: 199.4,
+  displayPowerW: 201.6,
+  avgPowerW: 201.6,
   wattsPerKg: 2.66,
   cadenceRpm: 88.5,
   heartRateBpm: 141,
@@ -97,11 +99,24 @@ describe('stat helpers', () => {
     expect(statValue('distance', ride)).toBe('12.35');
     expect(statValue('gradient', ride)).toBe('+2.5');
   });
+  it('power shows the smoothed value; avg power the ride average; 3 s power stays', () => {
+    const r: RideSnapshot = { ...ride, powerW: 412, displayPowerW: 238.6, avgPowerW: 187.4 };
+    expect(statValue('power', r)).toBe('239');
+    expect(statValue('avgPower', r)).toBe('187');
+    expect(statValue('power3s', r)).toBe('199');
+    expect(statLabel('avgPower')).toBe('Avg power');
+    expect(statUnit('avgPower')).toBe('W');
+    expect(ALL_STATS).toContain('avgPower');
+    expect(ALL_STATS).toContain('power3s');
+    // Off: the session reports the raw reading as displayPowerW.
+    expect(statValue('power', { ...r, displayPowerW: 412 })).toBe('412');
+  });
   it('renders missing values as a dash', () => {
     const broken: RideSnapshot = {
       ...ride,
       heartRateBpm: null,
       powerW: Number.NaN,
+      displayPowerW: Number.NaN,
       gearCount: 0,
       gradePercent: Number.NaN,
     };

@@ -17,6 +17,7 @@ import type { GroupMode, PowerUpLive } from './powerUps';
 export type StatId =
   | 'power'
   | 'power3s'
+  | 'avgPower'
   | 'wattsPerKg'
   | 'cadence'
   | 'speed'
@@ -36,6 +37,7 @@ export type StatId =
 export const ALL_STATS: readonly StatId[] = [
   'power',
   'power3s',
+  'avgPower',
   'wattsPerKg',
   'cadence',
   'speed',
@@ -213,6 +215,12 @@ export interface Settings {
   ride: {
     /** Seconds counted down after Start / Resume before time and recording begin; 0 = off. */
     countdownS: CountdownSeconds;
+    /**
+     * Display smoothing of power in seconds (0 = off, 1, 3 or 5; default 3): the big power
+     * number, W/kg and the overlay show a moving average over this window. Recording, FIT,
+     * trainer control, workouts, power-ups and the group broadcast use the readings unchanged.
+     */
+    powerSmoothingS: PowerSmoothingSeconds;
   };
   /** Share with my watch: publish the live values as Bluetooth sensors (docs/watch-relay.md). */
   watchRelay: WatchRelaySettings;
@@ -297,7 +305,7 @@ export const DEFAULT_SETTINGS: Settings = {
     bounds: null,
     backdropOpacity: 0.55,
     tiles: [
-      { stat: 'power3s', size: 'l' },
+      { stat: 'power', size: 'l' },
       { stat: 'heartRate', size: 'm' },
       { stat: 'cadence', size: 'm' },
       { stat: 'speed', size: 'm' },
@@ -311,7 +319,7 @@ export const DEFAULT_SETTINGS: Settings = {
   group: { useOwnServer: false, signallingUrl: '', relayUrls: [] },
   route: { difficulty: 100 },
   powerUps: { enabled: true, challenges: true },
-  ride: { countdownS: 3 },
+  ride: { countdownS: 3, powerSmoothingS: 3 },
   watchRelay: DEFAULT_WATCH_RELAY,
   ghost: { enabled: true, sources: {} },
 };
@@ -343,6 +351,10 @@ export interface DeviceStatus {
 /** The countdown lengths offered in Settings (0 = off). */
 export const COUNTDOWN_CHOICES = [0, 3, 5, 10] as const;
 export type CountdownSeconds = (typeof COUNTDOWN_CHOICES)[number];
+
+/** The power smoothing windows offered in Settings (seconds, 0 = off). */
+export const POWER_SMOOTHING_CHOICES = [0, 1, 3, 5] as const;
+export type PowerSmoothingSeconds = (typeof POWER_SMOOTHING_CHOICES)[number];
 
 /**
  * A countdown before the ride starts ('start'), resumes after a pause ('resume') or starts for

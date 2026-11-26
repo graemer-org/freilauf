@@ -73,8 +73,18 @@ export interface RideSnapshot {
   elapsedS: number;
   distanceM: number;
   speedMps: number;
+  /** The fresh power reading (0 after a dropout); what is recorded, broadcast and used. */
   powerW: number;
+  /** Rolling 3 s average while riding (else powerW); workouts and power-ups use it. */
   power3sW: number;
+  /**
+   * The power to show: powerW smoothed over Settings.ride.powerSmoothingS (powerSmoother.ts);
+   * equals powerW when smoothing is off. Display only.
+   */
+  displayPowerW: number;
+  /** Mean power of the samples recorded so far (as in the ride summary); 0 before any. */
+  avgPowerW: number;
+  /** displayPowerW per kg of rider. */
   wattsPerKg: number;
   cadenceRpm: number;
   heartRateBpm: number | null;

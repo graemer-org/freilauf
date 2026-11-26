@@ -129,6 +129,8 @@ describe('relayInputFromLive', () => {
       speedMps: 8,
       powerW: 200,
       power3sW: 200,
+      displayPowerW: 200,
+      avgPowerW: 200,
       wattsPerKg: 2.6,
       cadenceRpm: 90,
       heartRateBpm: 140,

@@ -15,6 +15,8 @@ function liveState(powerW: number): LiveState {
       speedMps: 9,
       powerW,
       power3sW: powerW,
+      displayPowerW: powerW,
+      avgPowerW: powerW,
       wattsPerKg: powerW / 75,
       cadenceRpm: 90,
       heartRateBpm: 140,
@@ -102,7 +104,7 @@ test.describe('desktop smoke', () => {
       );
 
       // The simulated rig feeds the ride; its live state reaches the overlay.
-      const overlayPower = overlay.getByTestId('overlay-tile-power3s');
+      const overlayPower = overlay.getByTestId('overlay-tile-power');
       await expect(overlayPower).toContainText(/[1-9]\d+/, { timeout: 15_000 });
 
       // The overlay may not publish live state (a bogus value never shows up).
@@ -112,7 +114,7 @@ test.describe('desktop smoke', () => {
 
       // A reloaded overlay gets state again right away.
       await overlay.reload();
-      await expect(overlay.getByTestId('overlay-tile-power3s')).toContainText(/[1-9]\d+/);
+      await expect(overlay.getByTestId('overlay-tile-power')).toContainText(/[1-9]\d+/);
 
       // Edit mode is reflected via onEditMode in both windows.
       await expect(overlay.getByTestId('overlay-edit-bar')).toHaveCount(0);

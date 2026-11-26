@@ -416,6 +416,8 @@ export class RideController {
     const before = this.#settings;
     this.#settings = settings;
     this.#plan?.runner?.setFtp(settings.rider.ftpW);
+    // Display only: applies to the running ride at once.
+    this.#session.setPowerSmoothing(this.#powerSmoothingS());
     const changed =
       before.rider.massKg !== settings.rider.massKg ||
       before.rider.bikeMassKg !== settings.rider.bikeMassKg ||
@@ -1500,7 +1502,14 @@ export class RideController {
         ageYears: this.#settings.rider.ageYears ?? null,
         sex: this.#settings.rider.sex ?? null,
       },
+      powerSmoothingS: this.#powerSmoothingS(),
     });
+  }
+
+  /** Settings.ride.powerSmoothingS (display only); 0 = off. */
+  #powerSmoothingS(): number {
+    const s = this.#settings.ride?.powerSmoothingS;
+    return typeof s === 'number' && Number.isFinite(s) && s >= 0 ? s : 0;
   }
 
   #difficulty(): number {
