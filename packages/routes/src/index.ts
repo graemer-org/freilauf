@@ -53,3 +53,6 @@ export {
 export { builtinRoutes, getBuiltinRoute } from './builtin';
 export type { Projection } from './geo';
 export { haversineM, project, unproject, utf8ByteLength } from './geo';
+
+export type { MatchPoint, MatchResult } from './match';
+export { MATCH_TOLERANCE_M, MIN_MATCH_M, matchTrackToRoute } from './match';

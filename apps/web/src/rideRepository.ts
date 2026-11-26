@@ -5,7 +5,7 @@
  * export is a file download instead of a "Save as…" dialog.
  */
 import type { RecordedRide } from '@freilauf/session';
-import { encodeFit, rideSummary } from '@freilauf/session';
+import { encodeFit, rideRouteInfo, rideSummary } from '@freilauf/session';
 import { isRecordedRide } from '../../desktop/src/main/validate';
 import type { RideListItem } from '../../desktop/src/shared/contract';
 
@@ -57,6 +57,7 @@ export function summarize(ride: RecordedRide, finished: boolean): RideListItem {
     avgPowerW: summary.avgPowerW,
     ...(summary.caloriesKcal > 0 ? { kcal: Math.round(summary.caloriesKcal) } : {}),
     finished,
+    ...routeOf(ride),
   };
 }
 
@@ -131,4 +132,10 @@ export class MemoryRideRecordStore implements RideRecordStore {
   async delete(id: string): Promise<void> {
     this.#records.delete(id);
   }
+}
+
+/** The route a ride followed and what it offers as a ghost (docs/ghost.md); {} without one. */
+function routeOf(ride: RecordedRide): Pick<RideListItem, 'route'> {
+  const route = rideRouteInfo(ride);
+  return route ? { route } : {};
 }

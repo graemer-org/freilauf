@@ -652,6 +652,20 @@ body,
   text-transform: uppercase;
 }
 
+/* ───────── ghost rider (docs/ghost.md) ───────── */
+
+.ov-ghost::before {
+  background: rgb(255 255 255 / 0.35);
+}
+
+.ov-ghost--ahead .ov-ghost-gap {
+  color: #5fe0a0;
+}
+
+.ov-ghost--behind .ov-ghost-gap {
+  color: #ff8a84;
+}
+
 /* ───────── countdown before the ride starts or resumes ───────── */
 
 /*

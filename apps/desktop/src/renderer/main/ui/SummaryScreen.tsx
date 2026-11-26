@@ -9,6 +9,7 @@ import {
 import { formatDistance, formatDuration } from './format';
 import { SummaryEnergy } from './EnergyUi';
 import { FtpOutcomeCard } from './FtpOutcome';
+import { SummaryGhost } from './GhostUi';
 import { useApp, useAppState } from './hooks';
 
 const BEST_LABEL: Record<RideBest['key'], string> = {
@@ -114,6 +115,8 @@ export function SummaryScreen({ onDone, onAgain }: { onDone: () => void; onAgain
           </dd>
         </div>
       </dl>
+
+      <SummaryGhost summary={summary} />
 
       <SummaryEnergy energy={summary.energy} />
 

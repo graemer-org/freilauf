@@ -1,6 +1,7 @@
 import type { CountdownSeconds } from '../../../shared/contract';
 import { COUNTDOWN_CHOICES } from '../../../shared/contract';
 import { Segmented } from './CommunityTab';
+import { GhostSettingsToggle } from './GhostUi';
 import { useApp, useAppState } from './hooks';
 
 type Choice = `${CountdownSeconds}`;
@@ -41,6 +42,7 @@ export function RideSettings() {
             />
           </div>
         </div>
+        <GhostSettingsToggle />
       </div>
     </section>
   );

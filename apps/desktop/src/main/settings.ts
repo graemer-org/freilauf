@@ -13,6 +13,8 @@ import type {
   Bounds,
   CountdownSeconds,
   DeepPartial,
+  GhostChoice,
+  GhostSettings,
   LeverFunction,
   LeverSettings,
   OverlayTile,
@@ -27,6 +29,7 @@ import {
   COUNTDOWN_CHOICES,
   DEFAULT_SETTINGS,
   LEGACY_DEFAULT_SIGNALLING_URL,
+  MAX_GHOST_CHOICES,
 } from '../shared/contract';
 
 // Records (not arrays) so the compiler flags a missing/extra member when the
@@ -541,7 +544,36 @@ export function sanitizeSettings(
     },
     ride: { countdownS: sanitizeCountdown(ride.countdownS, fallback.ride.countdownS, problems) },
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
+    ghost: sanitizeGhost(root.ghost, fallback.ghost ?? DEFAULT_SETTINGS.ghost, problems),
   };
+}
+
+export function isGhostChoice(v: unknown): v is GhostChoice {
+  if (v === 'best' || v === 'last' || v === 'none') return true;
+  return typeof v === 'string' && v.startsWith('ride:') && v.length > 5 && v.length <= 205;
+}
+
+/** Ghost rider settings: the switch and the remembered choice per route (bounded). */
+function sanitizeGhost(raw: unknown, fallback: GhostSettings, problems: Problems): GhostSettings {
+  if (raw === undefined) return { enabled: fallback.enabled, sources: { ...fallback.sources } };
+  const root = obj(raw, 'ghost', problems);
+  let sources: Record<string, GhostChoice> = { ...fallback.sources };
+  if (root.sources !== undefined) {
+    if (!isPlainObject(root.sources)) problems.push('ghost.sources: expected an object');
+    else {
+      sources = {};
+      for (const [route, choice] of Object.entries(root.sources)) {
+        if (route.length === 0 || route.length > 200 || !isGhostChoice(choice)) {
+          problems.push(`ghost.sources.${route.slice(0, 40)}: invalid`);
+        } else sources[route] = choice;
+      }
+    }
+  }
+  const keys = Object.keys(sources);
+  if (keys.length > MAX_GHOST_CHOICES) {
+    for (const k of keys.slice(0, keys.length - MAX_GHOST_CHOICES)) delete sources[k];
+  }
+  return { enabled: bool(root.enabled, fallback.enabled, 'ghost.enabled', problems), sources };
 }
 
 /** One of the offered countdown lengths (COUNTDOWN_CHOICES), else the fallback. */

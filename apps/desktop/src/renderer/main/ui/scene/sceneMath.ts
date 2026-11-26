@@ -317,6 +317,39 @@ export interface PlacedRider {
   stale: boolean;
   /** Rumble effects on that rider (their cape, a hit, protection), if any. */
   fx?: RiderFx;
+  /** The ghost rider (docs/ghost.md): drawn translucent. */
+  ghost?: boolean;
+}
+
+/**
+ * The ghost rider as a placed rider for the side view (null when it is not on the road now):
+ * shown while racing or after the finish, never before the start or while it waits.
+ */
+export function placeGhost(
+  g: { status: string; aheadM: number | null; speedMps: number } | null | undefined,
+): PlacedRider | null {
+  if (!g || (g.status !== 'racing' && g.status !== 'finished') || g.aheadM === null) return null;
+  if (!Number.isFinite(g.aheadM)) return null;
+  return {
+    id: 'ghost',
+    name: 'Ghost',
+    gapM: g.aheadM,
+    offset: groupOffset(g.aheadM),
+    onRoad: Math.abs(g.aheadM) <= SCENE_GROUP_RANGE_M,
+    speedMps: g.speedMps,
+    cadenceRpm: g.speedMps > 0.5 ? 86 : 0,
+    stale: false,
+    ghost: true,
+  };
+}
+
+/** Group riders plus the ghost, farthest first (see placeRiders). */
+export function withGhost(
+  placed: readonly PlacedRider[],
+  ghost: PlacedRider | null,
+): readonly PlacedRider[] {
+  if (!ghost) return placed;
+  return [...placed, ghost].sort((a, b) => Math.abs(b.gapM) - Math.abs(a.gapM));
 }
 
 /** Places other riders for the scene; nearest first so close riders draw on top. */

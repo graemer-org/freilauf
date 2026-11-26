@@ -12,6 +12,9 @@
   setup), what the public relay servers see, troubleshooting, and the advanced own-server option
 - [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
   fairness rule (only the race position changes, never the recording), settings
+- [ghost.md](ghost.md) — the ghost rider: race your best time, your last ride, any earlier ride
+  of a route or a friend's ride file; the gap chip, splits, jumps and pauses, laps, the summary,
+  what is (not) stored
 - [rumble.md](rumble.md) — Freilauf Rumble, the battle mode for group rides: feed bags, two item
   slots, water bottle, mud puddle, hornets, rain cape, energy bar, tacks and the flat tyre, mini
   tool, dropped chain, team car, rough sections, protection, compatibility
@@ -40,6 +43,7 @@ The rest of this page is technical: decisions, protocols and how features are bu
 | [0007](adr/0007-card-race.md)                    | Card Race: attacks as events, signed race offset (**superseded** by 0008)             |
 | [0008](adr/0008-rumble-items.md)                 | Freilauf Rumble: feed bags, two item slots, items, compatibility with 0007's format   |
 | [0009](adr/0009-rumble-road-items.md)            | Rumble road items (energy bar, tacks, mini tool, chain, team car, rough), protocol v3 |
+| [0010](adr/0010-ghost-rider.md)                  | Ghost rider: route coordinates, continuous parts, jumps during a race, storage        |
 
 New decisions get the next number; an accepted ADR is superseded by a new
 one rather than rewritten.

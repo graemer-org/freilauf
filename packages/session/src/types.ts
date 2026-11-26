@@ -35,6 +35,22 @@ export interface RoutePositionFix {
   segment?: number;
 }
 
+/**
+ * The route a ride followed (docs/ghost.md): which one, and where on it each route segment
+ * (RideSample.segment) started, so every sample's place along the route is known exactly:
+ * `offsetsM[segment] + sample.distanceM`, counted from the route's start and continuing across
+ * laps (lap 2 starts at `lengthM`). Nothing here is new information about the rider: the samples
+ * already carry the positions; this only names the route they lie on.
+ */
+export interface RideRoute {
+  /** routeBaseId of the route (shared copies of one route have the same base id). */
+  id: string;
+  lengthM: number;
+  loop: boolean;
+  /** Route position (m) at ridden distance 0 for each segment: [start point, after jump 1, …]. */
+  offsetsM: number[];
+}
+
 export interface RecordedRide {
   id: string;
   name: string;
@@ -46,6 +62,8 @@ export interface RecordedRide {
    * (energy.ts). Absent in rides recorded before it was stored.
    */
   ftpW?: number;
+  /** The route the ride followed; absent for free rides and rides recorded before it existed. */
+  route?: RideRoute;
   samples: RideSample[];
 }
 

@@ -11,3 +11,5 @@ export {
 } from './summary';
 export type { RideLap, RideSummary, RouteSummary } from './summary';
 export { fitCrc } from './crc';
+export { MAX_FIT_BYTES, MAX_FIT_RECORDS, decodeFitTrack } from './decodeFit';
+export type { FitTrackPoint, FitTrackResult } from './decodeFit';

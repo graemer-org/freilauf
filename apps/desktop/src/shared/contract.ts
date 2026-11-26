@@ -10,7 +10,7 @@ import type {
 } from '@freilauf/devices';
 import type { GroupRider } from '@freilauf/p2p';
 import type { RoutePosition } from '@freilauf/routes';
-import type { RecordedRide, RideSnapshot } from '@freilauf/session';
+import type { RecordedRide, RideRouteInfo, RideSnapshot } from '@freilauf/session';
 import type { GroupMode, PowerUpLive } from './powerUps';
 
 export type StatId =
@@ -215,7 +215,26 @@ export interface Settings {
   };
   /** Share with my watch: publish the live values as Bluetooth sensors (docs/watch-relay.md). */
   watchRelay: WatchRelaySettings;
+  /** Ghost rider (docs/ghost.md): race an earlier ride of the same route. */
+  ghost: GhostSettings;
 }
+
+/**
+ * Which ghost to race on a route: 'best' (the fastest full ride), 'last' (the latest ride),
+ * `ride:<id>` (one particular ride), or 'none'. A ride file imported as a ghost is not
+ * remembered (it is kept in memory only).
+ */
+export type GhostChoice = 'best' | 'last' | 'none' | `ride:${string}`;
+
+export interface GhostSettings {
+  /** Race a ghost when one exists for the route (default on). */
+  enabled: boolean;
+  /** The last chosen source per route (routeBaseId → choice); at most MAX_GHOST_CHOICES. */
+  sources: Record<string, GhostChoice>;
+}
+
+/** Remembered ghost choices kept at most (the oldest go first). */
+export const MAX_GHOST_CHOICES = 200;
 
 /** Which groups of live values to publish as a Bluetooth sensor; see docs/adr/0005-sensor-relay.md. */
 export interface WatchRelaySettings {
@@ -293,6 +312,7 @@ export const DEFAULT_SETTINGS: Settings = {
   powerUps: { enabled: true, challenges: true },
   ride: { countdownS: 3 },
   watchRelay: DEFAULT_WATCH_RELAY,
+  ghost: { enabled: true, sources: {} },
 };
 
 /**
@@ -356,6 +376,46 @@ export interface LiveState {
   energy?: LiveEnergy | null;
   /** Present while a countdown runs before the ride starts or resumes. */
   countdown?: RideCountdown | null;
+  /** The ghost rider of this route ride (docs/ghost.md); absent without one. */
+  ghost?: GhostLive | null;
+}
+
+/**
+ * The race against the ghost. Gaps are signed for the rider: + = ahead of the ghost.
+ * - ready: chosen, the ride has not started (the ghost starts when the countdown ends);
+ * - waiting: the ghost's ride does not cover the rider's place yet (it joins further on);
+ * - racing;
+ * - finished: the rider passed the end of the ghost's ride (`gapS` is final);
+ * - stopped: after a jump to a place the ghost never rode (it resumes on a jump back).
+ */
+export interface GhostLive {
+  status: 'ready' | 'waiting' | 'racing' | 'finished' | 'stopped';
+  /** What is raced, e.g. "Best time · 24:13". */
+  label: string;
+  /** Metres ahead (+) of or behind (−) the ghost; null when not comparable. */
+  gapM: number | null;
+  /** Seconds ahead (+) or behind (−): when the ghost was (or will be) where the rider is. */
+  gapS: number | null;
+  /** Where the ghost is relative to the rider (m, + = ahead) for the scenes; null = not shown. */
+  aheadM: number | null;
+  /** The ghost's speed (m/s), for its wheels; 0 while it waits. */
+  speedMps: number;
+  /** True once the ghost reached the end of its ride: it waits there. */
+  ghostDone: boolean;
+  /** A short explanation for waiting or stopped ("Ghost joins at km 4.0"); null otherwise. */
+  note: string | null;
+  /** Splits at laps (loop) or route quarters, oldest first: gap in seconds when crossing. */
+  splits: GhostSplit[];
+}
+
+export interface GhostSplit {
+  /** "Lap 1", "km 6.0". */
+  label: string;
+  /** Route position of the split (m, across laps). */
+  atM: number;
+  gapS: number;
+  /** Ride time when it was crossed (s), to show the latest split for a while. */
+  atS: number;
 }
 
 /**
@@ -452,6 +512,11 @@ export interface RideListItem {
   kcal?: number;
   /** False while the ride is still an autosave of a session in progress or crashed. */
   finished: boolean;
+  /**
+   * The route the ride followed (rides from before this was recorded have none) and what it
+   * offers as a ghost (docs/ghost.md).
+   */
+  route?: RideRouteInfo;
 }
 
 /** Exposed by the preload script as `window.freilauf` in both windows. */

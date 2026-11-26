@@ -2,7 +2,7 @@ import type { BikeParams } from '@freilauf/sim';
 import { stepBike } from '@freilauf/sim';
 import type { EnergyTotals } from './energy';
 import { EnergyAccumulator } from './energy';
-import type { RecordedRide, RideSample, RideSnapshot, RoutePositionFix } from './types';
+import type { RecordedRide, RideRoute, RideSample, RideSnapshot, RoutePositionFix } from './types';
 
 export interface RideSessionOptions {
   bike: BikeParams;
@@ -64,6 +64,7 @@ export class RideSession {
   #sampleTimeS = 0;
   #samples: RideSample[] = [];
   #positionAt: ((distanceM: number) => RoutePositionFix | null) | null = null;
+  #route: (() => RideRoute | null) | null = null;
   readonly #ftpW: number | null;
   readonly #energy: EnergyAccumulator;
 
@@ -129,6 +130,14 @@ export class RideSession {
     this.#positionAt = positionAt;
   }
 
+  /**
+   * Names the route the ride follows (RecordedRide.route); read each time the ride is saved, so
+   * segments added by jumps are included. null = none.
+   */
+  setRouteSource(route: (() => RideRoute | null) | null): void {
+    this.#route = route;
+  }
+
   get state(): RideSnapshot['state'] {
     return this.#state;
   }
@@ -174,6 +183,7 @@ export class RideSession {
       startedAt: this.#startedAt || this.#now(),
       riderMassKg: this.#riderMassKg,
       ...(this.#ftpW !== null ? { ftpW: this.#ftpW } : {}),
+      ...this.#routeInfo(),
       samples: [...this.#samples],
     };
   }
@@ -231,6 +241,11 @@ export class RideSession {
         this.#sampleTimeS = 0;
       }
     }
+  }
+
+  #routeInfo(): { route?: RideRoute } {
+    const r = this.#route?.();
+    return r ? { route: { ...r, offsetsM: [...r.offsetsM] } } : {};
   }
 
   #position(): Partial<Pick<RideSample, 'lat' | 'lon' | 'altitudeM' | 'segment'>> {

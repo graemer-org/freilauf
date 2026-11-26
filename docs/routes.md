@@ -132,7 +132,8 @@ GPX file instead.
 A ride along a route records your position and elevation on the route. The `.fit` export carries
 GPS positions and altitude, so upload sites show the map, the elevation profile and the climbing.
 It is marked as a **virtual ride**. The built-in routes are placed in the open Pacific Ocean so they
-never pretend to be somewhere real.
+never pretend to be somewhere real. The ride file on this computer also names the route it
+followed, so the ride can be raced as a ghost later ([ghost.md](ghost.md)).
 
 ## Where routes are kept
 

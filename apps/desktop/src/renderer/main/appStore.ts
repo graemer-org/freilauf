@@ -15,6 +15,7 @@ import type { StoreApi } from 'zustand/vanilla';
 import type {
   DeepPartial,
   FtpTestOutcome,
+  GhostChoice,
   FreilaufApi,
   LiveState,
   PickerDevice,
@@ -58,6 +59,17 @@ import type { GroupMode } from '../../shared/powerUps';
 import { decodeWorkout } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
 import type { RouteTrack } from '@freilauf/routes';
+import { matchTrackToRoute, routeBaseId } from '@freilauf/routes';
+import type { GhostTrace, RecordedRide } from '@freilauf/session';
+import { decodeFitTrack, downsampleTrace, rideGhost, rideRouteInfo } from '@freilauf/session';
+import type { GhostCandidate, GhostResult } from '../core/ghost';
+import {
+  bestGhost,
+  clockTime,
+  ghostCandidates,
+  ghostLabel,
+  resolveGhostChoice,
+} from '../core/ghost';
 import { RouteLibrary } from '../core/routeLibrary';
 import type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
 import { decodeSharedRoutes, shareRouteInGroup } from '../core/routeSharing';
@@ -187,7 +199,46 @@ export interface AppState {
   groupPowerUps?: boolean;
   /** The host's choice: how the group ride this rider creates plays (default normal). */
   groupMode?: GroupMode;
+  /** The ghost rider of the selected route (docs/ghost.md); absent = none. */
+  ghost?: GhostState;
 }
+
+/** What the start screen offers and the next ride races as a ghost. */
+export interface GhostState {
+  /** routeBaseId of the selected route; null without a route (no ghost on a free ride). */
+  routeId: string | null;
+  /** Earlier rides of the route that can be raced, newest first. */
+  candidates: GhostCandidate[];
+  /** The fastest full ride among them, if any. */
+  bestRideId: string | null;
+  /** The choice in effect: remembered per route, or 'import' while a ride file is used. */
+  choice: GhostChoice | 'import';
+  /** What the next ride races; null = no ghost. */
+  active: {
+    kind: 'best' | 'last' | 'ride' | 'import';
+    rideId: string | null;
+    label: string;
+  } | null;
+  /** A ride file imported for this route (kept in memory only, never stored). */
+  imported: { name: string; label: string; note: string | null } | null;
+  loading: boolean;
+  /** Why the last import or load failed, in plain words. */
+  error: string | null;
+}
+
+export const NO_GHOST: GhostState = {
+  routeId: null,
+  candidates: [],
+  bestRideId: null,
+  choice: 'best',
+  active: null,
+  imported: null,
+  loading: false,
+  error: null,
+};
+
+/** Ghost traces kept in memory (from stored rides), most recently used last. */
+const GHOST_CACHE_SIZE = 8;
 
 export interface LeverPositionsState {
   left: number;
@@ -400,6 +451,7 @@ export class App {
     watchRelay: { state: 'off' },
     groupPowerUps: true,
     groupMode: 'normal',
+    ghost: NO_GHOST,
   });
 
   readonly #api: FreilaufApi;
@@ -432,6 +484,12 @@ export class App {
   #groupPeers = new Set<string>();
   /** At least one other rider was in the group at some point during the current ride. */
   #rideHadCompany = false;
+  /** Ghost traces of stored rides by ride id (memory only; see GHOST_CACHE_SIZE). */
+  #ghostTraces = new Map<string, GhostTrace | null>();
+  /** The imported ride file's trace, for the route it was matched to (memory only). */
+  #importedGhost: { routeId: string; trace: GhostTrace } | null = null;
+  /** Increases with every ghost refresh, so a slow load cannot overwrite a newer choice. */
+  #ghostToken = 0;
 
   constructor(
     api: FreilaufApi,
@@ -502,6 +560,7 @@ export class App {
         this.store.setState({ settings: next });
         this.#community.setDisplayName(next.rider.name);
         this.#controller?.updateSettings(next);
+        void this.#refreshGhost();
       }),
       this.#api.overlay.onEditMode((overlayEditMode) => this.store.setState({ overlayEditMode })),
       this.#api.watchRelay.onStatus((watchRelay) => this.store.setState({ watchRelay })),
@@ -785,6 +844,8 @@ export class App {
         workoutName: before.live?.workout?.name ?? null,
         routeName: before.routeTrack?.name ?? null,
         rider: before.settings?.rider ?? null,
+        ghost: finished?.ghost ?? null,
+        routeTime: routeTimeOf(finished?.ride ?? null, before.ghost?.candidates ?? []),
         powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
         rumble:
           finished?.powerUps?.mode === 'rumble'
@@ -940,6 +1001,7 @@ export class App {
       return false;
     }
     this.store.setState({ selectedRouteId: id, routeTrack: found?.track ?? null });
+    void this.#refreshGhost();
     return true;
   }
 
@@ -1111,6 +1173,168 @@ export class App {
     } catch (err) {
       this.notify('error', `Could not list rides: ${errorMessage(err)}`);
     }
+    await this.#refreshGhost();
+  }
+
+  // ───────────── ghost rider (docs/ghost.md) ─────────────
+
+  /** Chooses the ghost for the selected route ('best', 'last', 'ride:<id>', 'none'); remembered. */
+  async chooseGhost(choice: GhostChoice): Promise<void> {
+    const routeId = this.#ghostState().routeId;
+    if (routeId === null || (this.#controller?.rideState ?? 'idle') !== 'idle') return;
+    this.#importedGhost = null;
+    this.#ghostLog.info('ghost chosen', { choice: choice.startsWith('ride:') ? 'ride' : choice });
+    await this.updateSettings({ ghost: { sources: { [routeId]: choice } } });
+    await this.#refreshGhost(choice);
+  }
+
+  /** The ghost switch (Settings and the start screen). */
+  async setGhostEnabled(on: boolean): Promise<void> {
+    await this.updateSettings({ ghost: { enabled: on } });
+    await this.#refreshGhost();
+  }
+
+  /**
+   * Imports a ride file (.fit) as the ghost of the selected route: placed on the route by its
+   * GPS track (Freilauf's .fit files have no route id; positions decide). Kept in memory only.
+   * Returns null, or why it cannot be used.
+   */
+  async importGhost(bytes: Uint8Array, fileName: string): Promise<string | null> {
+    const track = this.store.getState().routeTrack;
+    if (!track) return 'Choose a route first: a ghost races you along a route.';
+    if ((this.#controller?.rideState ?? 'idle') !== 'idle') {
+      return 'Finish the current ride before changing the ghost.';
+    }
+    const fail = (reason: string): string => {
+      this.#ghostLog.info('ghost file refused', { bytes: bytes.byteLength, reason });
+      this.store.setState({ ghost: { ...this.#ghostState(), error: reason } });
+      return reason;
+    };
+    const decoded = decodeFitTrack(bytes);
+    if (!decoded.ok) return fail(decoded.reason);
+    const positioned = decoded.points.flatMap((p) =>
+      p.lat !== undefined && p.lon !== undefined
+        ? [{ timeS: p.timeS, lat: p.lat, lon: p.lon }]
+        : [],
+    );
+    const matched = matchTrackToRoute(track, positioned);
+    if (!matched.ok) return fail(matched.reason);
+    const trace = downsampleTrace(matched.points);
+    const routeId = routeBaseId(track.id);
+    this.#importedGhost = { routeId, trace };
+    const name = cleanFileName(fileName);
+    const L = track.totalDistanceM;
+    const whole = matched.fromM <= 50 + (track.loop ? Math.floor(matched.fromM / L) * L : 0);
+    const part = matched.toM - matched.fromM;
+    const note =
+      part >= L - 60 && whole
+        ? null
+        : `Follows ${(part / 1000).toFixed(1)} of ${(L / 1000).toFixed(1)} km of the route`;
+    const label = `${name} · ${clockTime((trace.timeS.at(-1) ?? 0) - (trace.timeS[0] ?? 0))}`;
+    this.#ghostLog.info('ghost file imported', {
+      bytes: bytes.byteLength,
+      points: trace.distanceM.length,
+      share: Math.round(matched.share * 100) / 100,
+      meanOffM: Math.round(matched.meanOffM),
+      partKm: Math.round(part / 100) / 10,
+    });
+    this.store.setState({
+      ghost: { ...this.#ghostState(), imported: { name, label, note }, error: null },
+    });
+    await this.#refreshGhost('import');
+    return null;
+  }
+
+  #ghostState(): GhostState {
+    return this.store.getState().ghost ?? NO_GHOST;
+  }
+
+  get #ghostLog(): ScopedLog {
+    return this.#logger.scope('ghost');
+  }
+
+  /**
+   * Works out the ghost of the selected route from the ride history and the remembered choice,
+   * loads its trace (from the stored ride) and hands it to the controller. Never during a ride.
+   */
+  async #refreshGhost(choiceNow?: GhostChoice | 'import'): Promise<void> {
+    const s = this.store.getState();
+    const g = this.#ghostState();
+    if ((this.#controller?.rideState ?? 'idle') !== 'idle') return;
+    const track = s.routeTrack;
+    const token = ++this.#ghostToken;
+    if (!track) {
+      this.#importedGhost = null;
+      this.#controller?.setGhost(null);
+      if (g !== NO_GHOST) this.store.setState({ ghost: NO_GHOST });
+      return;
+    }
+    const routeId = routeBaseId(track.id);
+    const shape = { lengthM: track.totalDistanceM, loop: track.loop };
+    const settings = s.settings?.ghost;
+    const enabled = settings?.enabled !== false;
+    const candidates = ghostCandidates(s.rides, routeId);
+    const bestRideId = bestGhost(candidates)?.rideId ?? null;
+    const sameRoute = g.routeId === routeId;
+    if (this.#importedGhost && this.#importedGhost.routeId !== routeId) this.#importedGhost = null;
+    const imported = this.#importedGhost && sameRoute ? g.imported : null;
+    const choice: GhostChoice | 'import' =
+      choiceNow ??
+      (imported && g.choice === 'import' ? 'import' : (settings?.sources[routeId] ?? 'best'));
+    const base: GhostState = {
+      routeId,
+      candidates,
+      bestRideId,
+      choice,
+      active: null,
+      imported,
+      loading: false,
+      error: choiceNow === undefined && sameRoute ? g.error : null,
+    };
+    if (enabled && choice === 'import' && this.#importedGhost && imported) {
+      const ok = this.#controller?.setGhost({
+        routeId,
+        trace: this.#importedGhost.trace,
+        label: imported.label,
+      });
+      this.store.setState({
+        ghost: {
+          ...base,
+          active: ok ? { kind: 'import', rideId: null, label: imported.label } : null,
+        },
+      });
+      return;
+    }
+    const resolved = resolveGhostChoice(choice === 'import' ? 'best' : choice, candidates, enabled);
+    if (resolved.kind === 'none') {
+      this.#controller?.setGhost(null);
+      this.store.setState({ ghost: base });
+      return;
+    }
+    const rideId = resolved.ride.rideId;
+    const label = ghostLabel(resolved, shape);
+    let trace = this.#ghostTraces.get(rideId);
+    if (trace === undefined) {
+      this.store.setState({ ghost: { ...base, loading: true } });
+      const ride = await this.#api.rides.load(rideId).catch(() => null);
+      trace = ride ? (rideGhost(ride)?.trace ?? null) : null;
+      this.#ghostTraces.set(rideId, trace);
+      while (this.#ghostTraces.size > GHOST_CACHE_SIZE) {
+        this.#ghostTraces.delete(this.#ghostTraces.keys().next().value!);
+      }
+      if (token !== this.#ghostToken) return; // a newer choice or route meanwhile
+    }
+    if (!trace) {
+      this.#controller?.setGhost(null);
+      this.store.setState({
+        ghost: { ...base, error: 'That ride could not be read as a ghost.' },
+      });
+      return;
+    }
+    const ok = this.#controller?.setGhost({ routeId, trace, label }) ?? false;
+    this.store.setState({
+      ghost: { ...base, active: ok ? { kind: resolved.kind, rideId, label } : null },
+    });
   }
 
   async exportFit(id: string): Promise<void> {
@@ -1130,7 +1354,10 @@ export class App {
         return false;
       },
     );
-    if (deleted) this.#community.removeRide(id);
+    if (deleted) {
+      this.#community.removeRide(id);
+      this.#ghostTraces.delete(id);
+    }
     await this.refreshRides();
   }
 
@@ -1663,4 +1890,28 @@ export class App {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** A file name as a ghost's name: without folders and extension, bounded. */
+function cleanFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? '';
+  const stem = base
+    .replace(/\.[A-Za-z0-9]{1,5}$/, '')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim();
+  return (stem || 'Imported ride').slice(0, 40);
+}
+
+/**
+ * This ride's time for the whole route and the best before it (from the ride history), for
+ * the summary's "new best time" line; null when the ride did not cover the whole route.
+ */
+function routeTimeOf(
+  ride: RecordedRide | null,
+  earlier: readonly GhostCandidate[],
+): { timeS: number; previousS: number | null } | null {
+  const info = ride ? rideRouteInfo(ride) : null;
+  if (!info || info.fullTimeS === null) return null;
+  const previous = bestGhost(earlier.filter((c) => c.rideId !== ride!.id))?.fullTimeS ?? null;
+  return { timeS: info.fullTimeS, previousS: previous };
 }
