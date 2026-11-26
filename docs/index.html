@@ -6,7 +6,7 @@
     <title>Freilauf — indoor cycling without the virtual world</title>
     <meta
       name="description"
-      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, GPX routes, structured workouts, a stats overlay over your own video, and peer-to-peer group rides with a playful race mode. No account, no telemetry."
+      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, GPX routes, a ghost rider, structured workouts, a stats overlay over your own video, and peer-to-peer group rides with a playful race mode. No account, no telemetry."
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f3f3f6" media="(prefers-color-scheme: light)" />
@@ -85,8 +85,9 @@
           <p class="lede">
             Your own video, your friends, your data. Freilauf connects your smart trainer, shifts
             gears in software and puts your numbers over whatever is on your screen. Ride a free
-            ride, a GPX route or a structured workout, alone or with friends. It starts in seconds,
-            needs no account, and keeps every ride on your machine.
+            ride, a GPX route — against your own ghost, if you like — or a structured workout, alone
+            or with friends. It starts in seconds, needs no account, and keeps every ride on your
+            machine.
           </p>
           <div class="actions">
             <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf"
@@ -109,7 +110,7 @@
                 width="1920"
                 height="1080"
                 fetchpriority="high"
-                alt="The ride view during an 8 % climb, filling the window: a large power reading with calories, an animated rider on a tilted road with an elevation profile, cadence, speed, gear 12 of 24, time, distance and heart rate, and a quiet toolbar with device status, Group and Overlay."
+                alt="The ride view during an 8 % climb, filling the window: a large, smoothed power reading with average power, W/kg and calories, an animated rider on a tilted road with an elevation profile, cadence, speed, gear 12 of 24, time, distance and heart rate, and a quiet toolbar with device status and battery levels, Group and Overlay."
               />
             </picture>
             <figcaption>
@@ -186,9 +187,57 @@
                 height="1080"
                 loading="lazy"
                 decoding="async"
-                alt="Riding the built-in Punchy circuit: the road seen from behind the rider, bending left, with elevation profiles of the whole loop and of the next few hundred metres, a mini map, the distance to go, the climbing left and the lap."
+                alt="Riding the built-in Punchy circuit: the road seen from behind the rider, running gently downhill, with elevation profiles of the whole loop and of the next few hundred metres, a mini map, the distance to go, the climbing left and the lap."
               />
             </picture>
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>The real surroundings, if you want them</h3>
+              <p>
+                On request, Freilauf loads what lies beside an imported route from OpenStreetMap —
+                houses, woods, fields, rivers, town signs and bridges — once, and keeps it next to
+                the route; every ride after that stays offline. It is off by default: tick the
+                option when importing, or load it later from the route's details. The map server
+                only learns roughly where the route runs.
+              </p>
+              <p class="small">
+                Map data © OpenStreetMap contributors, under the ODbL; the scene shows this whenever
+                it draws them.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/surroundings.webp"
+              width="1280"
+              height="720"
+              loading="lazy"
+              decoding="async"
+              alt="Riding an imported route through a village: simple shaded houses with pitched roofs line both sides of the road ahead, a strip of river at the right edge, and the label ‘© OpenStreetMap contributors’ at the bottom of the scene."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>Race your ghost</h3>
+              <p>
+                On a route, race your best time, your last ride, any earlier ride or a friend's
+                <code>.fit</code> file. The ghost rides along as a translucent rider, a chip shows
+                the gap in metres and seconds, and the summary says who won. It only watches: your
+                recording, your <code>.fit</code> file and the trainer are the same with or without
+                it. Works alone, with no network.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/ghost.webp"
+              width="1280"
+              height="720"
+              loading="lazy"
+              decoding="async"
+              alt="Racing a ghost on the built-in Punchy circuit: a translucent rider labelled ‘Ghost · 3 m’ just ahead on the road, and a chip in the corner of the scene reading ‘−3 m · −0.6 s’ in red."
+            />
           </div>
 
           <div class="feature">
@@ -243,6 +292,20 @@
                 Smart trainers over standard Bluetooth FTMS, heart-rate straps, and the handlebar
                 controllers of a smart frame — every button and both levers. Dropped links reconnect
                 on their own.
+              </p>
+            </li>
+            <li>
+              <h3>Battery levels</h3>
+              <p>
+                The strap, each controller grip and trainers that report one show their battery in
+                the top bar, turning orange and red when low, with a notice as the ride starts.
+              </p>
+            </li>
+            <li>
+              <h3>A calm power number</h3>
+              <p>
+                The big reading shows the last 3 seconds (off, 1, 3 or 5 s in Settings); the
+                recording, the <code>.fit</code> file and ERG always use the measured power.
               </p>
             </li>
             <li>
@@ -409,7 +472,8 @@
               <h3>No backend, no telemetry</h3>
               <p>
                 Rides, settings and workouts are files on your machine. No analytics, no crash
-                reporting, no update pings; only a group ride you join talks to the network.
+                reporting, no update pings. Only a group ride you join talks to the network — and a
+                map server, once, if you ask for a route's surroundings.
               </p>
             </li>
             <li>
@@ -471,6 +535,16 @@
               practice on a real trainer.
             </li>
             <li class="open">The Docker image on a real NAS, and macOS in general.</li>
+          </ul>
+          <h3>Tested in simulation only</h3>
+          <ul class="checks" role="list">
+            <li class="open">
+              The ghost rider, power smoothing, and battery levels — not yet read from real devices.
+            </li>
+            <li class="open">
+              Surroundings from OpenStreetMap: tested with recorded and made-up map data and a fake
+              local server; loading from the real public map server has not been tried yet.
+            </li>
           </ul>
           <p>
             <strong>Installers</strong> are unsigned for now, so Windows and macOS will warn before
@@ -589,14 +663,21 @@
                     href="https://github.com/graemer-org/freilauf/blob/main/docs/getting-started.md"
                     >Getting started</a
                   >
-                  — build or install, the start screen, the countdown, pairing, the overlay,
-                  simulation mode
+                  — build or install, the start screen, the countdown, pairing, battery levels,
+                  power smoothing, the overlay, simulation mode
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/routes.md"
                     >Riding real routes</a
                   >
-                  — GPX files, the road view, jumping, climb difficulty
+                  — GPX files, the road view, jumping, climb difficulty, surroundings from
+                  OpenStreetMap
+                </li>
+                <li>
+                  <a href="https://github.com/graemer-org/freilauf/blob/main/docs/ghost.md"
+                    >The ghost rider</a
+                  >
+                  — race an earlier ride or a friend's ride file
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/group-rides.md"
@@ -673,6 +754,18 @@
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/releasing.md"
                     >Releasing: installers and the release workflow</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/adr/0010-ghost-rider.md"
+                    >Ghost rider decisions (ADR 0010)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/adr/0011-osm-scenery.md"
+                    >OpenStreetMap surroundings decisions (ADR 0011)</a
                   >
                 </li>
                 <li>
