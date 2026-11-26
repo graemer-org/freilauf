@@ -373,6 +373,42 @@ describe('createSimulatedRig', () => {
   });
 });
 
+describe('simulated battery levels', () => {
+  it('gives the rig HR and controller batteries, none for the trainer', () => {
+    const rig = createSimulatedRig();
+    expect(rig.trainer.battery).toBeNull();
+    expect(rig.heartRate.battery).toMatchObject({ percent: 64, source: 'battery-service' });
+    expect(rig.controller.battery).toMatchObject({
+      percent: 12,
+      left: 81,
+      right: 12,
+      source: 'controller-protocol',
+    });
+  });
+
+  it('lets tests set, clamp and remove levels, per grip or as a whole', () => {
+    const controller = new SimulatedController({ battery: { left: 50, right: 60 } });
+    const seen: number[] = [];
+    controller.onBattery((b) => seen.push(b.percent));
+    controller.setBattery(140, 'right');
+    expect(controller.battery).toMatchObject({ percent: 50, left: 50, right: 100 });
+    controller.setBattery(null, 'left');
+    expect(controller.battery).toMatchObject({ percent: 100, right: 100 });
+    expect(controller.battery?.left).toBeUndefined();
+    controller.setBattery(7);
+    expect(controller.battery).toMatchObject({ percent: 7 });
+    expect(controller.battery?.right).toBeUndefined();
+    controller.setBattery(null);
+    expect(controller.battery).toBeNull();
+    expect(seen).toEqual([50, 100, 7]);
+
+    const hr = new SimulatedHeartRate();
+    expect(hr.battery).toBeNull();
+    hr.setBattery(33);
+    expect(hr.battery?.percent).toBe(33);
+  });
+});
+
 describe('createSeededRandom', () => {
   it('is repeatable and in [0, 1)', () => {
     const a = createSeededRandom(123);

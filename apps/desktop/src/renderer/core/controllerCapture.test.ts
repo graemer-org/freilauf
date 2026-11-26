@@ -106,14 +106,16 @@ describe('ControllerCapture', () => {
     const c = new ControllerCapture({ log, raw: true, now: () => 0 });
     c.frame({ characteristic: 'syncTx', bytes: new Uint8Array([...ZWIFT_HANDSHAKE, 0x01, 0x02]) });
     c.frame({ characteristic: 'async', bytes: new Uint8Array([0x19, 0x10, 0x50]) });
-    c.frame({ characteristic: 'async', bytes: new Uint8Array([0x19, 0x10, 0x50]) });
-    c.battery(80); // same value via the driver event: not repeated
+    c.frame({ characteristic: 'async', bytes: new Uint8Array([0x19, 0x08, 0x01, 0x10, 0x0c]) });
     const messages = lines.map((l) => l.message);
     expect(messages).toContain('handshake answer (RideOn…) on sync TX');
     expect(lines.find((l) => l.message.startsWith('handshake'))!.context).toMatchObject({
       ascii: 'RideOn..',
     });
     expect(messages.filter((m) => m === 'battery 80%')).toHaveLength(1);
+    expect(lines.find((l) => l.message === 'battery right 12%')!.context).toMatchObject({
+      hex: '19 08 01 10 0c',
+    });
     expect(messages.filter((m) => m.startsWith('raw async'))).toHaveLength(2);
   });
 });

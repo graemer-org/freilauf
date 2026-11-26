@@ -25,13 +25,32 @@ export interface SimulatedRig {
   dispose(): Promise<void>;
 }
 
-/** Trainer + HR strap + controller, with the heart rate following the trainer's power. */
+/** Battery levels of the rig's devices unless the options say otherwise (the trainer has none). */
+export const DEFAULT_SIM_BATTERY = {
+  heartRate: { percent: 64 },
+  controller: { left: 81, right: 12 },
+} as const;
+
+/**
+ * Trainer + HR strap + controller, with the heart rate following the trainer's power. The HR
+ * strap and the controllers report battery levels (DEFAULT_SIM_BATTERY); change them with
+ * each device's setBattery().
+ */
 export function createSimulatedRig(options: SimulatedRigOptions = {}): SimulatedRig {
   const seed = options.seed ?? 1;
   const shared = options.scheduler ? { scheduler: options.scheduler } : {};
   const trainer = new SimulatedTrainer({ ...shared, seed, ...options.trainer });
-  const heartRate = new SimulatedHeartRate({ ...shared, seed: seed + 1, ...options.heartRate });
-  const controller = new SimulatedController({ ...shared, ...options.controller });
+  const heartRate = new SimulatedHeartRate({
+    ...shared,
+    seed: seed + 1,
+    battery: { ...DEFAULT_SIM_BATTERY.heartRate },
+    ...options.heartRate,
+  });
+  const controller = new SimulatedController({
+    ...shared,
+    battery: { ...DEFAULT_SIM_BATTERY.controller },
+    ...options.controller,
+  });
 
   const subscriptions: Unsubscribe[] = [
     trainer.onData((d) => heartRate.setPower(d.powerW ?? 0)),

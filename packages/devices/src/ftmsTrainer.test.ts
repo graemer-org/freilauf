@@ -13,6 +13,8 @@ import {
 import type { FakeWrite } from './testing/fakeGatt';
 import type { SimulationParams, TrainerData } from './types';
 import {
+  BATTERY_LEVEL,
+  BATTERY_SERVICE,
   CYCLING_POWER_MEASUREMENT,
   CYCLING_POWER_SERVICE,
   FTMS_CONTROL_POINT,
@@ -30,7 +32,7 @@ const SIM_HEX = '11 00 00 f4 01 28 33';
 
 const ok = (w: FakeWrite) => `80 ${toHex(w.data.subarray(0, 1))} 01`;
 
-function setup(options: { services?: string[]; autoRespond?: boolean } = {}) {
+function setup(options: { services?: string[]; autoRespond?: boolean; battery?: boolean } = {}) {
   const peripheral = new FakePeripheral({
     services: options.services ?? [FTMS_SERVICE],
     name: 'KICKR',
@@ -38,7 +40,12 @@ function setup(options: { services?: string[]; autoRespond?: boolean } = {}) {
   if (options.autoRespond !== false)
     peripheral.respondToWrites(FTMS_SERVICE, FTMS_CONTROL_POINT, ok);
   const clock = new FakeScheduler();
-  const trainer = new FtmsTrainer(peripheral, { schedule: clock.schedule, now: clock.now });
+  // Battery reading is off unless asked for: its timers would show up in pendingDelays.
+  const trainer = new FtmsTrainer(peripheral, {
+    schedule: clock.schedule,
+    now: clock.now,
+    ...(options.battery ? {} : { battery: false as const }),
+  });
   const data: TrainerData[] = [];
   trainer.onData((d) => data.push(d));
   const cpWrites = () => peripheral.writesTo(FTMS_CONTROL_POINT).map((w) => toHex(w.data));
@@ -291,8 +298,10 @@ describe('FtmsTrainer', () => {
 
   describe('control point timing on Windows (indication before the write resolves)', () => {
     /** Writes answer after `respondMs` and resolve after `resolveMs`; Chromium rejects overlapping writes. */
-    function windowsSetup(respondMs: number, resolveMs: number) {
-      const rig = setup();
+    function windowsSetup(respondMs: number, resolveMs: number, battery = false) {
+      const rig = battery
+        ? setup({ services: [FTMS_SERVICE, BATTERY_SERVICE], battery: true })
+        : setup();
       rig.peripheral.setWriteBehavior(FTMS_SERVICE, FTMS_CONTROL_POINT, {
         schedule: rig.clock.schedule,
         respondAfterMs: respondMs,
@@ -325,6 +334,28 @@ describe('FtmsTrainer', () => {
       expect(peripheral.rejectedWrites).toEqual([]);
       expect(diags).not.toContain('cp-write-failed');
       expect(cpWrites()).toEqual(['00', simHex(-1.66), simHex(-1.08)]);
+    });
+
+    it('reads the battery beside the control point without disturbing it', async () => {
+      const { trainer, peripheral, clock, cpWrites, diags } = windowsSetup(100, 101, true);
+      peripheral.setValue(BATTERY_SERVICE, BATTERY_LEVEL, '57');
+      const connecting = trainer.connect();
+      await clock.advance(200);
+      await connecting;
+      // Shifting through the moment the battery is first read (2 s after connecting).
+      const results: Array<Promise<unknown>> = [];
+      for (let i = 0; i < 8; i++) {
+        results.push(trainer.setSimulation(sim(i)).catch((e: unknown) => e));
+        await clock.advance(300);
+      }
+      await clock.advance(1000);
+      expect(await Promise.all(results)).toEqual(Array(8).fill(undefined));
+      expect(peripheral.rejectedWrites).toEqual([]);
+      expect(diags).not.toContain('cp-write-failed');
+      expect(cpWrites()[0]).toBe('00');
+      expect(trainer.battery).toMatchObject({ percent: 87, source: 'battery-service' });
+      // Battery operations never write to the control point.
+      expect(peripheral.writes.every((w) => w.characteristic === FTMS_CONTROL_POINT)).toBe(true);
     });
 
     it('serializes a burst of 10 shifts within 500 ms; the last parameters win, nothing is rejected', async () => {

@@ -97,6 +97,29 @@ export class DeviceMonitor {
       );
     }
 
+    // Every battery change, from the Battery Service or the controllers' own message.
+    if (device.onBattery) {
+      w.off.push(
+        device.onBattery((b) => {
+          const sides =
+            b.left !== undefined || b.right !== undefined
+              ? [
+                  b.left !== undefined ? `left ${b.left}%` : null,
+                  b.right !== undefined ? `right ${b.right}%` : null,
+                ]
+                  .filter(Boolean)
+                  .join(', ')
+              : `${b.percent}%`;
+          this.#log.info(`${label}: battery ${sides}`, {
+            percent: b.percent,
+            ...(b.left !== undefined ? { left: b.left } : {}),
+            ...(b.right !== undefined ? { right: b.right } : {}),
+            source: b.source,
+          });
+        }),
+      );
+    }
+
     const packet = (values: Record<string, number | undefined>) => {
       w.packets++;
       for (const [k, v] of Object.entries(values)) if (v !== undefined) w.last[k] = v;

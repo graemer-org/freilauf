@@ -1767,7 +1767,11 @@ function round(n: number, digits: number): number {
 }
 
 function status(device: Device | undefined): DeviceStatus | null {
-  return device ? { name: device.name, state: device.state } : null;
+  if (!device) return null;
+  const battery = device.battery;
+  return battery
+    ? { name: device.name, state: device.state, battery }
+    : { name: device.name, state: device.state };
 }
 
 /** The energy estimates as published in the live state (docs/energy.md). */

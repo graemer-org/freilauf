@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FakePeripheral, FakeScheduler, flushPromises, toHex } from './testing/fakeGatt';
+import { BATTERY_LEVEL, BATTERY_SERVICE } from './uuids';
 import type { ControllerButtonEvent } from './types';
 import {
   ZWIFT_ASYNC_CHARACTERISTIC,
@@ -13,9 +14,10 @@ const IDLE = '2308ffffffff0f';
 // shiftDownRight (0x2000) cleared: ~0x2000 = 0xffffdfff → varint ff bf ff ff 0f
 const SHIFT_DOWN_RIGHT = '2308ffbfffff0f';
 
-async function setup(service = ZWIFT_RIDE_SERVICE) {
+async function setup(service = ZWIFT_RIDE_SERVICE, extra: string[] = []) {
   const scheduler = new FakeScheduler();
-  const peripheral = new FakePeripheral({ services: [service] });
+  const peripheral = new FakePeripheral({ services: [service, ...extra] });
+  if (extra.includes(BATTERY_SERVICE)) peripheral.setValue(BATTERY_SERVICE, BATTERY_LEVEL, '4b');
   const controller = new ZwiftRideController(peripheral, { schedule: scheduler.schedule });
   const events: ControllerButtonEvent[] = [];
   controller.onButton((e) => events.push(e));
@@ -50,7 +52,7 @@ describe('ZwiftRideController', () => {
     const raw: string[] = [];
     const battery: number[] = [];
     controller.onRawFrame((f) => raw.push(toHex(f.bytes)));
-    controller.onBattery((p) => battery.push(p));
+    controller.onBattery((b) => battery.push(b.percent));
     peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, '191055');
     peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, '2308ff');
     expect(battery).toEqual([85]);
@@ -89,5 +91,35 @@ describe('ZwiftRideController', () => {
     await flushPromises();
     expect(levers.at(-1)).toEqual({ side: 'right', value: 0 });
     expect(levers).toHaveLength(3); // the left lever was already at rest
+  });
+
+  it('reports the battery of the left and right grip separately', async () => {
+    const { peripheral, controller } = await setup();
+    // field 1 = location (0 left, 1 right), field 2 = level
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, '19 08 00 10 51');
+    expect(controller.battery).toMatchObject({ percent: 81, left: 81 });
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, '19 08 01 10 0c');
+    expect(controller.battery).toMatchObject({
+      percent: 12,
+      left: 81,
+      right: 12,
+      source: 'controller-protocol',
+    });
+  });
+
+  it('uses the Battery Service until its own battery message arrives', async () => {
+    const { peripheral, controller, scheduler } = await setup(ZWIFT_RIDE_SERVICE, [
+      BATTERY_SERVICE,
+    ]);
+    await scheduler.advance(2000);
+    expect(controller.battery).toMatchObject({ percent: 75, source: 'battery-service' });
+    peripheral.notify(ZWIFT_RIDE_SERVICE, ZWIFT_ASYNC_CHARACTERISTIC, '19 08 01 10 3c');
+    expect(controller.battery).toEqual(
+      expect.objectContaining({ percent: 60, right: 60, source: 'controller-protocol' }),
+    );
+    expect(controller.battery?.left).toBeUndefined();
+    // Later Battery Service values no longer override the per-grip levels.
+    peripheral.notify(BATTERY_SERVICE, BATTERY_LEVEL, '14');
+    expect(controller.battery?.percent).toBe(60);
   });
 });

@@ -3,6 +3,7 @@
  * overlay window. Types only (plus defaults) — importable from all three.
  */
 import type {
+  BatteryState,
   ConnectionState,
   ControllerButton,
   DeviceKind,
@@ -331,6 +332,12 @@ export type DeepPartial<T> = T extends readonly unknown[]
 export interface DeviceStatus {
   name: string;
   state: ConnectionState;
+  /**
+   * The device's last known battery level (percent = the lowest; left/right per
+   * controller grip; updatedAt = when the last reading arrived). Absent for a
+   * device without a battery level.
+   */
+  battery?: BatteryState;
 }
 
 /** The countdown lengths offered in Settings (0 = off). */

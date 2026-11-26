@@ -1,4 +1,5 @@
 import type { DeviceKind } from '@freilauf/devices';
+import { BatteryBadge } from './Battery';
 import { DEVICE_KINDS, DEVICE_LABEL, describeDevice } from './deviceStatus';
 import { formatDuration } from './format';
 import { useAppState } from './hooks';
@@ -19,6 +20,7 @@ function DeviceChip({ kind }: { kind: DeviceKind }) {
       <span className="status-mark" aria-hidden="true" />
       <span className="chip-label">{DEVICE_LABEL[kind]}</span>
       <span className="chip-text">{text}</span>
+      <BatteryBadge kind={kind} />
     </li>
   );
 }
@@ -107,6 +109,7 @@ function DeviceDot({ kind }: { kind: DeviceKind }) {
       <span className="dot-label" aria-hidden="true">
         {DOT_LABEL[kind]}
       </span>
+      <BatteryBadge kind={kind} />
     </span>
   );
 }

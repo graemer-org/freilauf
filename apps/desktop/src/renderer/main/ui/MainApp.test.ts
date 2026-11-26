@@ -235,6 +235,45 @@ describe('MainApp (SSR)', () => {
     expect(html).not.toContain('data-testid="ride-return-bar"');
   });
 
+  it('shows battery levels in the ride top bar and on the Devices screen', () => {
+    const at = Date.UTC(2026, 10, 26, 14, 32);
+    const live = liveState({
+      devices: {
+        trainer: { name: 'Sim trainer', state: 'connected' },
+        heartRate: {
+          name: 'Sim HR',
+          state: 'connected',
+          battery: { percent: 64, source: 'battery-service', updatedAt: at },
+        },
+        controller: {
+          name: 'Sim controller',
+          state: 'connected',
+          battery: {
+            percent: 8,
+            left: 81,
+            right: 8,
+            source: 'controller-protocol',
+            updatedAt: at,
+          },
+        },
+      },
+    });
+    const ride = renderScreen({ ...baseState(), simMode: true, live }, 'ride');
+    // No battery service on the trainer: no icon.
+    expect(ride).not.toContain('data-testid="battery-trainer"');
+    expect(ride).toMatch(/data-testid="battery-heartRate" data-percent="64" data-tone="normal"/);
+    expect(ride).toMatch(/data-testid="battery-controller" data-percent="8" data-tone="critical"/);
+    expect(ride).toContain('title="Controller battery: left 81\u00a0%, right 8\u00a0%"');
+    expect(ride).toContain('<span class="battery-side">R</span>');
+
+    const devices = renderScreen({ ...baseState(), simMode: true, live }, 'devices');
+    expect(devices).toContain('data-testid="battery-detail-heartRate-whole"');
+    expect(devices).toMatch(/data-testid="battery-detail-controller-left" data-tone="normal"/);
+    expect(devices).toMatch(/data-testid="battery-detail-controller-right" data-tone="critical"/);
+    expect(devices).not.toContain('data-testid="battery-detail-trainer"');
+    expect(devices).toContain('charge soon');
+  });
+
   it('shows a persistent way back to a ride in progress on every other screen', () => {
     for (const screen of ['start', 'settings', 'activity', 'devices', 'workouts'] as const) {
       const html = renderScreen({ ...baseState(), simMode: true, live: liveState() }, screen);

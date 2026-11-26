@@ -85,7 +85,15 @@ export type ZwiftRideMessage =
       /** The raw button bitmap (low 32 bits), for protocol captures. */
       bitmap: number;
     }
-  | { type: 'battery'; percent: number }
+  | {
+      type: 'battery';
+      percent: number;
+      /**
+       * Which grip, from field 1 when present (0 = left, 1 = right, as the lever
+       * locations). Unverified on hardware; absent = the controller as a whole.
+       */
+      side?: 'left' | 'right';
+    }
   | { type: 'idle' }
   | { type: 'unknown'; messageType: number };
 
@@ -134,7 +142,17 @@ export function parseZwiftRideMessage(data: DataView): ZwiftRideMessage | null {
       const fields = decodeProtobuf(body);
       const level = fields?.find((f) => f.field === 2 && f.wire === 0);
       if (!level || level.wire !== 0) return { type: 'unknown', messageType };
-      return { type: 'battery', percent: Math.min(100, Number(level.value)) };
+      const percent = Math.min(100, Number(level.value));
+      const location = fields?.find((f) => f.field === 1 && f.wire === 0);
+      const side =
+        location?.wire === 0
+          ? location.value === 0n
+            ? 'left'
+            : location.value === 1n
+              ? 'right'
+              : undefined
+          : undefined;
+      return side ? { type: 'battery', percent, side } : { type: 'battery', percent };
     }
     case ZwiftMessageType.idle:
       return { type: 'idle' };

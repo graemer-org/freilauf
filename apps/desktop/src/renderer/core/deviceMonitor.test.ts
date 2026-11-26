@@ -7,6 +7,7 @@ import {
   HEART_RATE_MEASUREMENT,
   HEART_RATE_SERVICE,
 } from '@freilauf/devices';
+import { SimulatedController, SimulatedHeartRate } from '@freilauf/sim';
 import type { ScopedLog } from './logger';
 import { DeviceMonitor, SUMMARY_INTERVAL_MS } from './deviceMonitor';
 
@@ -22,6 +23,31 @@ function recorder() {
 }
 
 describe('DeviceMonitor', () => {
+  it('logs every battery change, per grip for controllers', () => {
+    const { lines, log } = recorder();
+    const monitor = new DeviceMonitor(log, () => 0);
+    const hr = new SimulatedHeartRate();
+    const controller = new SimulatedController();
+    monitor.watch(hr);
+    monitor.watch(controller);
+    hr.setBattery(64);
+    controller.setBattery(81, 'left');
+    controller.setBattery(12, 'right');
+    const battery = lines.filter((l) => l.message.includes('battery'));
+    expect(battery.map((l) => l.message)).toEqual([
+      'heartRate "Simulated HR": battery 64%',
+      'controller "Simulated Controller": battery left 81%',
+      'controller "Simulated Controller": battery left 81%, right 12%',
+    ]);
+    expect(battery[2]!.context).toEqual({
+      percent: 12,
+      left: 81,
+      right: 12,
+      source: 'controller-protocol',
+    });
+    monitor.dispose();
+  });
+
   it('logs state transitions, the first packet and a periodic summary', async () => {
     let now = 1000;
     const { lines, log } = recorder();

@@ -54,6 +54,13 @@ First byte = message type, rest = protobuf.
 | `0x19` | Battery/status; field 2 (varint) = percent | low        |
 | `0x15` | Idle / empty                               | medium     |
 
+**Battery (`0x19`), as the app reads it (unverified):** field 2 = level in
+percent (clamped to 100), field 1 (if present) = which grip, 0 = left and
+1 = right like the lever locations; without field 1 the level counts for the
+controllers as a whole. Each grip is shown separately; once this message has
+arrived, a standard Battery Service level (if the controllers expose one) is
+no longer used. The capture logs every change with its hex.
+
 ### Keypad status (`0x23`)
 
 - Field 1, varint: button bitmap. **A cleared bit means pressed**; idle is

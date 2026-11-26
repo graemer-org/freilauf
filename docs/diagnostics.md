@@ -137,6 +137,18 @@ How to make a useful capture and how to read these lines is described in
 [protocols/zwift-ride.md → How to capture](protocols/zwift-ride.md#how-to-capture).
 With `FREILAUF_BLE_LOG=1` every raw frame is logged as well, uncollapsed.
 
+### Battery levels
+
+Every change of a device's battery level is logged as
+`heartRate "…": battery 64%` (controllers: `battery left 81%, right 12%`)
+with the source — `battery-service` (standard Battery Service) or
+`controller-protocol` (the controllers' own message, whose raw frame the
+controller capture logs with its hex as `battery right 12%`). Reading the
+battery never fails a connection: a device without the Battery Service logs
+`no battery service` (debug), a failed read or a level that cannot notify
+is logged at debug level (`battery-read-failed`, `battery-no-notify`) and
+read again later.
+
 ### Data summaries
 
 Instead of every packet, each connected device gets a `first data` line and
@@ -152,6 +164,7 @@ parameters, target power) are logged as `trainer ← …`, at most ten per 10 s
   locale and time zone, display sizes, positions and scale factors.
 - Device names and Bluetooth ids of the devices you use and of the devices
   the chooser saw nearby while you were pairing (needed to diagnose pairing).
+- Battery levels of the connected devices (percent, per controller grip).
 - Device protocol details: service and characteristic names, control point
   op codes and results, raw controller frames (hex), error names, messages
   and stack traces.
