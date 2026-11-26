@@ -1,3 +1,4 @@
+import type { BatteryState } from './battery';
 import type { Unsubscribe } from './emitter';
 
 // ───────────────────────── Transport layer ─────────────────────────
@@ -60,6 +61,13 @@ export interface Device {
   connect(): Promise<void>;
   /** Intentional disconnect; stops auto-reconnect. */
   disconnect(): Promise<void>;
+  /**
+   * The last known battery level; absent or null for devices without one
+   * (no Battery Service, mains powered). Kept while reconnecting.
+   */
+  readonly battery?: BatteryState | null;
+  /** Fires when the battery level changes. Optional: devices without a battery may omit it. */
+  onBattery?(listener: (state: BatteryState) => void): Unsubscribe;
 }
 
 /** One measurement from a trainer. Fields the trainer did not report are absent. */

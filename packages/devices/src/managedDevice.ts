@@ -1,3 +1,5 @@
+import { BatteryServiceReader, BatteryTracker } from './battery';
+import type { BatteryReading, BatteryServiceOptions, BatteryState } from './battery';
 import { createEmitter } from './emitter';
 import type { Unsubscribe } from './emitter';
 import { isTransientLinkError } from './transientErrors';
@@ -41,6 +43,13 @@ export interface ManagedDeviceOptions {
   schedule?: Schedule;
   backoff?: BackoffOptions;
   initialConnect?: InitialConnectOptions;
+  /**
+   * Standard Battery Service reading after each (re)connect (see
+   * BatteryServiceReader); false turns it off. Default on.
+   */
+  battery?: BatteryServiceOptions | false;
+  /** Clock for battery timestamps. Default Date.now. */
+  now?: () => number;
 }
 
 /** Delay before reconnect attempt number `attempt` (0-based). */
@@ -120,6 +129,11 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   private attempt = 0;
   private cancelRetry: (() => void) | null = null;
   private connecting: Promise<void> | null = null;
+  private readonly batteryOptions: BatteryServiceOptions | false;
+  private readonly clock: () => number;
+  private readonly batteryTracker = new BatteryTracker();
+  private readonly batteryEmitter = createEmitter<BatteryState>();
+  private batteryReader: BatteryServiceReader | null = null;
 
   constructor(peripheral: BlePeripheral, options: ManagedDeviceOptions = {}) {
     this.peripheral = peripheral;
@@ -130,6 +144,8 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
     this.initialAttempts = Math.max(1, options.initialConnect?.attempts ?? 3);
     const delays = options.initialConnect?.delaysMs ?? [500, 1000, 2000];
     this.initialDelaysMs = delays.length > 0 ? delays : [0];
+    this.batteryOptions = options.battery ?? {};
+    this.clock = options.now ?? Date.now;
   }
 
   /** Subscribe to characteristics, request control, etc. Throwing fails the attempt. */
@@ -149,6 +165,44 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
 
   onState(listener: (state: ConnectionState) => void): Unsubscribe {
     return this.stateEmitter.on(listener);
+  }
+
+  /** The last known battery level; null until one was read (or if the device has none). */
+  get battery(): BatteryState | null {
+    return this.batteryTracker.state;
+  }
+
+  /**
+   * Fires when a battery level changes (not for a repeated reading of the same
+   * value). Not a diagnostic event: the app's device monitor logs it.
+   */
+  onBattery(listener: (state: BatteryState) => void): Unsubscribe {
+    return this.batteryEmitter.on(listener);
+  }
+
+  /** For drivers whose protocol reports the battery itself (it then wins over the Battery Service). */
+  protected reportBattery(reading: BatteryReading): void {
+    const changed = this.batteryTracker.update(reading, this.clock());
+    if (!changed) return;
+    const state = this.batteryTracker.state!;
+    this.batteryEmitter.emit(state);
+  }
+
+  /** Starts reading the Battery Service of a link that has just become `connected`. */
+  private startBattery(): void {
+    this.batteryReader?.stop();
+    this.batteryReader = null;
+    const conn = this.conn;
+    if (!conn || this.batteryOptions === false) return;
+    const reader = new BatteryServiceReader(
+      conn,
+      this.schedule,
+      (percent) => this.reportBattery({ percent, source: 'battery-service' }),
+      (level, event, message, context) => this.diag(level, event, message, context),
+      this.batteryOptions,
+    );
+    this.batteryReader = reader;
+    reader.start();
   }
 
   /** Lifecycle and protocol steps for a diagnostic log. */
@@ -180,6 +234,7 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
         }
         this.attempt = 0;
         this.setState('connected');
+        this.startBattery();
       },
       (err: unknown) => {
         this.connecting = null;
@@ -309,6 +364,8 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
   }
 
   private releaseLink(): void {
+    this.batteryReader?.stop();
+    this.batteryReader = null;
     if (!this.conn) return;
     this.linkUnsub?.();
     this.linkUnsub = null;
@@ -345,6 +402,7 @@ export abstract class ManagedDevice<K extends DeviceKind> implements Device {
           if (gen !== this.generation) return;
           this.attempt = 0;
           this.setState('connected');
+          this.startBattery();
         },
         (failure: unknown) => {
           if (gen !== this.generation) return;

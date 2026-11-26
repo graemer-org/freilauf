@@ -66,6 +66,21 @@ describe('parseZwiftRideMessage', () => {
 
   it('decodes battery, idle and unknown messages', () => {
     expect(parseZwiftRideMessage(view(0x19, 0x10, 0x55))).toEqual({ type: 'battery', percent: 85 });
+    expect(parseZwiftRideMessage(view(0x19, 0x08, 0x00, 0x10, 0x51))).toEqual({
+      type: 'battery',
+      percent: 81,
+      side: 'left',
+    });
+    expect(parseZwiftRideMessage(view(0x19, 0x08, 0x01, 0x10, 0x0c))).toEqual({
+      type: 'battery',
+      percent: 12,
+      side: 'right',
+    });
+    // An unknown location is the controller as a whole; levels above 100 are clamped.
+    expect(parseZwiftRideMessage(view(0x19, 0x08, 0x05, 0x10, 0x7f))).toEqual({
+      type: 'battery',
+      percent: 100,
+    });
     expect(parseZwiftRideMessage(view(0x15))).toEqual({ type: 'idle' });
     expect(parseZwiftRideMessage(view(0x42, 1, 2, 3))).toEqual({
       type: 'unknown',

@@ -3,7 +3,7 @@ export type { SimScheduler, TimerHandle } from './clock';
 export { createSeededRandom, SmoothNoise } from './random';
 export type { RandomSource } from './random';
 export { SimulatedDevice } from './device-base';
-export type { SimulatedDeviceOptions } from './device-base';
+export type { SimulatedBattery, SimulatedDeviceOptions } from './device-base';
 export { SimulatedTrainer, DEFAULT_SIMULATION_PARAMS } from './trainer';
 export type {
   SimulatedTrainerOptions,
@@ -14,5 +14,5 @@ export { SimulatedHeartRate } from './heart-rate';
 export type { SimulatedHeartRateOptions } from './heart-rate';
 export { SimulatedController } from './controller';
 export type { SimulatedControllerOptions, PaddleSide } from './controller';
-export { createSimulatedRig } from './rig';
+export { createSimulatedRig, DEFAULT_SIM_BATTERY } from './rig';
 export type { SimulatedRig, SimulatedRigOptions } from './rig';

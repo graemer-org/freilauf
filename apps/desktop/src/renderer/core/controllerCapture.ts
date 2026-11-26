@@ -12,7 +12,9 @@
  * - Unknown message types: the first frame of each type in full, then counted
  *   (summary on flush()).
  * - Sync TX frames (handshake answers) are logged in full with an ASCII view.
- * - Battery: logged when the value changes.
+ * - Battery messages (0x19): logged with their hex when the value (or grip)
+ *   changes, so the still unverified layout can be checked. The decoded level
+ *   is logged by the device monitor like every device's battery.
  * - raw mode (FREILAUF_BLE_LOG=1): additionally every frame, uncollapsed.
  */
 import type { ControllerButton, RawFrame } from '@freilauf/devices';
@@ -53,7 +55,8 @@ export class ControllerCapture {
   /** Bits seen set at least once: the "idle" pattern, to spot unmapped presses. */
   #seenSet = 0;
   #lastPressed: ControllerButton[] = [];
-  #battery: number | null = null;
+  /** Last logged battery level per grip ('whole' when the message names none). */
+  readonly #battery = new Map<string, number>();
   readonly #unknownTypes = new Map<number, number>();
   readonly #reportedUnknown = new Map<number, number>();
   #unparseable = 0;
@@ -135,12 +138,14 @@ export class ControllerCapture {
         this.#log.info(`keypad ${h} → pressed ${what}`, context);
         return;
       }
-      case 'battery':
-        if (msg.percent !== this.#battery) {
-          this.#battery = msg.percent;
-          this.#log.info(`battery ${msg.percent}%`, { hex: h });
+      case 'battery': {
+        const side = msg.side ?? 'whole';
+        if (this.#battery.get(side) !== msg.percent) {
+          this.#battery.set(side, msg.percent);
+          this.#log.info(`battery ${msg.side ? `${msg.side} ` : ''}${msg.percent}%`, { hex: h });
         }
         return;
+      }
       case 'idle':
         return;
       case 'unknown': {
@@ -165,13 +170,6 @@ export class ControllerCapture {
       this.#log.debug(`previous frame repeated ${this.#repeat}×`, { hex: this.#lastAsync });
       this.#repeat = 0;
     }
-  }
-
-  battery(percent: number): void {
-    // Also reported by frame(); the driver's event is the decoded value.
-    if (percent === this.#battery) return;
-    this.#battery = percent;
-    this.#log.info(`battery ${percent}%`);
   }
 
   /** Writes pending counts (repeats, unknown message types). Call periodically and on disconnect. */

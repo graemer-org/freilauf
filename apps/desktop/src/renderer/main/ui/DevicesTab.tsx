@@ -1,5 +1,6 @@
 import type { DeviceKind } from '@freilauf/devices';
 import { useEffect, useRef } from 'react';
+import { BatteryDetail } from './Battery';
 import { DEVICE_KINDS, describeDevice } from './deviceStatus';
 import { useApp, useAppState } from './hooks';
 import { ButtonMapping, LeverMapping } from './SettingsExtras';
@@ -34,6 +35,7 @@ function DeviceRow({ kind }: { kind: DeviceKind }) {
       <div className="device-info">
         <h2 className="device-kind">{ROW_LABEL[kind]}</h2>
         <p className={name ? 'device-name' : 'device-name none'}>{name ?? 'No device paired'}</p>
+        <BatteryDetail kind={kind} />
         <p className="hint">{ROW_HINT[kind]}</p>
       </div>
       <span className={`chip chip-${tone}`}>
@@ -111,7 +113,7 @@ export function DevicesTab() {
       {simMode && (
         <p className="banner banner-info" data-testid="devices-sim-note">
           Simulation mode: simulated trainer, heart rate and controller are in use. The Simulation
-          panel under the ride view changes the effort or drops a device.
+          panel under the ride view changes the effort and the battery levels, or drops a device.
         </p>
       )}
       <ul className="list card device-list">

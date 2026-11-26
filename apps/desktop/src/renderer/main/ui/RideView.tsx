@@ -1,6 +1,7 @@
 import type { DeviceKind } from '@freilauf/devices';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { BatteryBadge } from './Battery';
 import { DEVICE_KINDS, DEVICE_LABEL, describeDevice } from './deviceStatus';
 import { GroupTab } from './GroupTab';
 import { ConnectionBanners, DeviceDots, LOST_TEXT, SimBadge } from './Header';
@@ -43,6 +44,7 @@ function DeviceStatusRow({ kind }: { kind: DeviceKind }) {
       <span className={`chip chip-${tone}`}>
         <span className="status-mark" aria-hidden="true" />
         <span className="chip-text">{text}</span>
+        <BatteryBadge kind={kind} />
       </span>
       {state === 'reconnecting' && (
         <p className="callout-warn sheet-device-note">{LOST_TEXT[kind]}</p>

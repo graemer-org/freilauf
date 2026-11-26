@@ -441,6 +441,56 @@ function SimLever({ side }: { side: 'left' | 'right' }) {
   );
 }
 
+const SIM_BATTERY_FIELDS: ReadonlyArray<{
+  kind: DeviceKind;
+  side?: 'left' | 'right';
+  label: string;
+  id: string;
+}> = [
+  { kind: 'trainer', label: 'Trainer', id: 'sim-battery-trainer' },
+  { kind: 'heartRate', label: 'HR', id: 'sim-battery-heartRate' },
+  { kind: 'controller', side: 'left', label: 'Left grip', id: 'sim-battery-left' },
+  { kind: 'controller', side: 'right', label: 'Right grip', id: 'sim-battery-right' },
+];
+
+/** Sim mode: the simulated battery levels (empty = no battery), e.g. to see the low colours. */
+function SimBatteries() {
+  const app = useApp();
+  // Read once: the fields are the source of the levels from here on.
+  const initial = app.store.getState().live?.devices;
+  return (
+    <fieldset className="sim-batteries" data-testid="sim-batteries">
+      <legend className="control-label">Battery %</legend>
+      {SIM_BATTERY_FIELDS.map((f) => {
+        const b = initial?.[f.kind]?.battery;
+        const value = f.side ? b?.[f.side] : b?.left === undefined ? b?.percent : undefined;
+        return (
+          <label key={f.id} className="sim-battery" htmlFor={f.id}>
+            <span className="hint">{f.label}</span>
+            <input
+              id={f.id}
+              data-testid={f.id}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={100}
+              step={1}
+              placeholder="none"
+              defaultValue={value ?? ''}
+              onChange={(e) => {
+                const raw = e.currentTarget.value.trim();
+                const n = Number(raw);
+                if (raw !== '' && !Number.isFinite(n)) return;
+                app.setSimBattery(f.kind, raw === '' ? null : n, f.side);
+              }}
+            />
+          </label>
+        );
+      })}
+    </fieldset>
+  );
+}
+
 function SimulationPanel() {
   const app = useApp();
   const simMode = useAppState((s) => s.simMode);
@@ -487,6 +537,7 @@ function SimulationPanel() {
           Release levers
         </button>
       </div>
+      <SimBatteries />
       <div className="button-row">
         {(['trainer', 'heartRate', 'controller'] as const).map((kind) => (
           <button

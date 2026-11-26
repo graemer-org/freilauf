@@ -46,7 +46,8 @@ See [Running Freilauf with Docker](docker.md).
 Simulation mode (`pnpm dev:sim`, or `?sim=1` at the end of the web version's address) connects
 simulated devices and shows a **Simulation** badge. Press **Start riding** and scroll below the
 ride: the **Simulation** panel sets the simulated rider's effort in watts, moves the simulated
-levers and can drop a device to see what a lost connection looks like. Everything else —
+levers, sets the simulated battery levels (**Battery %**; empty = no battery) and can drop a
+device to see what a lost connection looks like. Everything else —
 workouts, routes, history, `.fit` export, group rides — works as with real devices.
 
 ## 3. The flow: start screen → ride → summary
@@ -105,6 +106,20 @@ Click the device line at the bottom of the start screen to open **Devices**.
 
 Paired devices are remembered and reconnect automatically the next time you start the app. If
 one does not: wake it, close other apps, and click **Retry** or **Pair** again.
+
+### Battery levels
+
+Devices that report a battery level show it as a small battery with the percentage: next to each
+device in the ride view's top bar and on the start screen, and in detail (with the time of the
+last reading) under **Devices**. The heart-rate strap and some trainers report it through the
+standard Bluetooth battery service; the handlebar controllers report each grip separately — the
+top bar shows the weaker grip (`R 12 %`, both grips in the tooltip), **Devices** shows both. A
+device without a battery level (most trainers run on mains power) simply shows no icon.
+
+Below 20 % the level turns orange, below 10 % red. When a ride starts and a device is below
+15 %, one notice says which; the ride is not held up. The level is read when the device
+connects and again after every reconnect, then follows the device's updates (or is read again
+every 5 minutes if the device sends none).
 
 ### Controllers: buttons and levers
 

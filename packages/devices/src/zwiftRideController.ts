@@ -20,7 +20,9 @@ export interface RawFrame {
 }
 
 /**
- * BLE driver for the Zwift Ride handlebar controllers. Buttons and the lever
+ * BLE driver for the Zwift Ride handlebar controllers. Battery: the
+ * controllers' own battery message (per grip when it says which), else the
+ * standard Battery Service if they expose it (ManagedDevice). Buttons and the lever
  * message layout are verified on hardware; the handshake details are not
  * (docs/protocols/zwift-ride.md), so the driver is deliberately lenient: it
  * does not wait for the handshake answer, and it exposes every raw frame for
@@ -30,7 +32,6 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
   readonly kind = 'controller' as const;
   private readonly buttonEmitter = createEmitter<ControllerButtonEvent>();
   private readonly paddleEmitter = createEmitter<{ side: 'left' | 'right'; value: number }>();
-  private readonly batteryEmitter = createEmitter<number>();
   private readonly rawEmitter = createEmitter<RawFrame>();
   private readonly tracker = new RideButtonTracker();
   /** Last lever value per grip, so a drop can return a held lever to rest. */
@@ -46,10 +47,6 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
 
   onPaddle(listener: (event: { side: 'left' | 'right'; value: number }) => void): Unsubscribe {
     return this.paddleEmitter.on(listener);
-  }
-
-  onBattery(listener: (percent: number) => void): Unsubscribe {
-    return this.batteryEmitter.on(listener);
   }
 
   /** Every frame as received, for protocol captures. */
@@ -81,7 +78,11 @@ export class ZwiftRideController extends ManagedDevice<'controller'> implements 
           this.paddleEmitter.emit(paddle);
         }
       } else if (message?.type === 'battery') {
-        this.batteryEmitter.emit(message.percent);
+        this.reportBattery({
+          percent: message.percent,
+          ...(message.side ? { side: message.side } : {}),
+          source: 'controller-protocol',
+        });
       }
     });
     this.diag('debug', 'subscribed', 'async (button) notifications on');

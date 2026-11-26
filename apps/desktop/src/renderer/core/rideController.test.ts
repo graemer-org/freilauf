@@ -53,6 +53,11 @@ describe('RideController with the simulated rig', () => {
     expect(live.ride.distanceM).toBeGreaterThan(300);
     expect(live.ride.wattsPerKg).toBeCloseTo(live.ride.power3sW / 75, 6);
     expect(live.devices.trainer).toEqual({ name: rig.trainer.name, state: 'connected' });
+    // Battery levels per device (the simulated trainer has none).
+    expect(live.devices.heartRate?.battery).toMatchObject({ percent: 64 });
+    expect(live.devices.controller?.battery).toMatchObject({ percent: 12, left: 81, right: 12 });
+    rig.heartRate.setBattery(9);
+    expect(controller.tick().devices.heartRate?.battery?.percent).toBe(9);
 
     const ride = await controller.finish();
     expect(ride?.ride.samples).toHaveLength(60);

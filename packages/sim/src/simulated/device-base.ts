@@ -1,5 +1,12 @@
-import { createEmitter } from '@freilauf/devices';
-import type { ConnectionState, DeviceKind, Unsubscribe } from '@freilauf/devices';
+import { clampBatteryPercent, createEmitter } from '@freilauf/devices';
+import type {
+  BatterySide,
+  BatterySource,
+  BatteryState,
+  ConnectionState,
+  DeviceKind,
+  Unsubscribe,
+} from '@freilauf/devices';
 import { globalScheduler } from './clock';
 import type { SimScheduler, TimerHandle } from './clock';
 
@@ -13,6 +20,18 @@ export interface SimulatedDeviceOptions {
   /** When true, connect() rejects after the delay and reconnect attempts keep failing. */
   failConnect?: boolean;
   scheduler?: SimScheduler;
+  /**
+   * Battery level(s) in %, as a real device would report them: `percent` for
+   * the device as a whole, `left` / `right` per grip (controllers). Default:
+   * no battery. Change later with setBattery().
+   */
+  battery?: SimulatedBattery;
+}
+
+export interface SimulatedBattery {
+  percent?: number;
+  left?: number;
+  right?: number;
 }
 
 /** Shared connection lifecycle for all simulated devices. */
@@ -30,6 +49,10 @@ export abstract class SimulatedDevice<K extends DeviceKind> {
   private readonly stateEmitter = createEmitter<ConnectionState>();
   private pendingTimer: TimerHandle | undefined;
   private pendingReject: ((err: Error) => void) | undefined;
+  private readonly batteryEmitter = createEmitter<BatteryState>();
+  private batteryLevels: SimulatedBattery = {};
+  private batteryAt = 0;
+  private batteryState: BatteryState | null = null;
 
   constructor(defaults: { id: string; name: string }, options: SimulatedDeviceOptions) {
     this.id = options.id ?? defaults.id;
@@ -38,6 +61,63 @@ export abstract class SimulatedDevice<K extends DeviceKind> {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
     this.failConnect = options.failConnect ?? false;
     this.scheduler = options.scheduler ?? globalScheduler;
+    if (options.battery) {
+      this.batteryLevels = { ...options.battery };
+      this.batteryAt = this.scheduler.now();
+    }
+  }
+
+  /** The current simulated battery level; null for none. */
+  get battery(): BatteryState | null {
+    // Built lazily: `kind` is not set yet while the base constructor runs.
+    if (!this.batteryState) this.batteryState = this.buildBattery();
+    return this.batteryState;
+  }
+
+  onBattery(listener: (state: BatteryState) => void): Unsubscribe {
+    return this.batteryEmitter.on(listener);
+  }
+
+  /**
+   * Test hook: sets the battery level in % (null removes it). With `side`,
+   * only that grip changes; without, the device as a whole (and both grips
+   * are forgotten).
+   */
+  setBattery(percent: number | null, side?: BatterySide): void {
+    const next: SimulatedBattery = side ? { ...this.batteryLevels } : {};
+    if (side) {
+      if (percent === null) delete next[side];
+      else next[side] = clampBatteryPercent(percent);
+    } else if (percent !== null) {
+      next.percent = clampBatteryPercent(percent);
+    }
+    this.applyBattery(next);
+  }
+
+  private applyBattery(levels: SimulatedBattery): void {
+    this.batteryLevels = levels;
+    this.batteryAt = this.scheduler.now();
+    this.batteryState = null;
+    const state = this.battery;
+    if (state) this.batteryEmitter.emit(state);
+  }
+
+  private buildBattery(): BatteryState | null {
+    const levels = this.batteryLevels;
+    const known = [levels.percent, levels.left, levels.right]
+      .filter((v): v is number => v !== undefined)
+      .map(clampBatteryPercent);
+    if (known.length === 0) return null;
+    // Controllers report through their own protocol, everything else through the Battery Service.
+    const source: BatterySource =
+      this.kind === 'controller' ? 'controller-protocol' : 'battery-service';
+    return {
+      percent: Math.min(...known),
+      ...(levels.left !== undefined ? { left: clampBatteryPercent(levels.left) } : {}),
+      ...(levels.right !== undefined ? { right: clampBatteryPercent(levels.right) } : {}),
+      source,
+      updatedAt: this.batteryAt,
+    };
   }
 
   get state(): ConnectionState {

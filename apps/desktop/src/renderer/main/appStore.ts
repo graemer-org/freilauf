@@ -85,6 +85,7 @@ import type {
 } from '../core/communityService';
 import type { Visibility } from '@freilauf/community';
 import { utf8Length } from '@freilauf/community';
+import { lowBatteryNotice } from './batteryStatus';
 import { summarizeRide } from './rideSummary';
 import type { RideSummary } from './rideSummary';
 
@@ -133,7 +134,8 @@ export type GroupStatus =
 
 export interface Notice {
   id: number;
-  kind: 'error' | 'info';
+  /** info fades on its own, warn after a while, error stays until dismissed. */
+  kind: 'error' | 'warn' | 'info';
   message: string;
 }
 
@@ -549,6 +551,9 @@ export class App {
         // Every new ride, however it was started (button, Space, controller, group countdown).
         this.#rideHadCompany = false;
         this.#controller?.setPowerUpTuning(this.#powerUpTuning());
+        // Once per ride, at its start: a device that may not last the ride.
+        const lowBattery = lowBatteryNotice(this.#devices);
+        if (lowBattery) this.notify('warn', lowBattery);
       },
       saveRide: (ride, finished) => this.#api.rides.save(ride, finished),
       onError: (message) => this.notify('error', message),
@@ -736,8 +741,8 @@ export class App {
       raw: this.#api.bleLogEnabled,
     });
     this.#capture = capture;
+    // Battery levels are logged by the device monitor (all devices), with the raw frame here.
     controller.onRawFrame((frame) => capture.frame(frame));
-    controller.onBattery((percent) => capture.battery(percent));
     return controller;
   }
 
@@ -797,6 +802,14 @@ export class App {
   /** Sim mode only: move a simulated lever (−1 … 1), as if the rider held it there. */
   setSimLever(side: 'left' | 'right', value: number): void {
     this.#rig?.controller.setPaddle(side, value);
+  }
+
+  /**
+   * Sim mode only: a simulated device's battery level in % (null: none). `side` sets one
+   * controller grip.
+   */
+  setSimBattery(kind: DeviceKind, percent: number | null, side?: 'left' | 'right'): void {
+    this.#rig?.[kind].setBattery(percent, side);
   }
 
   /** Sim mode only: drop a simulated device to see the recovery UI. */
@@ -1793,7 +1806,7 @@ export class App {
     const notices = this.store.getState().notices;
     // The same failure repeating (e.g. every autosave) must not flood the UI.
     if (notices.some((n) => n.message === message)) return;
-    this.#logger.log(kind === 'error' ? 'warn' : 'info', 'renderer', `notice shown: ${message}`);
+    this.#logger.log(kind === 'info' ? 'info' : 'warn', 'renderer', `notice shown: ${message}`);
     const notice = { id: ++this.#noticeId, kind, message };
     this.store.setState({ notices: [...notices, notice].slice(-5) });
   }
