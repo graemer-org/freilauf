@@ -7269,3 +7269,249 @@ div.server-note {
 .summary-ghost-best {
   font-weight: 600;
 }
+
+/* ───────── fit to an episode (docs/workouts.md) ───────── */
+
+.modal.ep-modal {
+  width: min(48rem, 100%);
+  max-height: min(92vh, 52rem);
+  overflow-y: auto;
+  gap: var(--s-5);
+}
+
+.ep-head {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.ep-choices {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.ep-field {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.ep-label {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ep-length {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.ep-length .seg {
+  flex-wrap: wrap;
+}
+
+.ep-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.ep-custom input[type='text'] {
+  width: 5.5rem;
+  min-height: 2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ep-unit {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.ep-error {
+  color: var(--warn);
+}
+
+.ep-options {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.ep-options-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ep-options-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ep-option {
+  appearance: none;
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease);
+}
+
+.ep-option:hover {
+  background: var(--fill-hover);
+}
+
+.ep-option[aria-pressed='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.ep-option-title {
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+
+.ep-option-text {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.3;
+}
+
+.ep-preview {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.ep-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--s-4) var(--s-6);
+  align-items: start;
+}
+
+.ep-facts {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+}
+
+.ep-facts > div {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  gap: var(--s-3);
+  font-size: var(--text-sm);
+}
+
+.ep-facts dt {
+  color: var(--text-2);
+}
+
+.ep-facts dd {
+  margin: 0;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 40rem) {
+  .ep-options-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ep-options-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ep-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ep-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
+.wo-episode {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 16rem);
+  grid-template-areas:
+    'info preview'
+    'actions actions';
+  gap: var(--s-3) var(--s-6);
+  padding: var(--s-4) var(--s-5);
+}
+
+.wo-episode > .wo-desc {
+  grid-column: 1 / -1;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+/* The running episode workout: the cue ahead, the episode line and "hard now". */
+.wo-ahead {
+  min-height: 1.2em;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.wo-ahead:empty {
+  min-height: 0;
+}
+
+.wo-ahead.is-warn {
+  color: var(--warn);
+}
+
+.wo-episode-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.wo-episode-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--fill);
+}
+
+.wo-episode-bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent-fill);
+}
+
+.wo-episode-left {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.wo-hard-now {
+  font-weight: 650;
+}
+
+.wo-hard-now[aria-disabled='true'] {
+  opacity: 0.55;
+}
+
+.wo-hard-now-w {
+  margin-left: 0.25rem;
+  color: var(--text-2);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}

@@ -13,6 +13,7 @@ import {
   gapsHidden,
   ROUGH_LABEL,
 } from '../../../shared/powerUps';
+import { aheadCue, episodeProgress } from '../../main/ui/episodeView';
 import { formatGap } from '../../main/ui/format';
 import { ghostPill } from '../../main/ui/ghostView';
 
@@ -202,6 +203,13 @@ export interface WorkoutStrip {
   progress: number;
   cue: string | null;
   finished: boolean;
+  /**
+   * Episode workouts: what comes next, shortly before it ("in 10 s: 3 min hard · 250 W"), or the
+   * note after "hard now"; null otherwise.
+   */
+  ahead: { text: string; tone: 'cue' | 'info' | 'warn' } | null;
+  /** Episode workouts: a thin line for the whole episode and the time left. */
+  episode: { progress: number; left: string } | null;
 }
 
 function clock(seconds: number): string {
@@ -223,6 +231,8 @@ export function workoutStrip(workout: LiveState['workout']): WorkoutStrip | null
       progress: 1,
       cue: null,
       finished: true,
+      ahead: null,
+      episode: episodeProgress(workout),
     };
   }
   const span = workout.segmentElapsedS + workout.segmentRemainingS;
@@ -238,7 +248,16 @@ export function workoutStrip(workout: LiveState['workout']): WorkoutStrip | null
     progress,
     cue: workout.cue ? workout.cue : null,
     finished: false,
+    ahead: aheadOf(workout),
+    episode: episodeProgress(workout),
   };
+}
+
+function aheadOf(workout: NonNullable<LiveState['workout']>): WorkoutStrip['ahead'] {
+  const notice = workout.episode?.notice;
+  if (notice) return { text: notice.text, tone: notice.tone };
+  const cue = aheadCue(workout);
+  return cue ? { text: cue, tone: 'cue' } : null;
 }
 
 export interface RouteStrip {

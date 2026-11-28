@@ -52,11 +52,16 @@ import { Logger } from '../core/logger';
 import type { ScopedLog } from '../core/logger';
 import { RideController } from '../core/rideController';
 import type { ShiftSource } from '../core/rideController';
-import type { Workout } from '@freilauf/workouts';
+import type { EpisodeOptions, EpisodePlan, Workout } from '@freilauf/workouts';
 import type { GroupLink } from '../core/rideController';
 import type { GroupRules } from '@freilauf/p2p';
 import type { GroupMode } from '../../shared/powerUps';
-import { decodeWorkout } from '@freilauf/workouts';
+import {
+  decodeWorkout,
+  generateEpisodeWorkout,
+  isEpisodeWorkoutId,
+  normalizeEpisodeOptions,
+} from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
 import type { RouteTrack, SceneryModel } from '@freilauf/routes';
 import { matchTrackToRoute, routeBaseId } from '@freilauf/routes';
@@ -163,6 +168,11 @@ export interface AppState {
   workouts: WorkoutEntry[];
   /** The workout chosen for the next/current ride; null = free ride. */
   selectedWorkoutId: string | null;
+  /**
+   * The workout fitted to an episode, when that is the selected one (docs/workouts.md); kept up
+   * to date when "hard now" re-fits it during the ride.
+   */
+  episodePlan?: EpisodePlan | null;
   /** Result of the FTP test just finished, until accepted or dismissed. */
   ftpOutcome: FtpTestOutcome | null;
   /** Workouts other riders in the group are offering. */
@@ -448,6 +458,7 @@ export class App {
     simEffortW: 180,
     workouts: [],
     selectedWorkoutId: null,
+    episodePlan: null,
     ftpOutcome: null,
     sharedWorkouts: [],
     sharingWorkoutId: null,
@@ -472,6 +483,8 @@ export class App {
   readonly #api: FreilaufApi;
   readonly #groupConnector: GroupConnector | null;
   readonly #library: WorkoutLibrary;
+  /** The episode plan revision last taken from the live state. */
+  #episodeRevision = 0;
   readonly #routes: RouteLibrary;
   /** Decoded routes offered by the group, by peer (for useSharedRoute). */
   #sharedRouteTracks = new Map<string, RouteTrack>();
@@ -571,9 +584,16 @@ export class App {
         // The group's "Start together" countdown runs in the controller like the local one.
         const groupCountdownS =
           live.countdown?.kind === 'group' ? Math.ceil(live.countdown.remainingS) : null;
+        // "Hard now" re-fitted the episode workout: its chart follows.
+        const revision = live.workout?.episode?.revision;
+        const episodePlan =
+          revision !== undefined && revision !== this.#episodeRevision
+            ? (this.#controller?.episodePlan ?? null)
+            : undefined;
+        if (revision !== undefined) this.#episodeRevision = revision;
         if (groupCountdownS !== this.store.getState().groupCountdownS) {
-          this.store.setState({ live, groupCountdownS });
-        } else this.store.setState({ live });
+          this.store.setState({ live, groupCountdownS, ...(episodePlan ? { episodePlan } : {}) });
+        } else this.store.setState({ live, ...(episodePlan ? { episodePlan } : {}) });
         this.#api.live.publish(live);
       },
       onRideStart: () => {
@@ -903,6 +923,7 @@ export class App {
       });
       this.store.setState({
         selectedWorkoutId: null,
+        episodePlan: null,
         ftpOutcome: finished?.ftpTest ?? null,
         lastRide,
       });
@@ -989,16 +1010,55 @@ export class App {
 
   // ───────────── workouts ─────────────
 
-  /** Chooses the workout for the next ride (null = free ride). Ignored while riding. */
+  /**
+   * Chooses the workout for the next ride (null = free ride). Ignored while riding. An episode
+   * workout's id ("episode-…") selects one fitted to the last episode choices again.
+   */
   selectWorkout(id: string | null): boolean {
+    if (isEpisodeWorkoutId(id)) {
+      return this.selectEpisode(this.store.getState().settings?.episode ?? null);
+    }
     const entry = id === null ? null : this.#library.get(id);
     if (id !== null && !entry) return false;
     if (!this.#controller?.selectWorkout(entry?.workout ?? null, entry?.ftpTest ?? null)) {
       this.notify('info', 'Finish the current ride before changing the workout.');
       return false;
     }
-    this.store.setState({ selectedWorkoutId: id });
+    this.store.setState({ selectedWorkoutId: id, episodePlan: null });
     return true;
+  }
+
+  /**
+   * "Fit to an episode": generates the workout for these choices, selects it for the next ride
+   * and remembers the choices (Settings.episode). Ignored while riding.
+   */
+  selectEpisode(options: Partial<EpisodeOptions> | null): boolean {
+    const chosen = normalizeEpisodeOptions(
+      options ?? {},
+      normalizeEpisodeOptions(this.store.getState().settings?.episode ?? null),
+    );
+    const plan = generateEpisodeWorkout(chosen);
+    if (!this.#controller?.selectWorkout(plan.workout, null, plan)) {
+      this.notify('info', 'Finish the current ride before changing the workout.');
+      return false;
+    }
+    this.#episodeRevision = 0;
+    this.store.setState({ selectedWorkoutId: plan.workout.id, episodePlan: plan });
+    const saved = this.store.getState().settings?.episode;
+    if (
+      !saved ||
+      saved.lengthMin !== chosen.lengthMin ||
+      saved.effort !== chosen.effort ||
+      saved.pattern !== chosen.pattern
+    ) {
+      void this.updateSettings({ episode: chosen });
+    }
+    return true;
+  }
+
+  /** "Hard now" in a running episode workout (H key, the workout panel, a controller button). */
+  hardNow(source: ShiftSource = 'ui'): boolean {
+    return this.#controller?.hardNow(source).ok ?? false;
   }
 
   /** Imports a workout from file contents (.zwo or our own format). */

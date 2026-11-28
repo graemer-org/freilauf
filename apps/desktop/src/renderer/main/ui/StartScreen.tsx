@@ -1,7 +1,8 @@
 import { useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { workoutStats } from '@freilauf/workouts';
+import { isEpisodeWorkoutId, workoutStats } from '@freilauf/workouts';
 import { DEFAULT_SETTINGS } from '../../../shared/contract';
+import { EpisodeDialog } from './EpisodeUi';
 import { GhostPicker, NoRouteGhostNote } from './GhostUi';
 import { GroupTab } from './GroupTab';
 import { workoutSharing } from './groupShare';
@@ -64,6 +65,13 @@ function KindIcon({ kind }: { kind: RideKind }) {
           <circle cx="19" cy="5" r="1.6" {...common} />
         </>
       )}
+      {kind === 'episode' && (
+        <>
+          <rect x="3" y="5" width="18" height="12" rx="2" {...common} />
+          <path d="M10.5 8.5v5l4-2.5z" {...common} strokeWidth={1.6} />
+          <path d="M8 20h8" {...common} />
+        </>
+      )}
       {kind === 'ftp' && (
         <>
           <path d="M4.5 16a8 8 0 1 1 15 0" {...common} />
@@ -113,8 +121,11 @@ function KindCard({
 }
 
 /** The workout chosen for the next ride, with what the start screen says about it. */
-function useChosenWorkout(): { line: string; ftpTest: boolean } | null {
+function useChosenWorkout(): { line: string; ftpTest: boolean; episode: boolean } | null {
   const id = useAppState((s) => s.selectedWorkoutId);
+  const episode = useAppState((s) =>
+    isEpisodeWorkoutId(id) && s.episodePlan?.workout.id === id ? s.episodePlan : null,
+  );
   const ftpW = useAppState((s) => s.settings?.rider.ftpW ?? DEFAULT_SETTINGS.rider.ftpW);
   const entry = useAppState((s) =>
     id === null ? null : (s.workouts.find((e) => e.workout.id === id) ?? null),
@@ -123,14 +134,22 @@ function useChosenWorkout(): { line: string; ftpTest: boolean } | null {
     id === null ? null : (s.sharedWorkouts.find((w) => w.workout.id === id) ?? null),
   );
   return useMemo(() => {
+    if (episode) {
+      return {
+        line: workoutLine(episode.workout.name, episode.totalDurationS, false),
+        ftpTest: false,
+        episode: true,
+      };
+    }
     const workout = entry?.workout ?? shared?.workout ?? null;
     if (!workout) return null;
     const durationS = workoutStats(workout, ftpW).durationS;
     return {
       line: workoutLine(workout.name, durationS, entry?.ftpTest?.openEnded === true),
       ftpTest: entry?.ftpTest !== undefined,
+      episode: false,
     };
-  }, [entry, shared, ftpW]);
+  }, [entry, shared, episode, ftpW]);
 }
 
 function WhatSection({
@@ -153,6 +172,7 @@ function WhatSection({
   const route = routeId === null ? null : (routes.find((r) => r.id === routeId) ?? null);
   const hasRoutes = useMemo(() => routeActions(app) !== null, [app]);
   const on = activeKinds(workout, route !== null);
+  const [episodeOpen, setEpisodeOpen] = useState(false);
   const chooseFree = (): void => {
     app.selectWorkout(null);
     routeActions(app)?.select(null);
@@ -181,6 +201,18 @@ function WhatSection({
           }
           active={on.workout}
           onClick={onPickWorkout}
+        />
+        <KindCard
+          kind="episode"
+          title="Fit to an episode"
+          text={
+            on.episode && workout
+              ? workout.line
+              : 'A workout exactly as long as your episode or film.'
+          }
+          active={on.episode}
+          disabled={locked}
+          onClick={() => setEpisodeOpen(true)}
         />
         {hasRoutes && (
           <KindCard
@@ -220,9 +252,20 @@ function WhatSection({
             {workout && (
               <p className="start-choice-line" data-testid="start-workout-summary">
                 <span className="start-choice-label">
-                  {workout.ftpTest ? 'FTP test' : 'Workout'}
+                  {workout.ftpTest ? 'FTP test' : workout.episode ? 'Episode' : 'Workout'}
                 </span>
                 <strong>{workout.line}</strong>
+                {workout.episode && (
+                  <button
+                    type="button"
+                    className="link"
+                    data-testid="start-episode-change"
+                    disabled={locked}
+                    onClick={() => setEpisodeOpen(true)}
+                  >
+                    Change
+                  </button>
+                )}
                 <button
                   type="button"
                   className="link"
@@ -263,7 +306,14 @@ function WhatSection({
             A ride is in progress — finish it to choose something else.
           </p>
         )}
+        {workout?.episode && !locked && (
+          <p className="hint" data-testid="start-episode-note">
+            Start the episode and the ride together; when you pause one, pause the other (Space or
+            the controller's start/pause button).
+          </p>
+        )}
       </div>
+      {episodeOpen && <EpisodeDialog onClose={() => setEpisodeOpen(false)} />}
     </section>
   );
 }

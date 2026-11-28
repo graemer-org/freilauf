@@ -19,6 +19,7 @@ start screen, which names the choice). The running workout is shown in the ride 
 | `codec.ts`    | Native share/file format (`encodeWorkout` / `decodeWorkout`)                |
 | `library.ts`  | `BUILTIN_WORKOUTS`                                                          |
 | `ftpTest.ts`  | FTP test protocols and evaluation (`evaluateTwentyMinuteTest`, ramp test …) |
+| `episode.ts`  | Workouts fitted to an episode (`generateEpisodeWorkout`), "hard now"        |
 
 ## Model
 
@@ -192,6 +193,81 @@ gradients other than 0 are dropped. `parseZwo(workoutToZwo(w))` reproduces every
 
 `BUILTIN_WORKOUTS` (all original, validated in tests): Easy endurance 45, Sweet spot 3×12,
 Threshold 2×20, VO2max 5×4, 30/30s, Over-unders 3×12, Openers 30 and the 20-minute FTP test.
+
+## Fitted to an episode
+
+For riding while watching a series or a film: a workout **exactly as long as the episode**, with
+the easy spin on the credits. In the app: the **Fit to an episode** card on the start screen (or
+the section at the top of Workouts) opens a dialog with the length (presets 22, 42, 55, 90 min or
+any whole 10–180 min), the effort and the pattern, and a preview (profile, time in zones,
+estimated TSS / kJ / average power at the rider's FTP). **Use for next ride** selects it; the
+choices are kept in `Settings.episode` (default 42 min, medium, spread) and the dialog opens with
+them next time. There is no sync with any player: start the episode and the ride together, and
+pause the ride when you pause the film (Space or the controller's start/pause button — paused
+ride time is paused workout time).
+
+`generateEpisodeWorkout({ lengthMin, effort, pattern })` → `EpisodePlan` (`workout`, `blocks`: one
+kind per step — `warmup | endurance | hard | recovery | cooldown | hardNow`). Pure and
+deterministic (same options → same workout, id `episode-<len>-<effort>-<pattern>`). Only
+`steady` and `ramp` steps in whole seconds, so it runs through the timeline, runner and ERG
+exactly like any other workout (recording, FIT export and the summary are unchanged).
+
+- **Total = `lengthMin × 60` s exactly**, for every length 10–180, pattern and effort.
+- **Warm-up**: ramp 45 % → 65 / 70 / 75 % FTP (easy / medium / hard; steady: ≤ its zone-2 target),
+  10 % of the length rounded to 30 s, at least 3 min (42 min → 4:00, 90 min → 9:00).
+- **Cool-down**: ramp 55–60 % → 40 %, 8 % rounded to 30 s, at least 2 min (42 min → 3:30,
+  90 min → 7:00). It is the last step and ends with the episode.
+- **Main part** (everything in between), by effort:
+
+  | Effort | Hard part      | Easy part after it | Endurance | Max hard time | Steady (zone 2) | Hard now |
+  | ------ | -------------- | ------------------ | --------- | ------------- | --------------- | -------- |
+  | easy   | 5 min at 85 %  | 3 min at 55 %      | 62 %      | 40 min        | 62 %            | 100 %    |
+  | medium | 4 min at 95 %  | 3 min at 52 %      | 65 %      | 32 min        | 68 %            | 110 %    |
+  | hard   | 3 min at 110 % | 3 min at 50 %      | 68 %      | 24 min        | 72 %            | 120 %    |
+
+  and by pattern:
+  - **Early**: the hard parts back to back (after ≤ 1 min endurance) in the first half of the main
+    part, endurance after them.
+  - **Spread**: as many hard parts as fit with ~25 % room (`floor(main / (1.25 × (on + off)))`),
+    with equal endurance before, between and after them (gaps under 45 s are moved before / after
+    the set).
+  - **Finale**: endurance first, the hard parts in the second half, climbing from hard − 5 % to
+    hard + 5 % (e.g. hard: 105 → 115 %); the last one runs straight into the cool-down.
+  - **Steady**: one zone-2 step, no intervals (everything ≤ 75 % FTP).
+
+- **Short episodes**: when fewer than 3 (spread) or 2 (early / finale) hard parts would fit, on and
+  off are scaled down together (whole 15 s, at least 1 min each). Examples: 10 min medium spread
+  → 3:00 warm-up, 30 s endurance, 2 × (1 min at 95 % + 1 min easy), 30 s, 2:00 cool-down;
+  22 min medium spread → 3 × (2:30 at 95 % + 1:45 easy) with 63 s endurance gaps; 42 min medium
+  spread → 3 × (4 min at 95 % + 3 min) with 202 s gaps (≈ 40 TSS at any FTP); 90 min hard early →
+  6 × (3 + 3 min) at 110 %.
+
+### Hard now
+
+In a running episode workout only: **H** on the keyboard, **Hard now** in the workout panel or a
+controller button set to _Episode workout: hard now_ (`ControllerAction` `hardNow`, not assigned
+by default). `applyHardNow(plan, positionS)` inserts **2 min at the effort's hard-now target**
+(100 / 110 / 120 %) at the current workout second, then **90 s easy**, and re-fits the rest so the
+total stays the episode length and the cool-down is untouched:
+
+1. pressed during the warm-up, the rest of the warm-up goes;
+2. later hard parts are removed, the last first (with the easy part after them), or the last one
+   needed is shortened (not below 1 min, else removed);
+3. only then endurance / easy parts are shortened, from the end.
+
+Time freed beyond the 3:30 needed becomes endurance where it was freed; hard parts are renumbered.
+Refused (with a short note in the panel and the overlay) **inside a hard part** (also an inserted
+one) and when the cool-down is less than 3:30 away. It can be used again as often as these allow.
+The ride controller then continues on the new plan at the same workout time with the same
+intensity (`WorkoutRunner` option `positionS`); `WorkoutLive.episode.revision` tells the windows
+that the plan (and its chart) changed.
+
+### On screen
+
+The overlay's workout strip and the workout panel show, during the last 10 s of each step, the
+next change — `in 10 s: 3 min hard · 250 W` — and, after "hard now", its note for 4 s. A hairline
+under the strip shows the whole episode with the time left. Nothing new is placed outside the
+strip, so the overlay's layout, size and click-through are as before.
 
 ## FTP tests
 

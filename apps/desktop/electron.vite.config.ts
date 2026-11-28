@@ -10,6 +10,7 @@ const WORKSPACE_PACKAGES = [
   '@freilauf/routes',
   '@freilauf/session',
   '@freilauf/sim',
+  '@freilauf/workouts',
 ];
 
 /**

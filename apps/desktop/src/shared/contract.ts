@@ -12,6 +12,7 @@ import type {
 import type { GroupRider } from '@freilauf/p2p';
 import type { RoutePosition } from '@freilauf/routes';
 import type { RecordedRide, RideRouteInfo, RideSnapshot } from '@freilauf/session';
+import type { EpisodeEffort, EpisodePattern } from '@freilauf/workouts';
 import type { GroupMode, PowerUpLive } from './powerUps';
 
 export type StatId =
@@ -98,6 +99,7 @@ export type ControllerAction =
   | 'steerLeft'
   | 'steerRight'
   | 'usePowerUp'
+  | 'hardNow'
   | 'none';
 
 /** @deprecated use ControllerAction */
@@ -117,6 +119,7 @@ export const CONTROLLER_ACTION_LABELS: Record<ControllerAction, string> = {
   steerLeft: 'Steer left (hold)',
   steerRight: 'Steer right (hold)',
   usePowerUp: 'Use power-up',
+  hardNow: 'Episode workout: hard now',
 };
 
 /**
@@ -228,7 +231,23 @@ export interface Settings {
   ghost: GhostSettings;
   /** Scenery from OpenStreetMap along routes (docs/routes.md, docs/adr/0011-osm-scenery.md). */
   scenery: ScenerySettings;
+  /** "Fit to an episode" (docs/workouts.md): the last choices, offered again next time. */
+  episode: EpisodeSettings;
 }
+
+/** The last "Fit to an episode" choices. */
+export interface EpisodeSettings {
+  /** Whole minutes, 10 … 180. */
+  lengthMin: number;
+  effort: EpisodeEffort;
+  pattern: EpisodePattern;
+}
+
+export const DEFAULT_EPISODE: EpisodeSettings = {
+  lengthMin: 42,
+  effort: 'medium',
+  pattern: 'spread',
+};
 
 /**
  * Scenery along routes. Loading it is always the rider's choice per route (on import or later
@@ -342,6 +361,7 @@ export const DEFAULT_SETTINGS: Settings = {
   watchRelay: DEFAULT_WATCH_RELAY,
   ghost: { enabled: true, sources: {} },
   scenery: { enabled: true, overpassUrl: DEFAULT_OVERPASS_URL },
+  episode: DEFAULT_EPISODE,
 };
 
 /**
@@ -517,6 +537,22 @@ export interface WorkoutLive {
   ftpTest?: 'twentyMinute' | 'ramp';
   /** False before the ride starts (workout selected, waiting). */
   started: boolean;
+  /** Present for a workout fitted to an episode (docs/workouts.md). */
+  episode?: EpisodeLive;
+}
+
+/** The extras of an episode workout. */
+export interface EpisodeLive {
+  /** The episode length (= totalDurationS, never changed by "hard now"). */
+  lengthS: number;
+  /** +1 with every accepted "hard now": the plan (and its chart) changed. */
+  revision: number;
+  /** Whether "hard now" would be accepted right now, and if not, why (short, for a tooltip). */
+  hardNow: { available: true } | { available: false; reason: string };
+  /** Watts of the "hard now" block at the current FTP and intensity. */
+  hardNowTargetW: number;
+  /** A short note after "hard now" (accepted or refused), shown for a few seconds; else null. */
+  notice: { text: string; tone: 'info' | 'warn' } | null;
 }
 
 /** Result of an FTP test, offered to the rider after the ride. */
