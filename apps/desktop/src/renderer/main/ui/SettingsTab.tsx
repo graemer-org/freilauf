@@ -1,7 +1,11 @@
 import { useId } from 'react';
 import type { OverlayTile, StatId } from '../../../shared/contract';
-import { ALL_STATS, DEFAULT_OVERPASS_URL } from '../../../shared/contract';
-import { isOverpassUrl } from '../../../main/settings';
+import {
+  ALL_STATS,
+  DEFAULT_OVERPASS_URL,
+  DEFAULT_WEATHER_ARCHIVE_URL,
+} from '../../../shared/contract';
+import { isOverpassUrl, isWeatherArchiveUrl } from '../../../main/settings';
 import { RiderEnergyFields } from './EnergyUi';
 import { NumberField, RangeField, TextField, Toggle } from './fields';
 import { PowerUpSettings } from './PowerUpSettings';
@@ -464,6 +468,29 @@ function ScenerySettings() {
   );
 }
 
+/** The weather of a day along routes (docs/routes.md): where it is loaded from. */
+function WeatherSettings() {
+  const app = useApp();
+  const weather = useAppState((s) => s.settings?.weather ?? null);
+  if (!weather) return null;
+  return (
+    <TextField
+      label="Weather server for the weather of a day"
+      testId="settings-weather-server"
+      value={weather.archiveUrl}
+      maxLength={300}
+      validate={(t) => {
+        const v = t.trim();
+        if (v === '') return DEFAULT_WEATHER_ARCHIVE_URL;
+        return isWeatherArchiveUrl(v) ? v : undefined;
+      }}
+      errorText="Enter an https:// address (or http://localhost for a server on this computer)."
+      hint={`A historical weather archive (same request format as the default); empty = the public archive (${DEFAULT_WEATHER_ARCHIVE_URL}). Weather data by Open-Meteo.com (CC BY 4.0).`}
+      onCommit={(archiveUrl) => void app.updateSettings({ weather: { archiveUrl } })}
+    />
+  );
+}
+
 /** Route difficulty; shown only when the settings carry it. */
 function RouteSettings() {
   const app = useApp();
@@ -490,10 +517,12 @@ function RouteSettings() {
           onCommit={(v) => setRouteDifficulty(app, v)}
         />
         <ScenerySettings />
+        <WeatherSettings />
       </div>
       <p className="hint section-foot">
         How much of each route gradient the trainer makes you feel. 100 % is the real road; at 50 %
         an 8 % climb feels like 4 %. Speed, distance and the recording always use the real gradient.
+        A day’s wind is scaled the same way for the trainer.
       </p>
     </section>
   );

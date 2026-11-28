@@ -587,6 +587,8 @@ export interface PowerUpTick {
   powerW: number;
   power3sW: number;
   gradePercent: number;
+  /** Head (+) / tail (−) wind in the physics (route weather); the shadow bike feels it too. */
+  headwindMps?: number;
   /** Brake in effect, 0 … 1 (the shadow bike brakes like the real one). */
   brake: number;
   bike: BikeParams;
@@ -690,6 +692,7 @@ class Shadow {
       modifiedBike(t.bike, mods),
       dt,
       t.brake,
+      t.headwindMps ?? 0,
     );
     this.speedMps = step.speedMps;
     const next = this.offsetM + step.distanceM - realDeltaM;

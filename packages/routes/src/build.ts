@@ -7,6 +7,7 @@ import type { RawPoint, RawTrack } from './gpx';
 import { cleanText, fnv1a, haversineM, project } from './geo';
 import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from './gpx';
 import type { RouteTrack } from './types';
+import { routeTimesFrom, type RouteTimes } from './times';
 
 export const DEFAULT_STEP_M = 10;
 /** Samples per track at most; longer routes get a larger step (200 km at 10 m). */
@@ -67,7 +68,14 @@ export interface BuildStats {
 }
 
 export type PrepareResult =
-  | { ok: true; track: RouteTrack; stats: BuildStats; warnings: string[] }
+  | {
+      ok: true;
+      track: RouteTrack;
+      stats: BuildStats;
+      warnings: string[];
+      /** When a recorded ride passed each place (GPX with `<time>`); absent otherwise. */
+      times?: RouteTimes;
+    }
   | { ok: false; errors: string[] };
 
 /** Out-and-back excursions longer than this (and 10× the median spacing) are GPS spikes. */
@@ -166,6 +174,13 @@ function prepare(raw: RawTrack, options: BuildOptions): PrepareResult {
       `${stats.longGaps} gaps longer than 1 km between points were bridged with straight lines.`,
     );
   }
+  // Recorded times (before the loop is closed: the closing point has no time of its own).
+  const timed: { distM: number; timeMs: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const t = points[i]!.timeMs;
+    if (t !== undefined) timed.push({ distM: dist[i]!, timeMs: t });
+  }
+  const timedOf = points.length;
   const first = points[0]!;
   const last = points[points.length - 1]!;
   let total = dist[dist.length - 1]!;
@@ -262,7 +277,8 @@ function prepare(raw: RawTrack, options: BuildOptions): PrepareResult {
     loop,
   };
   track.id = options.id ?? routeId(track);
-  return { ok: true, track, stats, warnings };
+  const times = routeTimesFrom(timed, timedOf, track.totalDistanceM);
+  return { ok: true, track, stats, warnings, ...(times ? { times } : {}) };
 }
 
 /**

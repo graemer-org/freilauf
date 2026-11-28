@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GhostHud } from '../GhostUi';
 import { PowerUpHud } from '../PowerUpHud';
 import { useRouteTrack } from '../routesApi';
+import { WindHud } from '../WeatherUi';
 import { RoadScene } from './RoadScene';
 import { SideScene } from './RideScene';
 
@@ -42,6 +43,7 @@ export function RideScene() {
   };
   const toolbar = (
     <>
+      <WindHud />
       <div className="scene-switch" role="group" aria-label="Scene view">
         <button
           type="button"

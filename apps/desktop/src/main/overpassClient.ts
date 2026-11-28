@@ -36,7 +36,11 @@ export function retryAfterSeconds(v: string | null, now = Date.now()): number | 
   return Number.isFinite(t) ? Math.max(0, Math.min(3600, (t - now) / 1000)) : null;
 }
 
-async function readLimited(res: Awaited<ReturnType<FetchLike>>, limit: number): Promise<string> {
+/** Reads an answer body, refusing more than `limit` bytes. */
+export async function readLimited(
+  res: { text(): Promise<string>; body?: ReadableStream<Uint8Array> | null },
+  limit: number,
+): Promise<string> {
   if (!res.body) {
     const text = await res.text();
     if (text.length > limit) throw new Error('answer too large');

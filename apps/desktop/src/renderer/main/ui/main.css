@@ -7515,3 +7515,123 @@ div.server-note {
   font-weight: 550;
   font-variant-numeric: tabular-nums;
 }
+
+/* ───────── the weather of a day (docs/routes.md) ───────── */
+
+.rt-weather-day {
+  display: grid;
+  gap: var(--s-1);
+  margin-bottom: var(--s-2);
+}
+
+.rt-weather-day > p {
+  margin: 0;
+}
+
+.rt-weather-fields {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rt-weather-fields > .input {
+  width: auto;
+  min-width: 0;
+}
+
+.start-wind {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.start-wind > p {
+  margin: 0;
+  padding-left: 1.6rem;
+}
+
+.summary-wind {
+  margin: 0;
+}
+
+/* The wind chip on the ride scene: top centre, the arrow shows how the wind blows. */
+.wind-chip {
+  position: absolute;
+  top: var(--s-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.wind-arrow {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+  color: var(--text-2);
+  transition: transform 0.6s ease;
+}
+
+.wind-chip.is-head .wind-arrow {
+  color: var(--danger, var(--text));
+}
+
+.wind-chip.is-tail .wind-arrow {
+  color: var(--accent);
+}
+
+.wind-chip-weather {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+/* Rain of that hour: thin streaks over the scene, never over the controls. */
+.scene-rain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    100deg,
+    transparent 0 22px,
+    color-mix(in srgb, var(--text-2) 22%, transparent) 22px 23px
+  );
+  background-size: 120px 120px;
+  animation: scene-rain 0.6s linear infinite;
+}
+
+@keyframes scene-rain {
+  to {
+    background-position: -20px 120px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-rain {
+    animation: none;
+  }
+
+  .wind-arrow {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .wind-chip {
+    top: var(--s-2);
+    font-size: var(--text-xs);
+  }
+
+  .wind-chip-weather {
+    display: none;
+  }
+}

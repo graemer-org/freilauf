@@ -132,7 +132,7 @@ export function cancellableSleep(ms: number, signal: CancelSignal): Promise<void
 }
 
 /** Settles with `p`, or rejects as soon as the signal is cancelled (whatever `p` does). */
-function untilCancelled<T>(p: Promise<T>, signal: CancelSignal): Promise<T> {
+export function untilCancelled<T>(p: Promise<T>, signal: CancelSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const off = signal.onCancel(() => reject(new CancelledError()));
     p.then(

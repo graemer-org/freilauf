@@ -299,6 +299,12 @@ export interface GhostCandidate {
   fromM: number;
   toM: number;
   continuous: boolean;
+  /**
+   * The conditions it was ridden in (docs/adr/0012-historical-wind.md): the key of the day's
+   * wind and its label, or null for no wind.
+   */
+  conditions?: string | null;
+  conditionsLabel?: string | null;
 }
 
 /** Finished rides of this route (routeBaseId) that can be ghosts, newest first. */
@@ -313,15 +319,25 @@ export function ghostCandidates(rides: readonly RideListItem[], routeId: string)
       fromM: r.route!.fromM,
       toM: r.route!.toM,
       continuous: r.route!.continuous,
+      conditions: r.route!.weather?.key ?? null,
+      conditionsLabel: r.route!.weather?.label ?? null,
     }))
     .sort((a, b) => b.startedAt - a.startedAt);
 }
 
-/** The fastest full ride of the route (ties: the newer one); null when none was ridden fully. */
-export function bestGhost(candidates: readonly GhostCandidate[]): GhostCandidate | null {
+/**
+ * The fastest full ride of the route in the same conditions (ties: the newer one); null when
+ * none was ridden fully. `conditions` is the wind's key or null for no wind: a ride with wind
+ * is never the best time of rides without it, and the other way round.
+ */
+export function bestGhost(
+  candidates: readonly GhostCandidate[],
+  conditions: string | null = null,
+): GhostCandidate | null {
   let best: GhostCandidate | null = null;
   for (const c of candidates) {
     if (c.fullTimeS === null || !(c.fullTimeS > 0)) continue;
+    if ((c.conditions ?? null) !== conditions) continue;
     if (
       !best ||
       c.fullTimeS < best.fullTimeS! ||
@@ -344,10 +360,11 @@ export function resolveGhostChoice(
   choice: GhostChoice | undefined,
   candidates: readonly GhostCandidate[],
   enabled = true,
+  conditions: string | null = null,
 ): ResolvedGhost {
   const none = { kind: 'none', ride: null } as const;
   if (!enabled || choice === 'none') return none;
-  const best = bestGhost(candidates);
+  const best = bestGhost(candidates, conditions);
   const last = candidates[0] ?? null;
   const fallback = (): ResolvedGhost =>
     best ? { kind: 'best', ride: best } : last ? { kind: 'last', ride: last } : none;
@@ -390,10 +407,24 @@ export function candidateDetail(c: GhostCandidate, shape: GhostShape): string {
   return c.continuous ? `part · ${part}` : `jumped · ${part}`;
 }
 
+/**
+ * " · with wind of 14 June 2025" / " · without wind" when a ride's conditions differ from the
+ * current ride's (choosing such a ghost is allowed, but said); "" when they are the same.
+ */
+export function conditionsNote(c: GhostCandidate, conditions: string | null): string {
+  if ((c.conditions ?? null) === conditions) return '';
+  return c.conditions ? ` · with wind of ${c.conditionsLabel ?? 'another day'}` : ' · without wind';
+}
+
 /** The ghost's name in the race: "Best time · 24:13", "Last ride · 2 Nov · 25:40". */
-export function ghostLabel(r: ResolvedGhost, shape: GhostShape, now = Date.now()): string {
+export function ghostLabel(
+  r: ResolvedGhost,
+  shape: GhostShape,
+  now = Date.now(),
+  conditions: string | null = null,
+): string {
   if (r.kind === 'none') return '';
-  const detail = candidateDetail(r.ride, shape);
+  const detail = candidateDetail(r.ride, shape) + conditionsNote(r.ride, conditions);
   if (r.kind === 'best') return `Best time · ${detail}`;
   if (r.kind === 'last') return `Last ride · ${shortDate(r.ride.startedAt, now)} · ${detail}`;
   return `Ride of ${shortDate(r.ride.startedAt, now)} · ${detail}`;

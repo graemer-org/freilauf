@@ -63,7 +63,14 @@ import {
   normalizeEpisodeOptions,
 } from '@freilauf/workouts';
 import { WorkoutLibrary } from '../core/workoutLibrary';
-import type { RouteTrack, SceneryModel } from '@freilauf/routes';
+import type { RouteTrack, SceneryModel, WindProfile } from '@freilauf/routes';
+import {
+  DEFAULT_WEATHER_START,
+  formatWeatherSpan,
+  routeTimesSpan,
+  weatherDayLabel,
+  windConditionsKey,
+} from '@freilauf/routes';
 import { matchTrackToRoute, routeBaseId } from '@freilauf/routes';
 import type { GhostTrace, RecordedRide } from '@freilauf/session';
 import { decodeFitTrack, downsampleTrace, rideGhost, rideRouteInfo } from '@freilauf/session';
@@ -79,6 +86,7 @@ import { RouteLibrary } from '../core/routeLibrary';
 import type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
 import { decodeSharedRoutes, shareRouteInGroup } from '../core/routeSharing';
 import { SceneryService, type SceneryStatus } from '../core/sceneryService';
+import { WeatherService, type WeatherStatus } from '../core/weatherService';
 import type { ImportResult, KeyValueStorage, WorkoutEntry } from '../core/workoutLibrary';
 import { CommunityService } from '../core/communityService';
 import type {
@@ -97,6 +105,7 @@ import type { RideSummary } from './rideSummary';
 
 export type { RouteEntry, RouteImportResult } from '../core/routeLibrary';
 export type { SceneryStatus } from '../core/sceneryService';
+export type { WeatherStatus } from '../core/weatherService';
 export type { RideBest, RideSummary } from './rideSummary';
 
 /** A route another rider in the group is offering. */
@@ -222,6 +231,13 @@ export interface AppState {
   scenery?: Record<string, SceneryStatus>;
   /** The selected route's stored scenery, for the ride scenes; null without one. */
   routeScenery?: SceneryModel | null;
+  /**
+   * The weather of a day along routes (docs/routes.md, "The weather of that day"): what is
+   * stored or being loaded, per route id (absent = none).
+   */
+  weather?: Record<string, WeatherStatus>;
+  /** The selected route's stored wind profile (whether or not it is ridden with); null = none. */
+  routeWind?: WindProfile | null;
 }
 
 /** What the start screen offers and the next ride races as a ghost. */
@@ -230,8 +246,10 @@ export interface GhostState {
   routeId: string | null;
   /** Earlier rides of the route that can be raced, newest first. */
   candidates: GhostCandidate[];
-  /** The fastest full ride among them, if any. */
+  /** The fastest full ride among them in the next ride's conditions, if any. */
   bestRideId: string | null;
+  /** The next ride's conditions: the wind's key, or null without wind (absent = null). */
+  conditions?: string | null;
   /** The choice in effect: remembered per route, or 'import' while a ride file is used. */
   choice: GhostChoice | 'import';
   /** What the next ride races; null = no ghost. */
@@ -423,6 +441,8 @@ export interface AppOptions {
   probeSignalling?: (url: string) => Promise<ProbeResult>;
   /** Scenery fetch tuning (tests: no pauses or backoff). */
   sceneryFetch?: Partial<import('@freilauf/routes').FetchSceneryOptions>;
+  /** Weather fetch tuning (tests: no pauses or backoff, a fixed clock). */
+  weatherFetch?: Partial<import('@freilauf/routes').FetchWeatherOptions>;
 }
 
 function defaultStorage(): KeyValueStorage | null {
@@ -478,6 +498,8 @@ export class App {
     ghost: NO_GHOST,
     scenery: {},
     routeScenery: null,
+    weather: {},
+    routeWind: null,
   });
 
   readonly #api: FreilaufApi;
@@ -521,6 +543,8 @@ export class App {
   /** Scenery along routes (docs/adr/0011-osm-scenery.md). */
   readonly #scenery: SceneryService;
   #sceneryToken = 0;
+  /** The weather of a day along routes (docs/adr/0012-historical-wind.md). */
+  readonly #weather: WeatherService;
 
   constructor(
     api: FreilaufApi,
@@ -560,6 +584,23 @@ export class App {
       },
       onNotice: (kind, message) => this.notify(kind, message),
       ...(options.sceneryFetch ? { fetchOptions: options.sceneryFetch } : {}),
+    });
+    this.#weather = new WeatherService({
+      api: api.weather,
+      storage,
+      log: this.#logger.scope('weather'),
+      onStatus: (weather) => {
+        const id = this.store.getState().selectedRouteId;
+        const before = id ? (this.store.getState().weather?.[id]?.state ?? 'none') : 'none';
+        this.store.setState({ weather });
+        // Loaded (or removed) for the selected route: the next ride picks it up.
+        if (id && (weather[id]?.state ?? 'none') !== before) {
+          this.#refreshRouteWind();
+          void this.#refreshGhost();
+        }
+      },
+      onNotice: (kind, message) => this.notify(kind, message),
+      ...(options.weatherFetch ? { fetchOptions: options.weatherFetch } : {}),
     });
     this.store.setState({ workouts: this.#library.list(), routes: this.#routes.list() });
     this.#community.subscribe((community) => this.store.setState({ community }));
@@ -614,6 +655,7 @@ export class App {
         this.store.setState({ settings: next });
         this.#community.setDisplayName(next.rider.name);
         this.#controller?.updateSettings(next);
+        this.#refreshRouteWind();
         void this.#refreshGhost();
       }),
       this.#api.overlay.onEditMode((overlayEditMode) => this.store.setState({ overlayEditMode })),
@@ -632,6 +674,8 @@ export class App {
     }, TICK_MS);
     this.store.setState({ ready: true });
     void this.#scenery.init().then(() => this.#refreshRouteScenery());
+    this.#weather.init(this.#routes.list().map((e) => e.id));
+    this.#refreshRouteWind();
     void this.refreshRides().then(() =>
       // Once per installation: rides saved before the community features existed.
       this.#community.backfill(
@@ -657,6 +701,7 @@ export class App {
     this.#buttonWatch?.();
     this.#leverWatch?.();
     this.#scenery.dispose();
+    this.#weather.dispose();
     this.#community.dispose(); // withdraws its documents and writes pending changes
     this.#group?.leave();
     this.#controller?.dispose();
@@ -910,6 +955,7 @@ export class App {
         rider: before.settings?.rider ?? null,
         ghost: finished?.ghost ?? null,
         routeTime: routeTimeOf(finished?.ride ?? null, before.ghost?.candidates ?? []),
+        windLabel: finished?.ride.route?.weather?.label ?? null,
         powerUpGainM: finished?.powerUps?.raceOffsetM ?? before.live?.powerUps?.raceOffsetM ?? 0,
         rumble:
           finished?.powerUps?.mode === 'rumble'
@@ -1105,9 +1151,93 @@ export class App {
       return false;
     }
     this.store.setState({ selectedRouteId: id, routeTrack: found?.track ?? null });
+    this.#refreshRouteWind();
     void this.#refreshGhost();
     void this.#refreshRouteScenery();
     return true;
+  }
+
+  // ───────────── the weather of a day (docs/adr/0012-historical-wind.md) ─────────────
+
+  /**
+   * The selected route's stored wind for the next ride: handed to the ride when it fits the
+   * route and "Ride with that day's wind" is on for it (the default). Never fetches.
+   */
+  #refreshRouteWind(): void {
+    const s = this.store.getState();
+    const id = s.selectedRouteId;
+    const track = s.routeTrack;
+    const profile = id ? this.#weather.profile(id) : null;
+    const fits =
+      profile && track && Math.abs(profile.totalDistanceM - track.totalDistanceM) < 1 + track.stepM;
+    const routeWind = fits ? profile : null;
+    if ((s.routeWind ?? null) !== routeWind) this.store.setState({ routeWind });
+    const c = this.#controller;
+    if (!c || c.rideState !== 'idle') return;
+    const on = routeWind && id ? s.settings?.weather?.rideWithWind[id] !== false : false;
+    if (on && routeWind) {
+      const key = windConditionsKey(routeWind);
+      if (c.wind?.key !== key || c.wind.profile !== routeWind) {
+        c.setWind({ profile: routeWind, key, label: weatherDayLabel(routeWind) });
+      }
+    } else if (c.wind) c.setWind(null);
+    c.setWindShelter(s.routeScenery ?? null);
+  }
+
+  /** "Ride with that day's wind" on the start screen, remembered per route. */
+  async setRideWithWind(id: string, on: boolean): Promise<void> {
+    if ((this.#controller?.rideState ?? 'idle') !== 'idle') return;
+    this.#logger.log('info', 'weather', on ? 'riding with wind' : 'riding without wind', { id });
+    await this.updateSettings({ weather: { rideWithWind: { [id]: on } } });
+    this.#refreshRouteWind();
+    await this.#refreshGhost();
+  }
+
+  /** When the recorded ride of an imported route took place (from its GPX), or null. */
+  recordedRideTime(id: string): { startMs: number; endMs: number; label: string } | null {
+    const times = this.#routes.timesOf(id);
+    if (!times) return null;
+    const span = routeTimesSpan(times);
+    const offset = -new Date(span.startMs).getTimezoneOffset() * 60;
+    return { ...span, label: formatWeatherSpan(span.startMs, span.endMs, offset) };
+  }
+
+  /**
+   * Loads the weather of a day along an imported route once and stores it (the rider asked:
+   * on import or in the route's details). Without `day` the recorded ride's times are used
+   * (a GPX with times); with it, that day from `day.time` (default 10:00) at a constant
+   * 25 km/h. Returns false when there is nothing to load for (no times and no day given).
+   */
+  loadWeather(id: string, day?: { date: string; time?: string } | null): boolean {
+    const found = this.#routes.get(id);
+    if (!found || found.entry.source !== 'imported') return false;
+    if (day && day.date) {
+      this.#weather.load(found.track, {
+        kind: 'chosen',
+        date: day.date,
+        time: day.time || DEFAULT_WEATHER_START,
+      });
+      return true;
+    }
+    const times = this.#routes.timesOf(id);
+    if (!times) return false;
+    this.#weather.load(found.track, { kind: 'recorded', times });
+    return true;
+  }
+
+  cancelWeather(id: string): void {
+    this.#weather.cancel(id);
+  }
+
+  removeWeather(id: string): void {
+    if (
+      (this.#controller?.rideState ?? 'idle') !== 'idle' &&
+      this.store.getState().selectedRouteId === id
+    ) {
+      this.notify('info', 'Finish the current ride before removing its weather.');
+      return;
+    }
+    this.#weather.remove(id);
   }
 
   // ───────────── scenery along routes (docs/adr/0011-osm-scenery.md) ─────────────
@@ -1133,6 +1263,8 @@ export class App {
     const fits =
       model && track && Math.abs(model.totalDistanceM - track.totalDistanceM) < 1 + track.stepM;
     this.store.setState({ routeScenery: fits ? model : null });
+    // Woods and houses beside the road shelter it from the wind.
+    this.#controller?.setWindShelter(fits ? model : null);
   }
 
   /**
@@ -1205,8 +1337,14 @@ export class App {
   importRoute(
     text: string,
     fileName?: string,
-    options: { scenery?: boolean } = {},
-  ): { ok: true; entry: RouteEntry; warnings: string[] } | { ok: false; errors: string[] } {
+    options: {
+      scenery?: boolean;
+      weather?: boolean;
+      weatherDay?: { date: string; time?: string };
+    } = {},
+  ):
+    | { ok: true; entry: RouteEntry; warnings: string[]; weather?: string }
+    | { ok: false; errors: string[] } {
     const log = this.#logger.scope('routes');
     const result: RouteImportResult = this.#routes.importText(text, fileName);
     if (!result.ok) {
@@ -1236,7 +1374,22 @@ export class App {
     if (this.store.getState().selectedRouteId === entry.id) this.selectRoute(entry.id);
     // Only when the rider ticked "Load surroundings" (off by default).
     if (options.scenery === true) this.loadScenery(entry.id);
-    return { ok: true, entry, warnings };
+    // Only when the rider ticked "Load the weather of that day" (off by default): the
+    // recorded day if the file has times, else the day chosen next to the option.
+    let weather: string | undefined;
+    if (options.weather === true && entry.source === 'imported') {
+      const recorded = result.times ? this.recordedRideTime(entry.id) : null;
+      if (recorded) {
+        this.loadWeather(entry.id);
+        weather = `Weather of the recorded ride: ${recorded.label}.`;
+      } else if (options.weatherDay?.date) {
+        this.loadWeather(entry.id, options.weatherDay);
+        weather = `No times in this file: weather of ${options.weatherDay.date}, from ${options.weatherDay.time || DEFAULT_WEATHER_START}.`;
+      } else {
+        weather = 'No times in this file: choose a day in the route’s Details to load its weather.';
+      }
+    }
+    return { ok: true, entry, warnings, ...(weather ? { weather } : {}) };
   }
 
   deleteRoute(id: string): void {
@@ -1246,6 +1399,7 @@ export class App {
       this.#logger.log('info', 'routes', 'route deleted', { id });
       this.store.setState({ routes: this.#routes.list() });
       if (this.#scenery.status(id).state !== 'none') void this.#scenery.remove(id);
+      if (this.#weather.status(id).state !== 'none') this.#weather.remove(id);
     }
   }
 
@@ -1433,7 +1587,9 @@ export class App {
     const settings = s.settings?.ghost;
     const enabled = settings?.enabled !== false;
     const candidates = ghostCandidates(s.rides, routeId);
-    const bestRideId = bestGhost(candidates)?.rideId ?? null;
+    // Like with like: the best time among rides in the same conditions (wind or not).
+    const conditions = this.#controller?.wind?.key ?? null;
+    const bestRideId = bestGhost(candidates, conditions)?.rideId ?? null;
     const sameRoute = g.routeId === routeId;
     if (this.#importedGhost && this.#importedGhost.routeId !== routeId) this.#importedGhost = null;
     const imported = this.#importedGhost && sameRoute ? g.imported : null;
@@ -1444,6 +1600,7 @@ export class App {
       routeId,
       candidates,
       bestRideId,
+      conditions,
       choice,
       active: null,
       imported,
@@ -1464,14 +1621,19 @@ export class App {
       });
       return;
     }
-    const resolved = resolveGhostChoice(choice === 'import' ? 'best' : choice, candidates, enabled);
+    const resolved = resolveGhostChoice(
+      choice === 'import' ? 'best' : choice,
+      candidates,
+      enabled,
+      conditions,
+    );
     if (resolved.kind === 'none') {
       this.#controller?.setGhost(null);
       this.store.setState({ ghost: base });
       return;
     }
     const rideId = resolved.ride.rideId;
-    const label = ghostLabel(resolved, shape);
+    const label = ghostLabel(resolved, shape, Date.now(), conditions);
     let trace = this.#ghostTraces.get(rideId);
     if (trace === undefined) {
       this.store.setState({ ghost: { ...base, loading: true } });
@@ -2071,6 +2233,11 @@ function routeTimeOf(
 ): { timeS: number; previousS: number | null } | null {
   const info = ride ? rideRouteInfo(ride) : null;
   if (!info || info.fullTimeS === null) return null;
-  const previous = bestGhost(earlier.filter((c) => c.rideId !== ride!.id))?.fullTimeS ?? null;
+  // Only rides in the same conditions: with this day's wind, or without wind.
+  const previous =
+    bestGhost(
+      earlier.filter((c) => c.rideId !== ride!.id),
+      info.weather?.key ?? null,
+    )?.fullTimeS ?? null;
   return { timeS: info.fullTimeS, previousS: previous };
 }

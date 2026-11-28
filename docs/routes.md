@@ -168,6 +168,93 @@ one way and on the right the other. Why it works this way: [ADR 0011](adr/0011-o
 > **Status:** tested against recorded and made-up map data only; loading from the real public
 > server has not been tried from the development environment yet.
 
+## The weather of that day
+
+A route can be ridden with the **wind of a real day**: the day you recorded it, or any day you
+pick. Into the wind you are slower, with it faster, exactly as much as the bike physics says;
+the scene shows where the wind comes from and how warm and wet it was. The data comes from the
+[Open-Meteo](https://open-meteo.com/) historical weather archive (**Weather data by
+Open-Meteo.com**, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)); route
+details show that attribution next to the stored weather.
+
+- **Off unless you ask.** When importing, tick **Load the weather of that day** (off by
+  default, every time). A GPX file with times (a recorded ride) uses its own day and times
+  automatically — the import result says which: "Weather of the recorded ride: 14 June 2025,
+  09:12–13:40". For a file without times (a planned route), pick a **day** (and a **start**,
+  10:00 unless you change it) next to the option; the ride is then assumed to pass each place
+  at a steady 25 km/h from that start. Later: the route's **Details** → **Weather of that day**
+  → load the recorded ride's day, or a day of your choice. Built-in routes have none.
+- **What the weather server sees:** roughly where the route runs — places every 10 km along it,
+  rounded to a grid of 0.1° (about 10 km), each cell asked once — and which days (the ride's
+  day ± one day). The desktop app sends the request from its own process with the generic name
+  "Freilauf (open-source indoor cycling app)"; the browser version sends it from the page, with
+  the browser's name and the page's address. Nothing about you, your rides or your devices is
+  sent.
+- **Once, then offline.** One request for most routes (ten grid cells per request; long routes
+  a few, one at a time with a pause). Busy server: the app waits and tries again (the route's
+  row says so; **Cancel** stops it). The archive lags a few days behind and starts in 1940;
+  a day it has no data for is refused with that reason. A ride only ever reads what is stored:
+  nothing is fetched while riding.
+- **What is kept:** next to the route in route storage (a few hundred bytes to a few KB): for
+  each place along the route (distance from the start) the wind at 10 m (speed, the direction it
+  comes from, gusts), the temperature, precipitation and a weather code, at the time the ride
+  passed there; plus the day and start of that ride. A GPX with times also keeps when the
+  recording passed each kilometre (up to 200 numbers), so the recorded day can be loaded later.
+  Deleting the route removes both.
+- **Details** shows "14 June 2025, 09:12–13:40 · wind 14 km/h from the south-west, up to 22 km/h ·
+  12–17 °C · Partly cloudy", whether it is the recorded ride's times or a chosen day, the
+  attribution, **Remove weather** and **Load again with another date**.
+- **Settings → Routes → Weather server for the weather of a day** sets another archive server
+  with the same request format (https, or `http://localhost` for one on this computer).
+
+### Riding with it
+
+- **Start screen:** with a route that has stored weather, **Ride with that day's wind (14 June 2025)** appears, on by default and remembered per route. Off, the route is ridden as without
+  weather.
+- **What you feel:** the wind at 10 m is reduced to a rider's height — × 0.65 on open road,
+  × 0.4 where the stored surroundings ([above](#surroundings-from-openstreetmap)) show woods,
+  built-up land or houses within 40 m of the road (× 0.525 with them on one side only) — and
+  only its component **along the road** counts: a headwind adds to the air resistance, a
+  tailwind takes from it (a strong one pushes); a crosswind does nothing. It follows the road
+  through every bend and turns into a tailwind on the way back of an out-and-back; changes
+  ease in over a few seconds. At most ± 36 km/h along the road count.
+- **How much:** at 200 W on the flat (83 kg, the default bike) you do 34.3 km/h without wind. A
+  20 km/h wind (at 10 m, open road: 13 km/h at the rider) straight against you makes it
+  26.6 km/h — **about 5 minutes more per 10 km** (1351 s instead of 1051 s, 7.6 km less per
+  hour); straight behind you 42.9 km/h (3.5 minutes less per 10 km). There and back is still
+  slower than calm (2190 s instead of 2101 s per 2 × 10 km): a headwind costs more than a
+  tailwind gives back.
+- **The trainer** feels the wind like the gradient: sent as the wind of its simulation
+  parameters, scaled by **Climb difficulty**, rate-limited; in ERG the power target holds.
+- **The scene** shows a chip at the top: an arrow for the way the wind blows relative to your
+  direction of travel, "Headwind 14 km/h" (or tail- or crosswind, or calm) and "17 °C · Rain";
+  thin rain streaks when it rained in that hour. The overlay shows a "Wind" pill while riding.
+- **In a group ride** the wind is not used (the others may ride without it); the chip says so.
+
+### Fair comparisons
+
+- A ride with wind is **flagged** in the ride file (`route.weather`: which day's wind) and in the
+  summary: "With wind of 14 June 2025".
+- **Best times and ghosts compare like with like:** a ride with a day's wind is never the "best
+  time" of rides without wind, nor the other way round; rides with another day's wind are
+  separate again. "My best time" on the start screen and "New best time on this route" in the
+  summary only look at rides in the same conditions ("… with the wind of 14 June 2025"). You can
+  still race any ride as a ghost; one ridden in other conditions says so in its name ("· with
+  wind of 14 June 2025", "· without wind").
+- **Points and personal bests** are effort-based (normalised power against your FTP, best
+  power over 5 s … 20 min): the wind does not change them. **Totals and leaderboards** rank
+  points, distance, time, climbing, energy and ride counts — never speed; wind changes the
+  distance of a ride much like hills do, so it is not excluded there.
+- **Recording and `.fit`:** power, heart rate and cadence are what you produced; speed and
+  distance follow the physics (slower into the wind). The weather itself is not written to the
+  `.fit` file.
+
+Why it works this way: [ADR 0012](adr/0012-historical-wind.md).
+
+> **Status:** tested against made-up answers in the archive's documented format only (unit
+> tests, a fake server for the desktop app, intercepted requests in the browser); loading from
+> the real public archive has not been tried from the development environment yet.
+
 ## Recording and uploading with a map
 
 A ride along a route records your position and elevation on the route. The `.fit` export carries

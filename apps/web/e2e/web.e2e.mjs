@@ -573,6 +573,109 @@ async function scenery(browser, base) {
   await context.close();
 }
 
+/**
+ * The weather of a day along routes from the browser (docs/routes.md): the page itself GETs the
+ * public archive (CORS, allowed by the CSP's https:), here answered by Playwright with a
+ * made-up answer in the documented format; the ride shows the wind; switched off, it is gone.
+ */
+async function weather(browser, base) {
+  const fixtures = path.join(here, '../../../packages/routes/fixtures');
+  const gpxText = readFileSync(path.join(fixtures, 'isar-ursprung.gpx'), 'utf8');
+  const pts = [...gpxText.matchAll(/<trkpt[\s\S]*?<\/trkpt>/g)].map((m) => m[0]).slice(0, 160);
+  const gpx = `<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Isar weather test</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const problems = await watch(page, 'weather');
+  const requests = [];
+  await page.route('https://archive-api.open-meteo.com/v1/archive?**', async (route) => {
+    const req = route.request();
+    const u = new URL(req.url());
+    requests.push({ method: req.method(), url: req.url() });
+    const n = (u.searchParams.get('latitude') ?? '').split(',').length;
+    const from = Date.parse(`${u.searchParams.get('start_date')}T00:00Z`) / 1000;
+    const to = Date.parse(`${u.searchParams.get('end_date')}T23:00Z`) / 1000;
+    const time = [];
+    for (let t = from; t <= to; t += 3600) time.push(t);
+    const col = (v) => time.map(() => v);
+    const one = {
+      utc_offset_seconds: 7200,
+      hourly: {
+        time,
+        wind_speed_10m: col(7),
+        wind_direction_10m: col(180),
+        wind_gusts_10m: col(12),
+        temperature_2m: col(11),
+        precipitation: col(0),
+        weather_code: col(3),
+      },
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify(n === 1 ? one : Array.from({ length: n }, () => one)),
+    });
+  });
+  await page.goto(`${base}/?sim=1`);
+  await page.getByTestId('start-screen').waitFor({ timeout: 15_000 });
+  await trainerConnected(page);
+  await page.getByTestId('ride-kind-route').click();
+  const option = page.getByTestId('route-import-weather');
+  check('weather: import option off by default', !(await option.isChecked()));
+  await option.check();
+  await page.getByTestId('route-import').setInputFiles({
+    name: 'isar.gpx',
+    mimeType: 'application/gpx+xml',
+    buffer: Buffer.from(gpx),
+  });
+  const row = page.getByTestId('route-row').filter({ hasText: 'Isar weather test' });
+  const badge = row.getByTestId('route-weather-badge');
+  const ready = await badge
+    .waitFor({ timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    'weather: fetched from the browser (one GET) and stored',
+    ready &&
+      requests.length === 1 &&
+      requests[0].method === 'GET' &&
+      requests[0].url.includes('start_date=2026-05-01'),
+    `${requests.length} requests`,
+  );
+  check(
+    'weather: the recorded day is used',
+    ready && (await badge.innerText()).includes('2 May 2026'),
+  );
+  await row.getByTestId('route-select').click();
+  await row.getByTestId('route-go-ride').click();
+  const toggle = page.getByTestId('start-wind-toggle');
+  check('weather: "Ride with that day’s wind" on by default', await toggle.isChecked());
+  await page.getByTestId('start-open-ride').click();
+  const chip = page.getByTestId('wind-text');
+  const shown = await chip
+    .waitFor({ timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    'weather: the wind chip on the ride view',
+    shown && /^(Headwind|Tailwind|Crosswind) \d+ km\/h$/.test(await chip.innerText()),
+    shown ? await chip.innerText() : 'not shown',
+  );
+  await page.reload();
+  await page.getByTestId('ride-kind-route').click();
+  const kept = await page
+    .getByTestId('route-row')
+    .filter({ hasText: 'Isar weather test' })
+    .getByTestId('route-weather-badge')
+    .waitFor({ timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('weather: kept with the route across a reload', kept);
+  check('weather: nothing fetched again', requests.length === 1, `${requests.length} requests`);
+  check('no console errors (weather)', problems.length === 0, problems.join(' | '));
+  await context.close();
+}
+
 const server = await startServer();
 const browser = await chromium.launch();
 try {
@@ -582,6 +685,7 @@ try {
   await pairingWithoutPicker(browser, server.base);
   await insecureNotice(server.base, server.port);
   await scenery(browser, server.base);
+  await weather(browser, server.base);
 } catch (err) {
   check('run completed', false, err instanceof Error ? (err.stack ?? err.message) : String(err));
 } finally {

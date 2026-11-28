@@ -51,6 +51,9 @@ export const IPC = {
   sceneryRemove: 'scenery:remove',
   sceneryList: 'scenery:list',
 
+  weatherArchive: 'weather:archive',
+  weatherCancel: 'weather:cancel',
+
   watchRelayStatus: 'watch-relay:status',
   /** main → main window */
   watchRelayStatusChanged: 'watch-relay:status-changed',

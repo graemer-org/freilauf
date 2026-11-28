@@ -1,7 +1,7 @@
 import type { SimulationParams, Unsubscribe } from '@freilauf/devices';
 import { createEmitter } from '@freilauf/devices';
 import type { BikeParams } from './physics';
-import { windResistanceKgM } from './physics';
+import { MAX_HEADWIND_MPS, windResistanceKgM } from './physics';
 
 /**
  * Virtual drivetrain: 24 sequential gears, expressed as development ratios
@@ -76,11 +76,15 @@ const MAX_WIND_RESISTANCE = 2.54;
  *
  * So gravity and rolling terms scale with r (and with m / m_trainer, since
  * the trainer multiplies by its own mass), the aero coefficient with r³.
+ *
+ * A head wind w (route weather, docs/adr/0012-historical-wind.md) acts on the air speed:
+ * r · ½ρCdA · (r·v_t + w)² = r³ · ½ρCdA · (v_t + w/r)², so the trainer gets w / r.
  */
 export function effectiveSimulation(
   virtualRatio: number,
   gradePercent: number,
   options: SoftwareShifterOptions,
+  headwindMps = 0,
 ): SimulationParams {
   const physicalRatio = options.physicalRatio ?? DEFAULT_PHYSICAL_RATIO;
   const trainerMass = options.trainerMassKg ?? options.bike.totalMassKg;
@@ -99,7 +103,12 @@ export function effectiveSimulation(
     gradePercent: Math.min(max, Math.max(min, grade)),
     crr,
     windResistanceKgM: Math.min(MAX_WIND_RESISTANCE, windResistanceKgM(options.bike) * r ** 3),
-    windSpeedMps: 0,
+    windSpeedMps:
+      Number.isFinite(headwindMps) && headwindMps !== 0 && r > 0
+        ? Math.round(
+            (Math.max(-MAX_HEADWIND_MPS, Math.min(MAX_HEADWIND_MPS, headwindMps)) / r) * 100,
+          ) / 100
+        : 0,
   };
 }
 
@@ -114,6 +123,7 @@ export class SoftwareShifter implements Shifter {
   readonly #errorEmitter = createEmitter<unknown>();
   #gear: number;
   #gradePercent = 0;
+  #headwindMps = 0;
 
   constructor(sink: SimulationSink, options: SoftwareShifterOptions) {
     this.#sink = sink;
@@ -159,6 +169,21 @@ export class SoftwareShifter implements Shifter {
     this.resync();
   }
 
+  get headwindMps(): number {
+    return this.#headwindMps;
+  }
+
+  /**
+   * The head (+) / tail (−) wind the rider should feel (m/s at rider height; route weather).
+   * Like setGradient, a change is sent at once; the caller rate-limits.
+   */
+  setHeadwind(headwindMps: number): void {
+    const w = Number.isFinite(headwindMps) ? headwindMps : 0;
+    if (w === this.#headwindMps) return;
+    this.#headwindMps = w;
+    this.resync();
+  }
+
   onGear(listener: (gear: number) => void): Unsubscribe {
     return this.#gearEmitter.on(listener);
   }
@@ -169,7 +194,12 @@ export class SoftwareShifter implements Shifter {
   }
 
   resync(): void {
-    const params = effectiveSimulation(this.ratio, this.#gradePercent, this.#options);
+    const params = effectiveSimulation(
+      this.ratio,
+      this.#gradePercent,
+      this.#options,
+      this.#headwindMps,
+    );
     this.#sink(params).catch((err: unknown) => this.#errorEmitter.emit(err));
   }
 

@@ -7,6 +7,7 @@ import type { GhostShape } from '../../core/ghost';
 import {
   candidateDetail,
   clockTime,
+  conditionsNote,
   formatGhostGap,
   formatSplit,
   ghostTone,
@@ -33,14 +34,17 @@ export function ghostOptions(g: GhostState, shape: GhostShape, now = Date.now())
   if (best) {
     out.push({
       value: 'best',
-      label: `My best time · ${clockTime(best.fullTimeS ?? 0)} (${shortDate(best.startedAt, now)})`,
+      label: `My best time${g.conditions ? ' with this wind' : ''} · ${clockTime(best.fullTimeS ?? 0)} (${shortDate(best.startedAt, now)})`,
       group: 'main',
     });
   }
+  // Rides in other conditions (with another day's wind, or none) may be raced, but say so.
+  const note = (c: (typeof g.candidates)[number]): string =>
+    conditionsNote(c, g.conditions ?? null);
   if (last) {
     out.push({
       value: 'last',
-      label: `My last ride · ${shortDate(last.startedAt, now)} · ${candidateDetail(last, shape)}`,
+      label: `My last ride · ${shortDate(last.startedAt, now)} · ${candidateDetail(last, shape)}${note(last)}`,
       group: 'main',
     });
   }
@@ -49,7 +53,7 @@ export function ghostOptions(g: GhostState, shape: GhostShape, now = Date.now())
   for (const c of g.candidates) {
     out.push({
       value: `ride:${c.rideId}`,
-      label: `${shortDate(c.startedAt, now)} · ${candidateDetail(c, shape)}`,
+      label: `${shortDate(c.startedAt, now)} · ${candidateDetail(c, shape)}${note(c)}`,
       group: 'rides',
     });
   }
@@ -143,7 +147,7 @@ export function ghostPill(
 }
 
 /** The summary's ghost lines; null without a ghost race. */
-export function ghostSummary(s: Pick<RideSummary, 'ghost' | 'routeTime'>): {
+export function ghostSummary(s: Pick<RideSummary, 'ghost' | 'routeTime' | 'windLabel'>): {
   verdict: string | null;
   tone: 'ahead' | 'behind' | 'even';
   against: string | null;
@@ -152,11 +156,13 @@ export function ghostSummary(s: Pick<RideSummary, 'ghost' | 'routeTime'>): {
 } | null {
   const g = s.ghost ?? null;
   const rt = s.routeTime ?? null;
+  // With wind, the time is compared only with rides of the same day's wind.
+  const wind = s.windLabel ? ` with the wind of ${s.windLabel}` : '';
   const best = rt
     ? rt.previousS === null
-      ? `Your first time for the whole route: ${clockTime(rt.timeS)}`
+      ? `Your first time for the whole route${wind}: ${clockTime(rt.timeS)}`
       : rt.timeS < rt.previousS
-        ? `New best time on this route: ${clockTime(rt.timeS)} (was ${clockTime(rt.previousS)})`
+        ? `New best time on this route${wind}: ${clockTime(rt.timeS)} (was ${clockTime(rt.previousS)})`
         : null
     : null;
   if (!g && !best) return null;

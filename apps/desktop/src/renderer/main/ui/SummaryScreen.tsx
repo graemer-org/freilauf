@@ -82,6 +82,11 @@ export function SummaryScreen({ onDone, onAgain }: { onDone: () => void; onAgain
             {what}
           </p>
         )}
+        {summary.windLabel && (
+          <p className="summary-wind" data-testid="summary-wind">
+            <span className="tag tag-accent">{`With wind of ${summary.windLabel}`}</span>
+          </p>
+        )}
         {!saved && (
           <p className="hint" data-testid="summary-not-saved">
             Rides shorter than 10 seconds are not kept.

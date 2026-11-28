@@ -25,6 +25,7 @@ import { OverlayController } from './overlay';
 import { OverpassClient } from './overpassClient';
 import { RideStore } from './rideStore';
 import { SceneryStore } from './sceneryStore';
+import { WeatherClient } from './weatherClient';
 import { helperSpawner, locateHelper } from './sensorRelay';
 import { SensorRelayController, relayInputFromLive } from './sensorRelayController';
 import type { AppOrigin } from './security';
@@ -151,6 +152,12 @@ function start(): void {
           log: (m) => sceneryLog.info(m),
         }),
       };
+      const weatherLog = d.scope('weather');
+      const weather = new WeatherClient({
+        fetch: (url, init) => net.fetch(url, init),
+        endpoint: () => settings.get().weather.archiveUrl,
+        log: (m) => weatherLog.info(m),
+      });
       const btLog = d.scope('bluetooth');
       const bt = (m: string) => btLog.info(m);
       const windowStatePath = path.join(userData, 'window-state.json');
@@ -281,6 +288,7 @@ function start(): void {
         settings,
         rides,
         scenery,
+        weather,
         diag: d,
         log,
         watchRelayStatus: () => relay.status,
@@ -347,6 +355,7 @@ function start(): void {
       app.on('will-quit', () => {
         relay.dispose();
         scenery.overpass.cancelAll();
+        weather.cancelAll();
         overlay?.unregisterHotkey();
         overlay?.close();
         settings.flushSync();

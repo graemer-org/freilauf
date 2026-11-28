@@ -7,6 +7,13 @@ import { RouteOutline, RouteProfile } from './RouteGraphics';
 import { ProfilePicker } from './RoutePick';
 import { SceneryBadge, SceneryDetails, SceneryImportOption } from './SceneryUi';
 import {
+  EMPTY_WEATHER_DAY,
+  WeatherBadge,
+  WeatherDetails,
+  WeatherImportOption,
+  type WeatherDay,
+} from './WeatherUi';
+import {
   hasRouteState,
   routeActions,
   routeJumps,
@@ -190,6 +197,7 @@ export function RouteDetails({
       )}
       {entry.description && <p className="wo-description">{entry.description}</p>}
       <SceneryDetails entry={entry} riding={riding} />
+      <WeatherDetails entry={entry} riding={riding} />
       <dl className="rt-facts">
         <div>
           <dt>Distance</dt>
@@ -339,6 +347,7 @@ function RouteRow({
           {routeSummary(entry)}
         </p>
         {entry.source === 'imported' && <SceneryBadge entry={entry} />}
+        {entry.source === 'imported' && <WeatherBadge entry={entry} />}
       </div>
       <div className="wo-preview">
         <RouteThumbs entry={entry} />
@@ -500,7 +509,10 @@ export async function importRouteFiles(
           ...base,
           ok: true,
           name: result.entry.name,
-          messages: result.warnings.map((w) => `Note: ${w}`),
+          messages: [
+            ...result.warnings.map((w) => `Note: ${w}`),
+            ...(result.weather ? [result.weather] : []),
+          ],
         });
       } else {
         out.push({
@@ -546,6 +558,9 @@ export function RoutesTab({ onGoToRide }: RoutesTabProps) {
   const dragDepth = useRef(0);
   // Off by default every time the library opens: loading surroundings is a choice per import.
   const [withScenery, setWithScenery] = useState(false);
+  // The same for the weather of that day (and the day for files without times).
+  const [withWeather, setWithWeather] = useState(false);
+  const [weatherDay, setWeatherDay] = useState<WeatherDay>(EMPTY_WEATHER_DAY);
 
   if (!available || !actions) {
     return (
@@ -562,6 +577,8 @@ export function RoutesTab({ onGoToRide }: RoutesTabProps) {
   const importFiles = async (files: readonly File[]): Promise<void> => {
     const out = await importRouteFiles(actions, files, () => ++key.current, {
       scenery: withScenery,
+      weather: withWeather,
+      ...(withWeather && weatherDay.date ? { weatherDay } : {}),
     });
     if (out.length > 0) setResults(out);
   };
@@ -626,6 +643,12 @@ export function RoutesTab({ onGoToRide }: RoutesTabProps) {
           </button>
         </div>
         <SceneryImportOption checked={withScenery} onChange={setWithScenery} />
+        <WeatherImportOption
+          checked={withWeather}
+          onChange={setWithWeather}
+          day={weatherDay}
+          onDay={setWeatherDay}
+        />
         <p className="wo-ftp" data-testid="routes-intro">
           Ride a real road: the gradient follows the route and the scene shows the bends and hills
           ahead. GPX files come from your own recorded rides (most bike computers and ride-logging

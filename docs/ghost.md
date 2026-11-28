@@ -17,6 +17,10 @@ Choose a route on the start screen; a **Ghost** line appears under it:
 
 - **My best time** (the default when there is one): the fastest ride of the whole route — start
   to finish on a point-to-point route, a full lap from the start/finish line on a loop.
+  Only rides in the same conditions count: with the wind of a day
+  ([routes.md](routes.md#fair-comparisons)) your best time is that of rides with the same day's
+  wind, without wind that of rides without; a ride in other conditions can still be picked, and
+  says so ("· with wind of 14 June 2025", "· without wind").
 - **My last ride**: the most recent ride of this route.
 - **Pick an earlier ride**: any ride of this route from your history, newest first. Each one
   shows its time, or which part of the route it covers.

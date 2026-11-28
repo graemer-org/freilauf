@@ -7,7 +7,7 @@
  * several continuous parts; only the longest one becomes the ghost, because across a jump the
  * ride's time says nothing about the road in between (ADR 0010).
  */
-import type { RecordedRide, RideRoute } from './types';
+import type { RecordedRide, RideRoute, RideWeather } from './types';
 
 export interface GhostTrace {
   /** Moving time (s) since the ride started, non-decreasing. */
@@ -127,8 +127,27 @@ export function validRideRoute(route: unknown): RideRoute | null {
   if (typeof r.loop !== 'boolean' || !Array.isArray(r.offsetsM)) return null;
   if (r.offsetsM.length === 0 || r.offsetsM.length > 10_000) return null;
   if (!r.offsetsM.every((o) => typeof o === 'number' && Number.isFinite(o) && o >= 0)) return null;
-  return { id: r.id, lengthM: r.lengthM, loop: r.loop, offsetsM: r.offsetsM as number[] };
+  const weather = validRideWeather(r.weather);
+  return {
+    id: r.id,
+    lengthM: r.lengthM,
+    loop: r.loop,
+    offsetsM: r.offsetsM as number[],
+    ...(weather ? { weather } : {}),
+  };
 }
+
+/** RideRoute.weather if well-formed; null for none (or a broken one: treated as no wind). */
+export function validRideWeather(w: unknown): RideWeather | null {
+  if (typeof w !== 'object' || w === null) return null;
+  const { key, label } = w as Record<string, unknown>;
+  if (typeof key !== 'string' || key.length === 0 || key.length > 40) return null;
+  if (typeof label !== 'string' || label.length === 0 || label.length > 80) return null;
+  return { key, label };
+}
+
+/** The conditions key of a ride's route info: its weather key, or null for no wind. */
+export const conditionsOf = (w: RideWeather | null | undefined): string | null => w?.key ?? null;
 
 /** One continuous part of a ride along its route, as raw points. */
 export function rideRouteParts(
@@ -221,6 +240,8 @@ export interface RideRouteInfo {
   continuous: boolean;
   /** True when the ride can be raced as a ghost (a continuous part of at least MIN_GHOST_M). */
   ghost: boolean;
+  /** Ridden with a day's wind (absent = no wind). */
+  weather?: RideWeather;
 }
 
 export function rideRouteInfo(ride: RecordedRide): RideRouteInfo | null {
@@ -234,5 +255,6 @@ export function rideRouteInfo(ride: RecordedRide): RideRouteInfo | null {
     fullTimeS: g?.fullTimeS ?? null,
     continuous: route.offsetsM.length <= 1,
     ghost: g !== null,
+    ...(route.weather ? { weather: route.weather } : {}),
   };
 }
