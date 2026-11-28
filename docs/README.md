@@ -9,6 +9,9 @@
   elevation, starting part-way or jumping by clicking the profile, difficulty, loops and laps,
   sharing limits, surroundings from OpenStreetMap, the weather (wind) of a day, recording with a
   map
+- [Fitted to an episode](workouts.md#fitted-to-an-episode) — a workout exactly as long as the
+  episode or film you watch: length, effort, pattern, the preview, "hard now" (H) and the cues in
+  the overlay
 - [group-rides.md](group-rides.md) — ride with friends: create a ride and send the link (no
   setup), what the public relay servers see, troubleshooting, and the advanced own-server option
 - [power-ups.md](power-ups.md) — power-ups: collecting and earning them, what each one does, the
@@ -66,7 +69,7 @@ Anything not yet confirmed on real hardware is marked unverified.
   transport (Trystero) and the fallback signalling server + WebRTC mesh, the
   message protocol, shared documents and the synchronised start (for riders: [group-rides.md](group-rides.md))
 - [workouts.md](workouts.md) — structured workouts: model, ERG runner,
-  `.zwo` import/export, built-in library, FTP tests, workouts fitted to an episode ("hard now")
+  `.zwo` import/export, built-in library, FTP tests, [workouts fitted to an episode](workouts.md#fitted-to-an-episode) ("hard now")
 - [community.md](community.md) — points, totals, friends, challenges and
   leaderboards synced peer-to-peer (core library and its integration under Activity →
   Community)

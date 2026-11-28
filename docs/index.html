@@ -6,7 +6,7 @@
     <title>Freilauf — indoor cycling without the virtual world</title>
     <meta
       name="description"
-      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, GPX routes, a ghost rider, structured workouts, a stats overlay over your own video, and peer-to-peer group rides with a playful race mode. No account, no telemetry."
+      content="Freilauf is a free, open-source, local-first indoor cycling app: smart trainer control, virtual shifting, GPX routes with the wind of a real day, a ghost rider, structured workouts and workouts fitted to an episode, a stats overlay over your own video, and peer-to-peer group rides with a playful race mode. No account, no telemetry."
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f3f3f6" media="(prefers-color-scheme: light)" />
@@ -85,9 +85,9 @@
           <p class="lede">
             Your own video, your friends, your data. Freilauf connects your smart trainer, shifts
             gears in software and puts your numbers over whatever is on your screen. Ride a free
-            ride, a GPX route — against your own ghost, if you like — or a structured workout, alone
-            or with friends. It starts in seconds, needs no account, and keeps every ride on your
-            machine.
+            ride, a GPX route — against your own ghost, if you like — or a structured workout, even
+            one that lasts exactly as long as the episode you are watching, alone or with friends.
+            It starts in seconds, needs no account, and keeps every ride on your machine.
           </p>
           <div class="actions">
             <a class="btn btn-primary" href="https://github.com/graemer-org/freilauf"
@@ -141,6 +141,29 @@
               loading="lazy"
               decoding="async"
               alt="Semi-transparent overlay tiles for power, heart rate, cadence, speed, gear, time and distance, with a small list of group riders, over a colourful striped background."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>A workout fitted to your episode</h3>
+              <p>
+                Watching a series or a film? Pick its length — 22, 42, 55 or 90 minutes, or any 10
+                to 180 — an effort and a pattern, and Freilauf builds a workout that ends exactly
+                with the episode: a warm-up, the hard parts, and the easy spin on the credits. In
+                the mood mid-episode? Press H for “hard now”: two hard minutes at once, and the rest
+                re-fits so the total stays the same. The overlay tells you what comes next. There is
+                no link to any player — start the episode and the ride together.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/episode.webp"
+              width="1280"
+              height="720"
+              loading="lazy"
+              decoding="async"
+              alt="The Fit to an episode dialog: length presets 22, 42 (selected), 55 and 90 minutes or a custom length, effort Easy, Medium (selected) or Hard, pattern Early, Spread (selected), Finale or Steady, and a preview with a block chart of three threshold parts, ‘42 min · ends exactly with the episode’, about 40 TSS, time in zones, and the button Use for next ride."
             />
           </div>
 
@@ -215,6 +238,35 @@
               loading="lazy"
               decoding="async"
               alt="Riding an imported route through a village: simple shaded houses with pitched roofs line both sides of the road ahead, a strip of river at the right edge, and the label ‘© OpenStreetMap contributors’ at the bottom of the scene."
+            />
+          </div>
+
+          <div class="feature">
+            <div class="feature-text">
+              <h3>The weather of that day</h3>
+              <p>
+                Ride a GPX route with the wind of a real day — the day you recorded it, or any day
+                you pick. Into the wind you are slower, with it faster, exactly as the bike physics
+                says, and the trainer feels it too; a chip shows the head-, tail- or crosswind, the
+                temperature and the rain. It is off by default: tick the option when importing, or
+                load it later from the route's details. It is loaded once from a historical weather
+                archive, which learns only roughly where (to about 10 km) and which days, and kept
+                next to the route; nothing is fetched while riding. Best times and ghosts compare
+                like with like.
+              </p>
+              <p class="small">
+                Weather data by Open-Meteo.com, under CC BY 4.0; the route details show this next to
+                the stored weather.
+              </p>
+            </div>
+            <img
+              class="shot"
+              src="assets/site/wind.webp"
+              width="1280"
+              height="720"
+              loading="lazy"
+              decoding="async"
+              alt="Riding an imported route in the rain: thin rain streaks over the road and the houses ahead, and a chip at the top of the scene with a red arrow and ‘Headwind 12 km/h · 14 °C · Rain’."
             />
           </div>
 
@@ -472,8 +524,9 @@
               <h3>No backend, no telemetry</h3>
               <p>
                 Rides, settings and workouts are files on your machine. No analytics, no crash
-                reporting, no update pings. Only a group ride you join talks to the network — and a
-                map server, once, if you ask for a route's surroundings.
+                reporting, no update pings. Only a group ride you join talks to the network — and,
+                once each and only if you ask, a map server for a route's surroundings and a weather
+                archive for the weather of a day.
               </p>
             </li>
             <li>
@@ -544,6 +597,12 @@
             <li class="open">
               Surroundings from OpenStreetMap: tested with recorded and made-up map data and a fake
               local server; loading from the real public map server has not been tried yet.
+            </li>
+            <li class="open">Workouts fitted to an episode, including “hard now”.</li>
+            <li class="open">
+              The weather of that day: tested with made-up answers in the archive's documented
+              format, a fake local server and intercepted requests; loading from the real public
+              weather archive has not been tried yet.
             </li>
           </ul>
           <p>
@@ -671,7 +730,14 @@
                     >Riding real routes</a
                   >
                   — GPX files, the road view, jumping, climb difficulty, surroundings from
-                  OpenStreetMap
+                  OpenStreetMap, the weather of that day
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/workouts.md#fitted-to-an-episode"
+                    >A workout fitted to an episode</a
+                  >
+                  — length, effort, pattern, “hard now”
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/ghost.md"
@@ -737,7 +803,7 @@
                 </li>
                 <li>
                   <a href="https://github.com/graemer-org/freilauf/blob/main/docs/workouts.md"
-                    >Workouts: model, ERG and .zwo</a
+                    >Workouts: model, ERG, .zwo and episode workouts</a
                   >
                 </li>
                 <li>
@@ -766,6 +832,12 @@
                   <a
                     href="https://github.com/graemer-org/freilauf/blob/main/docs/adr/0011-osm-scenery.md"
                     >OpenStreetMap surroundings decisions (ADR 0011)</a
+                  >
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/graemer-org/freilauf/blob/main/docs/adr/0012-historical-wind.md"
+                    >Historical wind decisions (ADR 0012)</a
                   >
                 </li>
                 <li>
