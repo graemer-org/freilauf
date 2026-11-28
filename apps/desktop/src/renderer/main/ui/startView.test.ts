@@ -6,6 +6,7 @@ describe('start screen helpers', () => {
     expect(activeKinds(null, false)).toEqual({
       free: true,
       workout: false,
+      episode: false,
       ftp: false,
       route: false,
     });
@@ -14,8 +15,16 @@ describe('start screen helpers', () => {
     expect(activeKinds({ ftpTest: false }, true)).toEqual({
       free: false,
       workout: true,
+      episode: false,
       ftp: false,
       route: true,
+    });
+    expect(activeKinds({ ftpTest: false, episode: true }, false)).toEqual({
+      free: false,
+      workout: false,
+      episode: true,
+      ftp: false,
+      route: false,
     });
   });
 

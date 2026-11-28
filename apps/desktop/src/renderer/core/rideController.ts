@@ -35,10 +35,14 @@ import type { EnergyTotals, RecordedRide, RideSnapshot } from '@freilauf/session
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
 import { DEFAULT_BIKE, SoftwareShifter } from '@freilauf/sim';
-import type { FtpTestProtocol, Timeline, Workout } from '@freilauf/workouts';
+import type { EpisodePlan, FtpTestProtocol, Timeline, Workout } from '@freilauf/workouts';
 import {
+  EPISODE_PROFILES,
+  HARD_NOW_S,
   WorkoutRunner,
+  applyHardNow,
   buildTimeline,
+  hardNowAvailability,
   detectRampFailure,
   evaluateRampTest,
   evaluateTwentyMinuteTest,
@@ -46,6 +50,7 @@ import {
 } from '@freilauf/workouts';
 import type {
   DeviceStatus,
+  EpisodeLive,
   FtpTestOutcome,
   GhostLive,
   LiveEnergy,
@@ -197,7 +202,19 @@ interface Plan {
   /** Ramp test: the rider could not hold the target any more. */
   endedEarly: boolean;
   lastFailureCheckS: number;
+  /** A workout fitted to an episode (docs/workouts.md): its plan, re-fitted by "hard now". */
+  episode: EpisodePlan | null;
+  /** +1 per accepted "hard now". */
+  revision: number;
+  /** The note after the last "hard now", until `untilMs` (controller clock). */
+  notice: { text: string; tone: 'info' | 'warn'; untilMs: number } | null;
 }
+
+/** How long the note after "hard now" stays (ms). */
+export const HARD_NOW_NOTICE_MS = 4000;
+
+/** What `hardNow()` did. */
+export type HardNowOutcome = { ok: true; targetPowerW: number } | { ok: false; message: string };
 
 /** A route chosen for the next (or current) ride. */
 interface RoutePlan {
@@ -436,7 +453,11 @@ export class RideController {
    * while no ride is in progress. Pass the protocol for FTP tests so the
    * result can be evaluated at the end.
    */
-  selectWorkout(workout: Workout | null, ftpTest: FtpTestProtocol | null = null): boolean {
+  selectWorkout(
+    workout: Workout | null,
+    ftpTest: FtpTestProtocol | null = null,
+    episode: EpisodePlan | null = null,
+  ): boolean {
     if (this.#session.state !== 'idle') return false;
     this.#plan = workout
       ? {
@@ -447,9 +468,111 @@ export class RideController {
           applied: null,
           endedEarly: false,
           lastFailureCheckS: 0,
+          episode: episode && episode.workout === workout ? episode : null,
+          revision: 0,
+          notice: null,
         }
       : null;
     return true;
+  }
+
+  /** The plan of the selected / running episode workout (re-fitted by "hard now"), or null. */
+  get episodePlan(): EpisodePlan | null {
+    return this.#plan?.episode ?? null;
+  }
+
+  /**
+   * "Hard now" (docs/workouts.md): only in a running episode workout. Inserts a hard block at the
+   * current workout time and re-fits the rest (same total, same cool-down); the running ride
+   * continues on the new plan at the same point. Refused inside a hard block or near the end.
+   */
+  hardNow(source: string = 'ui'): HardNowOutcome {
+    const plan = this.#plan;
+    const runner = plan?.runner;
+    if (!plan?.episode || !runner || this.#session.state === 'idle') {
+      const message = plan?.episode ? 'Start the ride first.' : 'Only in an episode workout.';
+      if (plan?.episode) this.#setNotice(plan, message, 'warn');
+      this.#log.info('hard now refused', { source, reason: message });
+      return { ok: false, message };
+    }
+    const positionS = runner.positionS;
+    const result = applyHardNow(plan.episode, positionS);
+    if (!result.ok) {
+      this.#setNotice(plan, result.message, 'warn');
+      this.#log.info('hard now refused', {
+        source,
+        reason: result.reason,
+        atS: Math.round(positionS),
+      });
+      return { ok: false, message: result.message };
+    }
+    const intensity = runner.currentIntensity;
+    plan.episode = result.plan;
+    plan.workout = result.plan.workout;
+    plan.timeline = buildTimeline(result.plan.workout);
+    plan.runner = new WorkoutRunner(result.plan.workout, {
+      ftpW: this.#settings.rider.ftpW,
+      intensity,
+      // The old runner last advanced to the previous tick's ride time; continue from there.
+      startRideS: this.#lastLive?.ride.elapsedS ?? 0,
+      positionS,
+    });
+    plan.revision++;
+    const targetPowerW = Math.round(result.power * this.#settings.rider.ftpW * intensity);
+    this.#setNotice(
+      plan,
+      `Hard now: ${Math.round(HARD_NOW_S / 60)} min · ${targetPowerW} W`,
+      'info',
+    );
+    this.#log.info('hard now', {
+      source,
+      atS: result.startS,
+      targetPowerW,
+      removedHardS: result.removedHardS,
+      uses: result.plan.hardNowCount,
+    });
+    return { ok: true, targetPowerW };
+  }
+
+  #setNotice(plan: Plan, text: string, tone: 'info' | 'warn'): void {
+    plan.notice = { text, tone, untilMs: this.#now() + HARD_NOW_NOTICE_MS };
+    this.#republishWorkout();
+  }
+
+  /** Publishes the last live state again with the current workout extras (between ticks). */
+  #republishWorkout(): void {
+    const last = this.#lastLive;
+    const plan = this.#plan;
+    if (!last?.workout || !plan?.episode) return;
+    const live: LiveState = {
+      ...last,
+      workout: { ...last.workout, episode: this.#episodeLive(plan, last.workout.started) },
+    };
+    this.#lastLive = live;
+    this.#options.onLive(live);
+  }
+
+  #episodeLive(plan: Plan, started: boolean): EpisodeLive | undefined {
+    const episode = plan.episode;
+    if (!episode) return undefined;
+    const runner = plan.runner;
+    const intensity = runner?.currentIntensity ?? 1;
+    const availability =
+      started && runner
+        ? hardNowAvailability(episode, runner.positionS)
+        : { ok: false as const, message: 'Start the ride first.' };
+    if (plan.notice && plan.notice.untilMs <= this.#now()) plan.notice = null;
+    return {
+      lengthS: episode.totalDurationS,
+      revision: plan.revision,
+      hardNow: availability.ok
+        ? { available: true }
+        : { available: false, reason: availability.message },
+      hardNowTargetW: Math.round(
+        EPISODE_PROFILES[episode.options.effort].hardNow * this.#settings.rider.ftpW * intensity,
+      ),
+      notice: plan.notice ? { text: plan.notice.text, tone: plan.notice.tone } : null,
+    };
   }
 
   get selectedWorkout(): Workout | null {
@@ -1420,6 +1543,9 @@ export class RideController {
         this.setWorkoutIntensity(current + (action === 'intensityUp' ? 0.05 : -0.05));
         return;
       }
+      case 'hardNow':
+        this.hardNow(source);
+        return;
       case 'usePowerUp':
         // Rumble: the right grip's side button uses the right item, any other the left.
         if (this.#powerUps?.mode === 'rumble') {
@@ -1637,6 +1763,7 @@ export class RideController {
         intensity: 1,
         finished: false,
         started: false,
+        ...(plan.episode ? { episode: this.#episodeLive(plan, false) } : {}),
       };
     }
 
@@ -1709,6 +1836,7 @@ export class RideController {
       intensity: update.intensity,
       finished,
       started: true,
+      ...(plan.episode ? { episode: this.#episodeLive(plan, !finished) } : {}),
     };
   }
 

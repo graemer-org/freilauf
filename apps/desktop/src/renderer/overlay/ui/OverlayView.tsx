@@ -124,6 +124,23 @@ function WorkoutStripView({ strip }: { strip: WorkoutStrip }) {
         <span style={{ width: `${Math.round(strip.progress * 1000) / 10}%` }} />
       </div>
       {strip.cue ? <div className="ov-wo-cue ov-text">{strip.cue}</div> : null}
+      {strip.ahead ? (
+        <div
+          className={`ov-wo-ahead ov-text ov-wo-ahead--${strip.ahead.tone}`}
+          data-testid="overlay-workout-ahead"
+          data-tone={strip.ahead.tone}
+        >
+          {strip.ahead.text}
+        </div>
+      ) : null}
+      {strip.episode ? (
+        <div className="ov-wo-episode" data-testid="overlay-episode">
+          <div className="ov-wo-episode-bar" aria-hidden="true">
+            <span style={{ width: `${Math.round(strip.episode.progress * 1000) / 10}%` }} />
+          </div>
+          <span className="ov-wo-episode-left ov-text">{strip.episode.left}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

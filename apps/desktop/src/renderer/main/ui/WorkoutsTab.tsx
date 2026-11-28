@@ -5,6 +5,7 @@ import { workoutStats } from '@freilauf/workouts';
 import type { SharedWorkout } from '../appStore';
 import type { WorkoutEntry } from '../../core/workoutLibrary';
 import { downloadText } from './download';
+import { EpisodeDialog } from './EpisodeUi';
 import { workoutSharing } from './groupShare';
 import { useApp, useAppState } from './hooks';
 import { WorkoutChart } from './WorkoutChart';
@@ -595,6 +596,10 @@ export function WorkoutsTab({ onGoToRide, onOpenSettings, focusFtpTests }: Worko
   const ftpSection = useRef<HTMLElement>(null);
   const { results, clear, importFiles } = useImporter();
   const [dragging, setDragging] = useState(false);
+  const [episodeOpen, setEpisodeOpen] = useState(false);
+  const episodePlan = useAppState((s) =>
+    s.episodePlan && s.selectedWorkoutId === s.episodePlan.workout.id ? s.episodePlan : null,
+  );
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -688,6 +693,62 @@ export function WorkoutsTab({ onGoToRide, onOpenSettings, focusFtpTests }: Worko
           A ride is in progress. Finish it to choose a different workout.
         </p>
       )}
+
+      <section
+        aria-labelledby="wo-episode-title"
+        className="wo-section"
+        data-testid="workouts-episode"
+      >
+        <div className="section-head">
+          <h2 id="wo-episode-title" className="section-title">
+            Fit to an episode
+          </h2>
+          <span className="hint">A workout exactly as long as what you watch.</span>
+        </div>
+        <div className="card wo-episode">
+          {episodePlan ? (
+            <>
+              <div className="wo-info">
+                <h3 className="wo-name">{episodePlan.workout.name}</h3>
+                <StatsLine workout={episodePlan.workout} ftpW={ftpW} openEnded={false} />
+              </div>
+              <div className="wo-preview">
+                <WorkoutChart
+                  workout={episodePlan.workout}
+                  label={chartSummary(
+                    episodePlan.workout,
+                    workoutStats(episodePlan.workout, ftpW),
+                    false,
+                  )}
+                />
+              </div>
+            </>
+          ) : (
+            <p className="wo-desc">
+              Pick the length of your episode or film, an effort and a pattern: warm-up, the main
+              part and a cool-down that ends with the credits.
+            </p>
+          )}
+          <div className="wo-actions">
+            {episodePlan && (
+              <span className="wo-selected-tag" data-testid="workout-episode-selected">
+                <span aria-hidden="true">✓</span> Selected for next ride
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-small"
+              data-testid="workouts-episode-open"
+              disabled={locked}
+              aria-describedby={locked ? lockNoteId : undefined}
+              onClick={() => setEpisodeOpen(true)}
+            >
+              {episodePlan ? 'Change…' : 'Fit to an episode…'}
+            </button>
+          </div>
+        </div>
+        {episodeOpen && <EpisodeDialog onClose={() => setEpisodeOpen(false)} />}
+      </section>
 
       <section
         aria-labelledby="wo-tests-title"

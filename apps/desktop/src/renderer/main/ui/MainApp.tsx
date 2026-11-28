@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { isEpisodeWorkoutId } from '@freilauf/workouts';
 import type { App } from '../appStore';
 import type { ActivityTab } from './ActivityScreen';
 import { ActivityScreen } from './ActivityScreen';
@@ -107,7 +108,9 @@ function restoreLastChoice(app: App, afterFinish = false): void {
   if (
     s.selectedWorkoutId === null &&
     lastWorkoutId !== null &&
-    s.workouts.some((e) => e.workout.id === lastWorkoutId && e.ftpTest === undefined)
+    // An episode workout is generated again from the last choices (Settings.episode).
+    (isEpisodeWorkoutId(lastWorkoutId) ||
+      s.workouts.some((e) => e.workout.id === lastWorkoutId && e.ftpTest === undefined))
   ) {
     app.selectWorkout(lastWorkoutId);
   }

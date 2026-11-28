@@ -64,7 +64,7 @@ Anything not yet confirmed on real hardware is marked unverified.
   transport (Trystero) and the fallback signalling server + WebRTC mesh, the
   message protocol, shared documents and the synchronised start (for riders: [group-rides.md](group-rides.md))
 - [workouts.md](workouts.md) — structured workouts: model, ERG runner,
-  `.zwo` import/export, built-in library, FTP tests
+  `.zwo` import/export, built-in library, FTP tests, workouts fitted to an episode ("hard now")
 - [community.md](community.md) — points, totals, friends, challenges and
   leaderboards synced peer-to-peer (core library and its integration under Activity →
   Community)

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { Workout } from '@freilauf/workouts';
 import { workoutStats } from '@freilauf/workouts';
+import { aheadCue, episodeProgress } from './episodeView';
 import { formatDuration } from './format';
 import { startTogetherAction } from './groupShare';
 import { useApp, useAppState } from './hooks';
@@ -26,7 +27,11 @@ function useWorkoutById(id: string | null): Workout | null {
   const fromGroup = useAppState((s) =>
     id === null ? null : (s.sharedWorkouts.find((w) => w.workout.id === id)?.workout ?? null),
   );
-  return fromLibrary ?? fromGroup;
+  // An episode workout (re-fitted by "hard now" during the ride).
+  const episode = useAppState((s) =>
+    id !== null && s.episodePlan?.workout.id === id ? s.episodePlan.workout : null,
+  );
+  return episode ?? fromLibrary ?? fromGroup;
 }
 
 /** Shown before the ride starts: what is selected, with Clear. */
@@ -157,6 +162,9 @@ export function WorkoutPanel() {
   if (!w || !w.started) return null;
 
   const erg = w.mode === 'erg' && !w.finished && w.targetPowerW !== null;
+  const ahead = aheadCue(w);
+  const episode = w.episode;
+  const episodeLine = episodeProgress(w);
   const progress = chartProgress(w.elapsedS, horizonS ?? w.totalDurationS);
   const mode = modeText(w);
 
@@ -210,6 +218,15 @@ export function WorkoutPanel() {
           <p className="wo-cue" aria-live="polite" data-testid="workout-cue">
             {w.cue ?? ''}
           </p>
+          {episode && (
+            <p
+              className={`wo-ahead${episode.notice ? ` is-${episode.notice.tone}` : ''}`}
+              data-testid="workout-ahead"
+              aria-live="polite"
+            >
+              {episode.notice?.text ?? ahead ?? ''}
+            </p>
+          )}
         </div>
 
         <div className="wo-count">
@@ -241,6 +258,14 @@ export function WorkoutPanel() {
               testId="workout-progress-chart"
             />
           )}
+          {episodeLine && (
+            <div className="wo-episode-line" data-testid="workout-episode-progress">
+              <span className="wo-episode-bar" aria-hidden="true">
+                <span style={{ width: `${Math.round(episodeLine.progress * 1000) / 10}%` }} />
+              </span>
+              <span className="wo-episode-left">{`Episode · ${episodeLine.left}`}</span>
+            </div>
+          )}
           <p className="wo-next" data-testid="workout-next">
             {w.finished ? 'You are back in free-ride mode' : nextText(w.next)}
           </p>
@@ -265,6 +290,23 @@ export function WorkoutPanel() {
               Skip step
             </button>
           </div>
+          {episode && (
+            <button
+              type="button"
+              className="btn btn-small wo-hard-now"
+              data-testid="workout-hard-now"
+              aria-keyshortcuts="H"
+              aria-disabled={!episode.hardNow.available || undefined}
+              title={
+                episode.hardNow.available
+                  ? `2 min at ${episode.hardNowTargetW} W, then easy; the rest is re-fitted (H)`
+                  : episode.hardNow.reason
+              }
+              onClick={() => app.hardNow('ui')}
+            >
+              Hard now <span className="wo-hard-now-w">{`${episode.hardNowTargetW} W`}</span>
+            </button>
+          )}
           <IntensityControl intensity={w.intensity} disabled={w.finished} />
         </div>
       </div>

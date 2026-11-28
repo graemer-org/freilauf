@@ -2,17 +2,19 @@ import type { ConnectionState } from '@freilauf/devices';
 import { formatKm, formatRouteKm } from './routeView';
 import { formatStepDuration } from './workoutView';
 
-/** The four ways to ride offered on the start screen. */
-export type RideKind = 'free' | 'workout' | 'route' | 'ftp';
+/** The ways to ride offered on the start screen. */
+export type RideKind = 'free' | 'workout' | 'episode' | 'route' | 'ftp';
 
 /** Which start-screen cards are "on" for the current selection (workout and route combine). */
 export function activeKinds(
-  workout: { ftpTest: boolean } | null,
+  workout: { ftpTest: boolean; episode?: boolean } | null,
   routeSelected: boolean,
 ): Record<RideKind, boolean> {
+  const episode = workout !== null && workout.episode === true;
   return {
     free: workout === null && !routeSelected,
-    workout: workout !== null && !workout.ftpTest,
+    workout: workout !== null && !workout.ftpTest && !episode,
+    episode,
     ftp: workout !== null && workout.ftpTest,
     route: routeSelected,
   };

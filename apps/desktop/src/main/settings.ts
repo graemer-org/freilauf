@@ -13,6 +13,7 @@ import type {
   Bounds,
   CountdownSeconds,
   DeepPartial,
+  EpisodeSettings,
   GhostChoice,
   GhostSettings,
   LeverFunction,
@@ -26,8 +27,10 @@ import type {
   StatId,
   WatchRelaySettings,
 } from '../shared/contract';
+import { normalizeEpisodeOptions } from '@freilauf/workouts';
 import {
   COUNTDOWN_CHOICES,
+  DEFAULT_EPISODE,
   DEFAULT_SETTINGS,
   LEGACY_DEFAULT_SIGNALLING_URL,
   MAX_GHOST_CHOICES,
@@ -69,6 +72,7 @@ const SHIFT_ACTIONS: Record<ShiftAction, true> = {
   steerLeft: true,
   steerRight: true,
   usePowerUp: true,
+  hardNow: true,
 };
 const LEVER_FUNCTIONS: Record<LeverFunction, true> = {
   none: true,
@@ -604,7 +608,32 @@ export function sanitizeSettings(
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
     ghost: sanitizeGhost(root.ghost, fallback.ghost ?? DEFAULT_SETTINGS.ghost, problems),
     scenery: sanitizeScenery(root.scenery, fallback.scenery ?? DEFAULT_SETTINGS.scenery, problems),
+    episode: sanitizeEpisode(root.episode, fallback.episode ?? DEFAULT_EPISODE, problems),
   };
+}
+
+/**
+ * The last "Fit to an episode" choices. Settings from before it (no `episode`) get the default;
+ * each invalid part falls back on its own (a length is rounded and clamped to 10 … 180 min).
+ */
+function sanitizeEpisode(
+  raw: unknown,
+  fallback: EpisodeSettings,
+  problems: Problems,
+): EpisodeSettings {
+  if (raw === undefined) return { ...fallback };
+  const root = obj(raw, 'episode', problems);
+  const out = normalizeEpisodeOptions(root, fallback);
+  if (root.lengthMin !== undefined && out.lengthMin !== root.lengthMin) {
+    problems.push('episode.lengthMin: expected whole minutes from 10 to 180');
+  }
+  if (root.effort !== undefined && out.effort !== root.effort) {
+    problems.push('episode.effort: expected "easy", "medium" or "hard"');
+  }
+  if (root.pattern !== undefined && out.pattern !== root.pattern) {
+    problems.push('episode.pattern: expected "early", "spread", "finale" or "steady"');
+  }
+  return out;
 }
 
 export function isGhostChoice(v: unknown): v is GhostChoice {

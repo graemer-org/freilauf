@@ -374,6 +374,52 @@ body,
   color: var(--ov-text);
 }
 
+/* Episode workouts: the cue ahead of the next change, and a hairline for the whole episode. */
+.ov-wo-ahead {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-wo-ahead--cue,
+.ov-wo-ahead--info {
+  color: var(--ov-text);
+}
+
+.ov-wo-ahead--warn {
+  color: var(--ov-text-2);
+}
+
+.ov-wo-episode {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+}
+
+.ov-wo-episode-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: max(1px, 0.1em);
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / calc(var(--ov-backdrop-alpha) * 0.3));
+}
+
+.ov-wo-episode-bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ov-text-2);
+}
+
+.ov-wo-episode-left {
+  flex: none;
+  color: var(--ov-text-2);
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ───────── route strip ───────── */
 
 .ov-route {

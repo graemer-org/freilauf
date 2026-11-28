@@ -11,6 +11,11 @@ export interface WorkoutRunnerOptions {
   intensity?: number;
   /** Ride time at which the workout starts. Default 0. Earlier ride times do not advance it. */
   startRideS?: number;
+  /**
+   * Workout time to start from (default 0), e.g. when a re-fitted plan replaces the running one
+   * at the same point ("hard now", see episode.ts). Clamped to [0, total].
+   */
+  positionS?: number;
 }
 
 /** What changed since the previous `update()`; the first update reports everything. */
@@ -63,6 +68,10 @@ export class WorkoutRunner {
     this.intensity = clampIntensity(options.intensity ?? 1);
     const start = options.startRideS ?? 0;
     this.lastRideS = Number.isFinite(start) ? start : 0;
+    const pos = options.positionS ?? 0;
+    this.position = Number.isFinite(pos)
+      ? Math.min(this.timeline.totalDurationS, Math.max(0, pos))
+      : 0;
   }
 
   /** Current workout time in seconds. */

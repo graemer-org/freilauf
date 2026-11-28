@@ -74,6 +74,12 @@ function useRideShortcuts(app: App): void {
           if (e.repeat || !app.store.getState().live?.powerUps?.rumble) return;
           app.useItem(1, 'keyboard');
           break;
+        case 'h':
+        case 'H':
+          // Episode workouts only (docs/workouts.md); a refusal shows in the workout panel.
+          if (e.repeat || !app.store.getState().live?.workout?.episode) return;
+          app.hardNow('keyboard');
+          break;
         case 'Escape':
           // Cancels a countdown before the ride starts or resumes; otherwise not ours.
           if (!app.cancelCountdown()) return;
@@ -598,6 +604,7 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
   const onRoute = useAppState((s) => routeTrackOf(s) !== null);
   const gradientLocked = useAppState((s) => onRouteOrLocked(s));
   const powerUpsOn = useAppState((s) => s.settings?.powerUps?.enabled !== false);
+  const episodeWorkout = useAppState((s) => s.live?.workout?.episode !== undefined);
   const rumble = useAppState((s) => s.live?.group?.mode === 'rumble');
   return (
     <>
@@ -662,6 +669,12 @@ export function RideTab({ onOpenWorkouts, onFinished, toolbar }: RideTabProps = 
                 · <kbd>P</kbd> use power-up
               </>
             ))}
+          {episodeWorkout && (
+            <>
+              {' '}
+              · <kbd>H</kbd> hard now
+            </>
+          )}
         </p>
       </div>
       <SimulationPanel />
