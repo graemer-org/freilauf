@@ -20,8 +20,8 @@
  *
  * Once these are part of `App`'s type this file can read them directly.
  */
-import type { RouteTrack, SceneryModel } from '@freilauf/routes';
-import type { App, AppState, SceneryStatus } from '../appStore';
+import type { RouteTrack, SceneryModel, WindProfile } from '@freilauf/routes';
+import type { App, AppState, SceneryStatus, WeatherStatus } from '../appStore';
 import { useApp, useAppState } from './hooks';
 
 /** One route in the library, as the Routes tab lists it. */
@@ -51,10 +51,21 @@ export interface SharedRoute {
 export interface RouteImportOptions {
   /** Load the surroundings from the map server after the import (off unless ticked). */
   scenery?: boolean;
+  /** Load the weather of that day after the import (off unless ticked). */
+  weather?: boolean;
+  /** For files without times: the day (YYYY-MM-DD) and start (HH:MM) whose weather to load. */
+  weatherDay?: { date: string; time?: string };
 }
 
 export type RouteImportResult =
-  { ok: true; entry: RouteEntry; warnings: string[] } | { ok: false; errors: string[] };
+  | {
+      ok: true;
+      entry: RouteEntry;
+      warnings: string[];
+      /** What happens about the weather (only when it was asked for). */
+      weather?: string;
+    }
+  | { ok: false; errors: string[] };
 
 const EMPTY_ROUTES: readonly RouteEntry[] = [];
 const EMPTY_SHARED: readonly SharedRoute[] = [];
@@ -120,6 +131,53 @@ export function sceneScenery(s: AppState): SceneryModel | null {
 }
 
 export const useSceneScenery = (): SceneryModel | null => useAppState(sceneScenery);
+
+const NO_WEATHER: WeatherStatus = { state: 'none' };
+
+/** What is stored (or being loaded) as the weather of a day for route `id`. */
+export function weatherStatusOf(s: AppState, id: string): WeatherStatus {
+  return s.weather?.[id] ?? NO_WEATHER;
+}
+
+/** The selected route's stored wind (ridden with or not); null without one. */
+export function routeWindOf(s: AppState): WindProfile | null {
+  const p = s.routeWind ?? null;
+  const t = routeTrackOf(s);
+  return p && t && p.routeId === t.id ? p : null;
+}
+
+/** "Ride with that day's wind" for route `id` (default on). */
+export function rideWithWindOf(s: AppState, id: string | null): boolean {
+  if (!id) return false;
+  return s.settings?.weather?.rideWithWind?.[id] !== false;
+}
+
+export interface WeatherActions {
+  /** Without a day: the recorded ride's times. Returns false when there is nothing to use. */
+  load(id: string, day?: { date: string; time?: string } | null): boolean;
+  cancel(id: string): void;
+  remove(id: string): void;
+  /** When the recorded ride of the route took place (a GPX with times), or null. */
+  recorded(id: string): { startMs: number; endMs: number; label: string } | null;
+  setRideWithWind(id: string, on: boolean): void;
+}
+
+export function weatherActions(app: App): WeatherActions {
+  const call = (name: string, ...args: unknown[]): unknown => {
+    const fn = method(app, name);
+    return fn ? fire(app, () => fn(...args)) : undefined;
+  };
+  return {
+    load: (id, day) => call('loadWeather', id, day ?? null) === true,
+    cancel: (id) => void call('cancelWeather', id),
+    remove: (id) => void call('removeWeather', id),
+    recorded: (id) => {
+      const r = call('recordedRideTime', id) as ReturnType<WeatherActions['recorded']> | undefined;
+      return r && typeof r.label === 'string' ? r : null;
+    },
+    setRideWithWind: (id, on) => void call('setRideWithWind', id, on),
+  };
+}
 
 export interface SceneryActions {
   load(id: string): void;

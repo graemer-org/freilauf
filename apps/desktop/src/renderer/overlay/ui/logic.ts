@@ -16,11 +16,22 @@ import {
 import { aheadCue, episodeProgress } from '../../main/ui/episodeView';
 import { formatGap } from '../../main/ui/format';
 import { ghostPill } from '../../main/ui/ghostView';
+import { windIndicator } from '../../main/ui/weatherView';
 
 /** The ghost rider's pill (docs/ghost.md): "Ghost  +12 m · +2.1 s"; null without a race. */
 export function overlayGhostPill(live: LiveState | null | undefined) {
   if (!live || live.ride.state === 'idle') return null;
   return ghostPill(live.ghost);
+}
+
+/** The wind pill while riding a route with a day's wind: "Wind · Headwind 14 km/h". */
+export function overlayWindPill(
+  live: LiveState | null | undefined,
+): { text: string; detail: string; kind: string } | null {
+  if (!live || live.ride.state === 'idle') return null;
+  const ind = windIndicator(live.wind);
+  if (!ind || !live.wind?.active) return null;
+  return { text: 'Wind', detail: ind.text, kind: ind.kind };
 }
 
 export const MIN_WIDTH = 160;

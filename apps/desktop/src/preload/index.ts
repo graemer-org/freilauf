@@ -289,6 +289,11 @@ const api: FreilaufApi = {
     remove: (routeId) => ipcRenderer.invoke(IPC.sceneryRemove, routeId) as Promise<void>,
     list: () => ipcRenderer.invoke(IPC.sceneryList) as Promise<SceneryFileInfo[]>,
   },
+  weather: {
+    archive: (requestId, query) =>
+      ipcRenderer.invoke(IPC.weatherArchive, requestId, query) as Promise<OverpassReply>,
+    cancelArchive: (requestId) => ipcRenderer.send(IPC.weatherCancel, requestId),
+  },
 
   watchRelay: {
     getStatus: () => ipcRenderer.invoke(IPC.watchRelayStatus) as Promise<WatchRelayStatus>,

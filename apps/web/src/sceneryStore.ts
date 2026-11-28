@@ -7,7 +7,7 @@
 import { decodeScenery, MAX_SCENERY_BYTES } from '@freilauf/routes';
 import { overpassBody } from '@freilauf/routes';
 import type { OverpassReply, SceneryFileInfo } from '../../desktop/src/shared/contract';
-import { isOverpassUrl } from '../../desktop/src/main/settings';
+import { isOverpassUrl, isWeatherArchiveUrl } from '../../desktop/src/main/settings';
 import { done, openRideDatabase, request, SCENERY } from './idbRideStore';
 
 export interface SceneryRecordStore {
@@ -76,10 +76,10 @@ export class IndexedDbSceneryStore implements SceneryRecordStore {
   }
 }
 
-/** The subset of fetch used for Overpass. */
+/** The subset of fetch used for Overpass (POST) and the weather archive (GET). */
 export type BrowserFetch = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal },
+  init: { method: string; headers: Record<string, string>; body?: string; signal: AbortSignal },
 ) => Promise<{
   status: number;
   headers: { get(n: string): string | null };
@@ -105,6 +105,51 @@ export function browserOverpass(fetchFn: BrowserFetch, endpoint: () => string) {
           // A CORS-safelisted content type: no preflight request.
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: overpassBody(query),
+          signal: ctl.signal,
+        });
+        const text = await res.text();
+        const ra = res.headers.get('retry-after');
+        const n = ra === null ? Number.NaN : Number(ra);
+        return { status: res.status, text, retryAfterS: Number.isFinite(n) ? n : null };
+      } catch (e) {
+        throw new Error(
+          ctl.signal.aborted ? 'cancelled' : e instanceof Error ? e.message : String(e),
+        );
+      } finally {
+        clearTimeout(timer);
+        if (inFlight.get(requestId) === ctl) inFlight.delete(requestId);
+      }
+    },
+    cancel(requestId: string): void {
+      inFlight.get(requestId)?.abort();
+      inFlight.delete(requestId);
+    },
+  };
+}
+
+export const BROWSER_WEATHER_TIMEOUT_MS = 60_000;
+
+/**
+ * The weather archive from the page (docs/adr/0012-historical-wind.md): a plain GET without
+ * custom headers (no preflight; the archive sends CORS headers), one AbortController per
+ * request id. The page cannot set the User-Agent: the server sees the browser's.
+ */
+export function browserWeather(fetchFn: BrowserFetch, endpoint: () => string) {
+  const inFlight = new Map<string, AbortController>();
+  return {
+    async query(requestId: string, query: string): Promise<OverpassReply> {
+      const base = endpoint();
+      if (!isWeatherArchiveUrl(base)) throw new Error('No valid weather server address is set.');
+      if (typeof query !== 'string' || query.length === 0 || query.length > 2000)
+        throw new Error('invalid query');
+      inFlight.get(requestId)?.abort();
+      const ctl = new AbortController();
+      inFlight.set(requestId, ctl);
+      const timer = setTimeout(() => ctl.abort(), BROWSER_WEATHER_TIMEOUT_MS);
+      try {
+        const res = await fetchFn(`${base}${base.includes('?') ? '&' : '?'}${query}`, {
+          method: 'GET',
+          headers: {},
           signal: ctl.signal,
         });
         const text = await res.text();

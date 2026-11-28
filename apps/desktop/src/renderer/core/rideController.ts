@@ -29,8 +29,8 @@ import {
   attackEpoch,
   claimPosition,
 } from '@freilauf/p2p';
-import type { RoutePosition, RouteTrack } from '@freilauf/routes';
-import { normalizeRouteStart, pointAt, positionAt, routeBaseId } from '@freilauf/routes';
+import type { RoutePosition, RouteTrack, SceneryModel, WindProfile } from '@freilauf/routes';
+import { normalizeRouteStart, pointAt, positionAt, riderWind, routeBaseId } from '@freilauf/routes';
 import type { EnergyTotals, RecordedRide, RideSnapshot } from '@freilauf/session';
 import { RideSession } from '@freilauf/session';
 import type { BikeParams, Shifter } from '@freilauf/sim';
@@ -55,6 +55,7 @@ import type {
   GhostLive,
   LiveEnergy,
   LiveState,
+  LiveWind,
   RideCountdown,
   RouteControl,
   Settings,
@@ -102,6 +103,19 @@ export interface GhostSpec {
   trace: GhostTrace;
   label: string;
 }
+
+/** The historical wind of the selected route to ride with (docs/adr/0012-historical-wind.md). */
+export interface WindSpec {
+  profile: WindProfile;
+  /** Conditions key and label for the recording (RideRoute.weather). */
+  key: string;
+  label: string;
+}
+
+/** Time constant of the wind smoothing (s): bends and jumps ease in instead of stepping. */
+export const WIND_SMOOTHING_S = 4;
+/** Felt wind (after difficulty) is re-sent when it changed by this much (m/s) … */
+export const WIND_SEND_STEP_MPS = 0.5;
 
 /** The part of a group ride the controller needs; implemented by @freilauf/p2p's GroupRide. */
 export interface GroupLink {
@@ -339,6 +353,17 @@ export class RideController {
   #lastLive: LiveState | null = null;
   /** The ghost to race on the selected route and its race in progress (docs/ghost.md). */
   #ghost: { spec: GhostSpec; race: GhostRace } | null = null;
+  /** The day's wind on the selected route; null = ride without wind. */
+  #wind: WindSpec | null = null;
+  /** Stored surroundings of the route: woods and houses beside the road shelter it. */
+  #windShelter: SceneryModel | null = null;
+  /** Smoothed head (+) / tail (−) wind in effect (m/s) and when it was last advanced. */
+  #windHead = 0;
+  #windAt = 0;
+  /** True once this ride was ridden with wind (it is then flagged in its route info). */
+  #windUsed = false;
+  /** Felt wind last given to the shifter (m/s, after difficulty), and when. */
+  #windSent: { mps: number; at: number } | null = null;
 
   constructor(options: RideControllerOptions) {
     this.#options = options;
@@ -442,6 +467,7 @@ export class RideController {
       before.shifting.trainerMassKg !== settings.shifting.trainerMassKg;
     if (changed) {
       this.#shifter = this.#newShifter(this.#shifter.gear);
+      this.#windSent = null; // the new shifter starts without wind
       this.#shifter.resync();
       // Mass changes apply to the next ride; a running session keeps its physics.
       if (this.#session.state === 'idle') this.#session = this.#newSession();
@@ -591,6 +617,7 @@ export class RideController {
     if (this.#ghost && (!track || routeBaseId(track.id) !== this.#ghost.spec.routeId)) {
       this.#ghost = null;
     }
+    if (this.#wind && (!track || track.id !== this.#wind.profile.routeId)) this.#clearWind();
     const start = track ? normalizeRouteStart(track, startM) : 0;
     this.#route = track
       ? {
@@ -660,6 +687,100 @@ export class RideController {
 
   get ghost(): GhostSpec | null {
     return this.#ghost?.spec ?? null;
+  }
+
+  /**
+   * Rides the selected route with a day's wind (null = without). Only while no ride is in
+   * progress and only for the route the profile was built for (same id and length). The wind
+   * changes speed and distance through the air resistance and what the trainer is told; the
+   * ride is flagged as ridden with wind. Not used in a group ride. Returns false when refused.
+   */
+  setWind(spec: WindSpec | null): boolean {
+    if (this.#session.state !== 'idle') return false;
+    if (!spec) {
+      if (this.#wind) this.#log.info('wind cleared');
+      this.#clearWind();
+      return true;
+    }
+    const track = this.#route?.track;
+    if (
+      !track ||
+      track.id !== spec.profile.routeId ||
+      Math.abs(track.totalDistanceM - spec.profile.totalDistanceM) > 1 + track.stepM
+    ) {
+      return false;
+    }
+    this.#wind = spec;
+    this.#log.info('wind set', { day: spec.key, points: spec.profile.points.length });
+    return true;
+  }
+
+  get wind(): WindSpec | null {
+    return this.#wind;
+  }
+
+  /** The route's stored surroundings for the wind's shelter (null = open road everywhere). */
+  setWindShelter(scenery: SceneryModel | null): void {
+    this.#windShelter = scenery && this.#route?.track.id === scenery.routeId ? scenery : null;
+  }
+
+  #clearWind(): void {
+    this.#wind = null;
+    if (this.#windHead !== 0 || this.#windSent) {
+      this.#windHead = 0;
+      this.#session.setHeadwind(0);
+      this.#shifter.setHeadwind(0);
+      this.#windSent = null;
+    }
+  }
+
+  /**
+   * The wind for this tick: the day's wind at the rider's place, at rider height and along the
+   * road, smoothed, into the physics and (rate-limited, × difficulty) to the trainer.
+   */
+  #driveWind(pos: RoutePosition | null): LiveWind | null {
+    const w = this.#wind;
+    const route = this.#route;
+    const now = this.#now();
+    const dt = Math.max(0, Math.min(1, (now - this.#windAt) / 1000));
+    this.#windAt = now;
+    if (!w || !route || !pos) return null;
+    const rw = riderWind(w.profile, route.track, pos.distanceM, this.#windShelter);
+    const active = this.#group === null;
+    const target = active && !pos.finished ? rw.headMps : 0;
+    if (this.#session.state === 'idle') this.#windHead = target;
+    else this.#windHead += (target - this.#windHead) * (1 - Math.exp(-dt / WIND_SMOOTHING_S));
+    this.#session.setHeadwind(this.#windHead);
+    if (this.#session.state === 'riding' && active && Math.abs(this.#windHead) > 0.05) {
+      this.#windUsed = true;
+    }
+    const felt = Math.round(((this.#windHead * this.#difficulty()) / 100) * 10) / 10;
+    const sent = this.#windSent;
+    const diff = sent ? Math.abs(felt - sent.mps) : Infinity;
+    const since = sent ? now - sent.at : Infinity;
+    if (
+      diff > 0 &&
+      ((diff >= WIND_SEND_STEP_MPS && since >= ROUTE_GRADE_MIN_INTERVAL_MS) ||
+        (diff >= 0.1 && since >= ROUTE_GRADE_SETTLE_MS) ||
+        sent === null)
+    ) {
+      this.#windSent = { mps: felt, at: now };
+      // In ERG the shifter's sink drops the write, like the gradient's.
+      this.#shifter.setHeadwind(felt);
+    }
+    return {
+      headMps: this.#windHead,
+      crossMps: active ? rw.crossMps : 0,
+      relativeDeg: rw.relativeDeg,
+      speed10Mps: rw.speed10Mps,
+      fromDeg: rw.fromDeg,
+      gustMps: rw.gustMps,
+      tempC: rw.tempC,
+      precipMm: rw.precipMm,
+      code: rw.code,
+      label: w.label,
+      active,
+    };
   }
 
   #newGhostRace(spec: GhostSpec, track: RouteTrack): GhostRace {
@@ -1052,11 +1173,16 @@ export class RideController {
           return { lat: p.lat, lon: p.lon, altitudeM: p.elevationM, segment: route.segment };
         });
         // The saved ride names its route and where each segment started (docs/ghost.md).
+        this.#windUsed = false;
         this.#session.setRouteSource(() => ({
           id: routeBaseId(track.id),
           lengthM: track.totalDistanceM,
           loop: track.loop,
           offsetsM: route.offsets,
+          // Ridden with a day's wind: compared only with rides of the same conditions.
+          ...(this.#windUsed && this.#wind
+            ? { weather: { key: this.#wind.key, label: this.#wind.label } }
+            : {}),
         }));
         if (this.#ghost) this.#ghost.race = this.#newGhostRace(this.#ghost.spec, track);
       }
@@ -1164,6 +1290,7 @@ export class RideController {
     if (this.#countdown && this.#now() >= this.#countdown.endsAt) this.start();
     this.#session.setGear(this.#shifter.gear, this.#shifter.gearCount);
     const routePosition = this.#driveRoute();
+    const wind = this.#driveWind(routePosition);
     this.#session.setGradient(this.#gradePercent);
     const levers = leverOutput(this.#paddles, this.#settings.shifting.levers);
     const steering = combineSteering(levers, this.#buttonSteering());
@@ -1263,6 +1390,7 @@ export class RideController {
       ...(powerUps ? { powerUps } : {}),
       ...(ride.state !== 'idle' ? { energy: liveEnergy(this.#session.energy()) } : {}),
       ...(this.#ghost && this.#route ? { ghost: this.#driveGhost(ride) } : {}),
+      ...(wind ? { wind } : {}),
     };
     const countdown = this.countdown;
     if (countdown) live.countdown = countdown;
@@ -1493,6 +1621,7 @@ export class RideController {
       powerW: ride.powerW,
       power3sW: ride.power3sW,
       gradePercent: ride.gradePercent,
+      headwindMps: this.#session.headwindMps,
       brake: braking,
       bike: this.#bike(),
       ftpW: this.#settings.rider.ftpW,

@@ -231,6 +231,8 @@ export interface Settings {
   ghost: GhostSettings;
   /** Scenery from OpenStreetMap along routes (docs/routes.md, docs/adr/0011-osm-scenery.md). */
   scenery: ScenerySettings;
+  /** The weather of a day along routes (docs/routes.md, docs/adr/0012-historical-wind.md). */
+  weather: WeatherSettings;
   /** "Fit to an episode" (docs/workouts.md): the last choices, offered again next time. */
   episode: EpisodeSettings;
 }
@@ -265,6 +267,27 @@ export interface ScenerySettings {
 }
 
 export const DEFAULT_OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+/**
+ * The weather of a day along routes. Loading it is always the rider's choice per route (on
+ * import or later in the route's details).
+ */
+export interface WeatherSettings {
+  /**
+   * The historical weather API (Open-Meteo archive format) it is loaded from: https, or http on
+   * this computer. Default: the public archive.
+   */
+  archiveUrl: string;
+  /**
+   * "Ride with that day's wind", per route id, as last switched on the start screen (absent =
+   * on: a route with stored weather is ridden with its wind). At most MAX_WIND_CHOICES entries.
+   */
+  rideWithWind: Record<string, boolean>;
+}
+
+export const DEFAULT_WEATHER_ARCHIVE_URL = 'https://archive-api.open-meteo.com/v1/archive';
+/** Routes whose wind switch is remembered, at most (the oldest go first). */
+export const MAX_WIND_CHOICES = 200;
 
 /**
  * Which ghost to race on a route: 'best' (the fastest full ride), 'last' (the latest ride),
@@ -361,6 +384,7 @@ export const DEFAULT_SETTINGS: Settings = {
   watchRelay: DEFAULT_WATCH_RELAY,
   ghost: { enabled: true, sources: {} },
   scenery: { enabled: true, overpassUrl: DEFAULT_OVERPASS_URL },
+  weather: { archiveUrl: DEFAULT_WEATHER_ARCHIVE_URL, rideWithWind: {} },
   episode: DEFAULT_EPISODE,
 };
 
@@ -437,6 +461,30 @@ export interface LiveState {
   countdown?: RideCountdown | null;
   /** The ghost rider of this route ride (docs/ghost.md); absent without one. */
   ghost?: GhostLive | null;
+  /** The historical wind of this route ride (docs/routes.md); absent without one. */
+  wind?: LiveWind | null;
+}
+
+/** The wind the rider feels on a route ridden with a day's weather (docs/adr/0012-historical-wind.md). */
+export interface LiveWind {
+  /** Head (+) / tail (−) wind at rider height as the physics uses it (m/s, smoothed). */
+  headMps: number;
+  /** Cross wind at rider height (+ from the right), shown only (m/s). */
+  crossMps: number;
+  /** Where the wind comes from relative to the direction of travel (°, 0 = ahead, + right). */
+  relativeDeg: number;
+  /** The reported wind at 10 m (m/s) and where it comes from (°, 0 = north). */
+  speed10Mps: number;
+  fromDeg: number;
+  gustMps: number;
+  tempC: number;
+  precipMm: number;
+  /** WMO weather code (−1 unknown). */
+  code: number;
+  /** "14 June 2025": whose weather it is. */
+  label: string;
+  /** False in a group ride, where the wind is not used (everyone rides the same air). */
+  active: boolean;
 }
 
 /**
@@ -676,6 +724,20 @@ export interface FreilaufApi {
     remove(routeId: string): Promise<void>;
     /** Routes with stored scenery and its size. */
     list(): Promise<SceneryFileInfo[]>;
+  };
+
+  /**
+   * The weather of a day along routes (docs/adr/0012-historical-wind.md): the one request it
+   * needs. The result is kept next to the route by the renderer (route storage).
+   */
+  weather: {
+    /**
+     * Sends one GET to Settings.weather.archiveUrl with `query` (the part after "?") and
+     * returns the answer. `requestId` lets `cancelArchive` abort it. Rejects on a network
+     * failure, a timeout or a refused endpoint.
+     */
+    archive(requestId: string, query: string): Promise<OverpassReply>;
+    cancelArchive(requestId: string): void;
   };
 
   /** Share with my watch (desktop on Windows; the browser build reports it as unavailable). */

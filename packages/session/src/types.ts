@@ -49,6 +49,19 @@ export interface RideRoute {
   loop: boolean;
   /** Route position (m) at ridden distance 0 for each segment: [start point, after jump 1, …]. */
   offsetsM: number[];
+  /**
+   * Ridden with the historical wind of a day (docs/adr/0012-historical-wind.md): best times and
+   * ghosts only compare rides with the same conditions. Absent = no wind.
+   */
+  weather?: RideWeather;
+}
+
+/** The conditions a ride was ridden in. */
+export interface RideWeather {
+  /** Which weather: the local start of its day's ride, "2025-06-14T09:12". */
+  key: string;
+  /** For people: "14 June 2025". */
+  label: string;
 }
 
 export interface RecordedRide {

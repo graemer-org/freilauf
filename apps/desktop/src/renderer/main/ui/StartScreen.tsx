@@ -4,6 +4,7 @@ import { isEpisodeWorkoutId, workoutStats } from '@freilauf/workouts';
 import { DEFAULT_SETTINGS } from '../../../shared/contract';
 import { EpisodeDialog } from './EpisodeUi';
 import { GhostPicker, NoRouteGhostNote } from './GhostUi';
+import { RideWithWindToggle } from './WeatherUi';
 import { GroupTab } from './GroupTab';
 import { workoutSharing } from './groupShare';
 import { Brand, DeviceChips } from './Header';
@@ -292,6 +293,7 @@ function WhatSection({
                 </button>
               </p>
             )}
+            {route && <RideWithWindToggle disabled={locked} />}
             {route && <GhostPicker locked={locked} />}
             {workout && !route && hasRoutes && <NoRouteGhostNote />}
             {workout && route && (

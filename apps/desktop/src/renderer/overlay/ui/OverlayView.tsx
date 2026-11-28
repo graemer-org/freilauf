@@ -9,6 +9,7 @@ import {
   groupModeLabel,
   groupRows,
   overlayGhostPill,
+  overlayWindPill,
   powerUpPills,
   routeStrip,
   workoutStrip,
@@ -185,6 +186,7 @@ export function OverlayView({
   const route = routeStrip(live?.route);
   const pills = rideState === 'idle' ? [] : powerUpPills(live?.powerUps);
   const ghost = overlayGhostPill(live);
+  const wind = overlayWindPill(live);
   const opacity = Number.isFinite(settings.backdropOpacity)
     ? Math.min(1, Math.max(0, settings.backdropOpacity))
     : 0.55;
@@ -219,7 +221,8 @@ export function OverlayView({
         rideState === 'paused' ||
         rideState === 'idle' ||
         pills.length > 0 ||
-        ghost ? (
+        ghost ||
+        wind ? (
           <div className="ov-status-row">
             {warnings.map((w) => (
               <div key={w.kind} className="ov-warning" data-testid="overlay-warning" role="alert">
@@ -262,6 +265,13 @@ export function OverlayView({
                 <div className="ov-backdrop" aria-hidden="true" />
                 <span className="ov-pu-text ov-text">{ghost.text}</span>
                 <span className="ov-pu-detail ov-text ov-ghost-gap">{ghost.detail}</span>
+              </div>
+            ) : null}
+            {wind ? (
+              <div className="ov-powerup ov-wind" data-testid="overlay-wind" data-kind={wind.kind}>
+                <div className="ov-backdrop" aria-hidden="true" />
+                <span className="ov-pu-text ov-text">{wind.text}</span>
+                <span className="ov-pu-detail ov-text">{wind.detail}</span>
               </div>
             ) : null}
           </div>

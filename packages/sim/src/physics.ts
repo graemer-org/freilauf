@@ -24,12 +24,35 @@ export function windResistanceKgM(bike: BikeParams): number {
   return 0.5 * bike.airDensity * bike.cdaM2;
 }
 
-/** Force (N) opposing motion at speed v (m/s) on the given gradient. Negative downhill. */
-export function resistingForce(speedMps: number, gradePercent: number, bike: BikeParams): number {
+/**
+ * Head (+) or tail (−) wind along the direction of travel at the rider's height is taken at
+ * most this large (m/s, 36 km/h); the route weather already caps it there
+ * (docs/adr/0012-historical-wind.md).
+ */
+export const MAX_HEADWIND_MPS = 10;
+
+const windOf = (headwindMps: number): number =>
+  Number.isFinite(headwindMps)
+    ? Math.max(-MAX_HEADWIND_MPS, Math.min(MAX_HEADWIND_MPS, headwindMps))
+    : 0;
+
+/**
+ * Force (N) opposing motion at speed v (m/s) on the given gradient. Negative downhill.
+ * `headwindMps` (default 0) is the wind against the direction of travel (negative = tailwind):
+ * the air resistance acts on the air speed v + w, so a tailwind faster than the bike pushes.
+ */
+export function resistingForce(
+  speedMps: number,
+  gradePercent: number,
+  bike: BikeParams,
+  headwindMps = 0,
+): number {
   const theta = Math.atan(gradePercent / 100);
   const gravity = bike.totalMassKg * GRAVITY * Math.sin(theta);
   const rolling = speedMps > 0 ? bike.totalMassKg * GRAVITY * bike.crr * Math.cos(theta) : 0;
-  const aero = windResistanceKgM(bike) * speedMps * Math.abs(speedMps);
+  const air = speedMps + windOf(headwindMps);
+  // At a standstill a wind does not roll the bike (the rider holds it): only while moving.
+  const aero = speedMps > 0 ? windResistanceKgM(bike) * air * Math.abs(air) : 0;
   return gravity + rolling + aero;
 }
 
@@ -51,6 +74,9 @@ const MIN_DRIVE_SPEED = 1;
  *
  * `brake` (0 … 1, default 0) adds a decelerating force proportional to it,
  * up to MAX_BRAKE_DECEL_MPS2 at 1. It only acts while the bike is moving.
+ *
+ * `headwindMps` (default 0: no wind) is the wind component against the direction of travel at
+ * the rider's height (negative = tailwind), capped at ± MAX_HEADWIND_MPS.
  */
 export function stepBike(
   speedMps: number,
@@ -59,6 +85,7 @@ export function stepBike(
   bike: BikeParams,
   dtS: number,
   brake = 0,
+  headwindMps = 0,
 ): { speedMps: number; distanceM: number } {
   let v = Math.max(0, speedMps);
   let distance = 0;
@@ -72,7 +99,8 @@ export function stepBike(
     const dt = Math.min(remaining, MAX_SUBSTEP_S);
     const drive = power / Math.max(v, MIN_DRIVE_SPEED);
     const braking = v > 0 ? brakeForce : 0;
-    const accel = (drive - resistingForce(v, gradePercent, bike) - braking) / bike.totalMassKg;
+    const accel =
+      (drive - resistingForce(v, gradePercent, bike, headwindMps) - braking) / bike.totalMassKg;
     const next = Math.max(0, v + accel * dt);
     distance += ((v + next) / 2) * dt;
     v = next;
@@ -82,8 +110,13 @@ export function stepBike(
 }
 
 /** Speed (m/s) at which powerW exactly balances resistance. Bisection; 0 if the rider cannot move. */
-export function steadyStateSpeed(powerW: number, gradePercent: number, bike: BikeParams): number {
-  const net = (v: number) => powerW - resistingForce(v, gradePercent, bike) * v;
+export function steadyStateSpeed(
+  powerW: number,
+  gradePercent: number,
+  bike: BikeParams,
+  headwindMps = 0,
+): number {
+  const net = (v: number) => powerW - resistingForce(v, gradePercent, bike, headwindMps) * v;
   let lo = 0;
   let hi = 40;
   if (net(hi) > 0) return hi;

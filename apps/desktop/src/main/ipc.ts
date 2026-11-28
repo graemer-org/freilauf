@@ -18,6 +18,7 @@ import type { AppOrigin } from './security';
 import { isAppUrl } from './security';
 import { isDeviceKind, isPlainObject } from './settings';
 import type { SettingsStore } from './settingsStore';
+import type { WeatherClient } from './weatherClient';
 import { isAutoSelect, isBounds, isLiveState, isRecordedRide, isShortString } from './validate';
 
 export type WindowName = 'main' | 'overlay';
@@ -37,6 +38,8 @@ export interface IpcDeps {
   log(m: string): void;
   /** Scenery along routes: the Overpass request and the stored files. */
   scenery?: { store: SceneryStore; overpass: OverpassClient };
+  /** The weather of a day along routes: the archive request. */
+  weather?: WeatherClient;
   /** Share with my watch: the current status. */
   watchRelayStatus?(): WatchRelayStatus;
   /** Every accepted LiveState from the main window (feeds the watch relay). */
@@ -244,6 +247,17 @@ export function registerIpc(deps: IpcDeps): { lastLive(): LiveState | null } {
     await scenery().store.remove(routeId);
   });
   handle(IPC.sceneryList, mainOnly, () => scenery().store.list());
+
+  // weather of a day along routes (docs/adr/0012-historical-wind.md)
+  handle(IPC.weatherArchive, mainOnly, (_who, requestId, query) => {
+    if (!isShortString(requestId) || typeof query !== 'string') bad(IPC.weatherArchive);
+    if (!deps.weather) throw new Error('weather is not available');
+    return deps.weather.query(requestId, query);
+  });
+  on(IPC.weatherCancel, mainOnly, (_who, requestId) => {
+    if (!isShortString(requestId)) return deps.log('weather.cancel: invalid request id');
+    deps.weather?.cancel(requestId);
+  });
 
   // share with my watch (settings go through settings:update)
   handle(

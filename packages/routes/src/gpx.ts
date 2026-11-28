@@ -1,7 +1,8 @@
 /**
  * GPX 1.0 / 1.1 import and export. Reads `<trk>/<trkseg>/<trkpt>` (falling back to
- * `<rte>/<rtept>`) with `<ele>`; everything else (waypoints, time, extensions, unknown
- * elements, namespaces) is ignored. Strict against what could hurt (DOCTYPE/entities, size,
+ * `<rte>/<rtept>`) with `<ele>` and `<time>` (kept for the weather of the recorded day,
+ * docs/adr/0012-historical-wind.md); everything else (waypoints, extensions, unknown elements,
+ * namespaces) is ignored. Strict against what could hurt (DOCTYPE/entities, size,
  * point count, bad coordinates), tolerant of everything else. Never throws.
  */
 import { cleanText, haversineM } from './geo';
@@ -24,6 +25,8 @@ export interface RawPoint {
   lon: number;
   /** Metres; interpolated where the file had none, 0 if it had none at all. */
   ele: number;
+  /** When the point was recorded (ms since 1970, UTC), if the file says. */
+  timeMs?: number;
 }
 
 /** What a GPX file contains, before any cleaning or resampling. */
@@ -33,6 +36,8 @@ export interface RawTrack {
   points: RawPoint[];
   /** False when no point had an elevation (the route will be flat). */
   hasElevation: boolean;
+  /** Points that carry a readable `<time>`. */
+  timedPoints?: number;
 }
 
 export type GpxParseResult =
@@ -119,7 +124,8 @@ function parse(text: string): GpxParseResult {
     };
   }
 
-  const points: { lat: number; lon: number; ele: number | null }[] = [];
+  const points: { lat: number; lon: number; ele: number | null; timeMs?: number }[] = [];
+  let timed = 0;
   let badEle = 0;
   for (const el of groups.flat()) {
     const lat = coord(el.attrs.get('lat'));
@@ -138,7 +144,9 @@ function parse(text: string): GpxParseResult {
       if (Number.isFinite(v) && v >= MIN_ELEVATION_M && v <= MAX_ELEVATION_M) ele = v;
       else badEle++;
     }
-    points.push({ lat, lon, ele });
+    const timeMs = readTime(childText(el, 'time'));
+    if (timeMs !== null) timed++;
+    points.push(timeMs !== null ? { lat, lon, ele, timeMs } : { lat, lon, ele });
   }
   groups = [];
 
@@ -179,6 +187,7 @@ function parse(text: string): GpxParseResult {
       ...(description ? { description } : {}),
       points: fillElevation(points),
       hasElevation,
+      ...(timed > 0 ? { timedPoints: timed } : {}),
     },
     warnings,
   };
@@ -188,6 +197,23 @@ function tooLarge(): GpxParseResult {
   return { ok: false, errors: [`The file is larger than ${MAX_GPX_BYTES / 1024 / 1024} MB.`] };
 }
 
+/** Earliest and latest point time accepted (ms): later than 1940, not in the far future. */
+const MIN_TIME_MS = Date.UTC(1940, 0, 1);
+const MAX_TIME_MS = Date.UTC(2200, 0, 1);
+const ISO_TIME =
+  /^[ \t\r\n]*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?[ \t\r\n]*$/;
+
+/** An ISO 8601 `<time>` (UTC unless it says otherwise), or null. */
+function readTime(raw: string | undefined): number | null {
+  if (raw === undefined || raw.length > 40 || !ISO_TIME.test(raw)) return null;
+  let text = raw.trim();
+  // Without a zone GPX means UTC.
+  if (!/(Z|[+-]\d{2}:?\d{2})$/.test(text)) text += 'Z';
+  else text = text.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  const t = Date.parse(text);
+  return Number.isFinite(t) && t >= MIN_TIME_MS && t <= MAX_TIME_MS ? t : null;
+}
+
 function coord(raw: string | undefined): number | null {
   if (raw === undefined || !NUMBER.test(raw)) return null;
   const v = Number(raw);
@@ -195,9 +221,13 @@ function coord(raw: string | undefined): number | null {
 }
 
 /** Missing elevations: linear in distance between known neighbours, held flat at the ends. */
-function fillElevation(points: { lat: number; lon: number; ele: number | null }[]): RawPoint[] {
+function fillElevation(
+  points: { lat: number; lon: number; ele: number | null; timeMs?: number }[],
+): RawPoint[] {
+  const withTime = (p: { timeMs?: number }, q: RawPoint): RawPoint =>
+    p.timeMs !== undefined ? { ...q, timeMs: p.timeMs } : q;
   const known = points.findIndex((p) => p.ele !== null);
-  if (known === -1) return points.map((p) => ({ lat: p.lat, lon: p.lon, ele: 0 }));
+  if (known === -1) return points.map((p) => withTime(p, { lat: p.lat, lon: p.lon, ele: 0 }));
   const dist: number[] = [0];
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1]!;
@@ -209,7 +239,7 @@ function fillElevation(points: { lat: number; lon: number; ele: number | null }[
   for (let i = 0; i < points.length; i++) {
     const p = points[i]!;
     if (p.ele !== null) {
-      out.push({ lat: p.lat, lon: p.lon, ele: p.ele });
+      out.push(withTime(p, { lat: p.lat, lon: p.lon, ele: p.ele }));
       prev = i;
       continue;
     }
@@ -224,7 +254,7 @@ function fillElevation(points: { lat: number; lon: number; ele: number | null }[
       const span = dist[next]! - dist[prev]!;
       ele = span > 0 ? e0 + ((e1 - e0) * (dist[i]! - dist[prev]!)) / span : e0;
     }
-    out.push({ lat: p.lat, lon: p.lon, ele });
+    out.push(withTime(p, { lat: p.lat, lon: p.lon, ele }));
   }
   return out;
 }

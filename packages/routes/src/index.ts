@@ -140,4 +140,77 @@ export {
   cancellableSleep,
   fetchScenery,
   isRetryableStatus,
+  untilCancelled,
 } from './sceneryFetch';
+
+export type { RouteTimes } from './times';
+export {
+  MAX_ROUTE_TIMES,
+  decodeRouteTimes,
+  routeTimeAt,
+  routeTimesFrom,
+  routeTimesSpan,
+} from './times';
+
+export type {
+  BuildWindResult,
+  DecodeWindResult,
+  RiderWind,
+  WeatherLocation,
+  WeatherParseResult,
+  WeatherPlanResult,
+  WeatherSample,
+  WeatherSeries,
+  WeatherSummary,
+  WeatherWhen,
+  WindPoint,
+  WindProfile,
+} from './weather';
+export {
+  DEFAULT_WEATHER_ARCHIVE_URL,
+  DEFAULT_WEATHER_START,
+  ESTIMATED_SPEED_MPS,
+  MAX_RIDER_WIND_MPS,
+  MAX_WEATHER_BYTES,
+  MAX_WEATHER_SAMPLES,
+  RIDER_WIND_FACTOR_OPEN,
+  RIDER_WIND_FACTOR_SHELTERED,
+  SHELTER_NEAR_M,
+  WEATHER_ATTRIBUTION,
+  WEATHER_FORMAT,
+  WEATHER_GRID_DEG,
+  WEATHER_HOURLY,
+  WEATHER_LICENCE,
+  WEATHER_LOCATIONS_PER_REQUEST,
+  WEATHER_SPACING_M,
+  buildWindProfile,
+  compassWord,
+  conditionsText,
+  decodeWindProfile,
+  encodeWindProfile,
+  formatWeatherSpan,
+  isoDay,
+  parseWeatherJson,
+  planWeather,
+  riderWind,
+  riderWindFactor,
+  shelterAt,
+  summarizeWind,
+  wallClockMs,
+  weatherAt,
+  weatherDayLabel,
+  weatherLocations,
+  weatherQuery,
+  weatherSamples,
+  windAt,
+  windComponents,
+  windConditionsKey,
+} from './weather';
+
+export type {
+  FetchWeatherOptions,
+  FetchWeatherResult,
+  WeatherProgress,
+  WeatherTransport,
+} from './weatherFetch';
+export { fetchWeather } from './weatherFetch';

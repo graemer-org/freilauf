@@ -82,7 +82,7 @@ async function setup() {
     sessionHeader: false,
     scenery,
     fetch: async (url, init) => {
-      calls.push({ url, body: init.body, headers: init.headers });
+      calls.push({ url, body: init.body ?? '', headers: init.headers });
       return { status: 200, headers: { get: () => null }, text: async () => overpassAnswer() };
     },
   });

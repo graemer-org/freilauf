@@ -58,6 +58,7 @@ export class RideSession {
   #gear = 1;
   #gearCount = 1;
   #gradePercent = 0;
+  #headwindMps = 0;
   #power: Timed<number> | null = null;
   #cadence: Timed<number> | null = null;
   #heartRate: Timed<number> | null = null;
@@ -144,6 +145,19 @@ export class RideSession {
   }
 
   /**
+   * Head (+) / tail (−) wind along the road at the rider's height (m/s; route weather,
+   * docs/adr/0012-historical-wind.md). 0 = no wind (the default). Speed and distance follow
+   * it through the air resistance; power, heart rate and cadence are recorded as measured.
+   */
+  setHeadwind(headwindMps: number): void {
+    this.#headwindMps = Number.isFinite(headwindMps) ? headwindMps : 0;
+  }
+
+  get headwindMps(): number {
+    return this.#headwindMps;
+  }
+
+  /**
    * Gives every recorded sample a position: `positionAt(distance)` is asked for the ridden
    * distance at the moment the sample is taken (null = none). Used when riding a route.
    */
@@ -219,7 +233,15 @@ export class RideSession {
 
   #advance(now: number, dtS: number, powerW: number): void {
     const brake = this.#fresh(this.#brake, now, SENSOR_TIMEOUT_MS) ?? 0;
-    const step = stepBike(this.#speedMps, powerW, this.#gradePercent, this.#bike, dtS, brake);
+    const step = stepBike(
+      this.#speedMps,
+      powerW,
+      this.#gradePercent,
+      this.#bike,
+      dtS,
+      brake,
+      this.#headwindMps,
+    );
     this.#speedMps = step.speedMps;
     this.#distanceM += step.distanceM;
 

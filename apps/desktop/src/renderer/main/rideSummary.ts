@@ -49,6 +49,12 @@ export interface RideSummary {
    * before it; null when it did not ride the whole route in one go.
    */
   routeTime?: { timeS: number; previousS: number | null } | null;
+  /**
+   * Ridden with the historical wind of a day (docs/adr/0012-historical-wind.md): its label,
+   * "14 June 2025"; null/absent without wind. The route time above is then compared only
+   * with rides of the same wind.
+   */
+  windLabel?: string | null;
 }
 
 export interface SummarizeInput {
@@ -70,6 +76,8 @@ export interface SummarizeInput {
   ghost?: GhostResult | null;
   /** See RideSummary.routeTime. */
   routeTime?: { timeS: number; previousS: number | null } | null;
+  /** See RideSummary.windLabel. */
+  windLabel?: string | null;
   /** Age and sex for the heart-rate estimate (Settings.rider); absent = none. */
   rider?: { ageYears?: number | null; sex?: string | null; ftpW?: number | null } | null;
 }
@@ -140,5 +148,6 @@ export function summarizeRide(input: SummarizeInput): RideSummary {
     energy,
     ...(ride && input.ghost ? { ghost: input.ghost } : {}),
     ...(ride && input.routeTime ? { routeTime: input.routeTime } : {}),
+    ...(ride && input.windLabel ? { windLabel: input.windLabel } : {}),
   };
 }

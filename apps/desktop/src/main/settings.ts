@@ -26,6 +26,7 @@ import type {
   ShiftAction,
   StatId,
   WatchRelaySettings,
+  WeatherSettings,
 } from '../shared/contract';
 import { normalizeEpisodeOptions } from '@freilauf/workouts';
 import {
@@ -34,6 +35,7 @@ import {
   DEFAULT_SETTINGS,
   LEGACY_DEFAULT_SIGNALLING_URL,
   MAX_GHOST_CHOICES,
+  MAX_WIND_CHOICES,
   POWER_SMOOTHING_CHOICES,
 } from '../shared/contract';
 
@@ -371,6 +373,47 @@ function sanitizeScenery(
   };
 }
 
+/** The weather archive endpoint: same rules as the map server (https, or http on this computer). */
+export const isWeatherArchiveUrl = (raw: unknown): raw is string => isOverpassUrl(raw);
+
+/** Route ids as the routes use them (lower-case, digits, dashes). */
+const ROUTE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function sanitizeWeather(
+  raw: unknown,
+  fallback: WeatherSettings,
+  problems: Problems,
+): WeatherSettings {
+  if (raw === undefined)
+    return { archiveUrl: fallback.archiveUrl, rideWithWind: { ...fallback.rideWithWind } };
+  const root = obj(raw, 'weather', problems);
+  let archiveUrl = fallback.archiveUrl;
+  if (root.archiveUrl !== undefined) {
+    if (typeof root.archiveUrl === 'string' && root.archiveUrl.trim() === '')
+      archiveUrl = DEFAULT_SETTINGS.weather.archiveUrl;
+    else if (isWeatherArchiveUrl(root.archiveUrl)) archiveUrl = root.archiveUrl;
+    else problems.push('weather.archiveUrl: expected an https:// URL (or http://localhost)');
+  }
+  let rideWithWind: Record<string, boolean> = { ...fallback.rideWithWind };
+  if (root.rideWithWind !== undefined) {
+    if (!isPlainObject(root.rideWithWind))
+      problems.push('weather.rideWithWind: expected an object');
+    else {
+      rideWithWind = {};
+      for (const [route, on] of Object.entries(root.rideWithWind)) {
+        if (!ROUTE_ID.test(route) || typeof on !== 'boolean') {
+          problems.push(`weather.rideWithWind.${route.slice(0, 40)}: invalid`);
+        } else rideWithWind[route] = on;
+      }
+    }
+  }
+  const keys = Object.keys(rideWithWind);
+  if (keys.length > MAX_WIND_CHOICES) {
+    for (const k of keys.slice(0, keys.length - MAX_WIND_CHOICES)) delete rideWithWind[k];
+  }
+  return { archiveUrl, rideWithWind };
+}
+
 /** Advanced relay list: ws(s):// URLs only, de-duplicated, at most 16. */
 function sanitizeRelayUrls(raw: unknown, fallback: string[], problems: Problems): string[] {
   if (raw === undefined) return [...fallback];
@@ -608,6 +651,7 @@ export function sanitizeSettings(
     watchRelay: sanitizeWatchRelay(root.watchRelay, fallback.watchRelay, problems),
     ghost: sanitizeGhost(root.ghost, fallback.ghost ?? DEFAULT_SETTINGS.ghost, problems),
     scenery: sanitizeScenery(root.scenery, fallback.scenery ?? DEFAULT_SETTINGS.scenery, problems),
+    weather: sanitizeWeather(root.weather, fallback.weather ?? DEFAULT_SETTINGS.weather, problems),
     episode: sanitizeEpisode(root.episode, fallback.episode ?? DEFAULT_EPISODE, problems),
   };
 }

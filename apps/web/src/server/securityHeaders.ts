@@ -3,9 +3,10 @@
  * renderer's (apps/desktop/src/renderer/index.html): wss: is for group rides —
  * the public relay servers (any host: the relay list can be changed in
  * Settings) and an own signalling server on another host; ws: only for an own
- * server without TLS. https: is for loading route scenery from an Overpass server, which the
- * rider asks for per route (the endpoint can be changed in Settings, so any host; see
- * docs/adr/0011-osm-scenery.md). No third-party scripts, nothing else connects.
+ * server without TLS. https: is for loading route scenery from an Overpass server and the
+ * weather of a day from a historical weather archive, which the rider asks for per route (the
+ * endpoints can be changed in Settings, so any host; see docs/adr/0011-osm-scenery.md and
+ * docs/adr/0012-historical-wind.md). No third-party scripts, nothing else connects.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",

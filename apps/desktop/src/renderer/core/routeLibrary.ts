@@ -1,7 +1,8 @@
-import type { BuildStats, RouteTrack } from '@freilauf/routes';
+import type { BuildStats, RouteTimes, RouteTrack } from '@freilauf/routes';
 import {
   builtinRoutes,
   decodeRoute,
+  decodeRouteTimes,
   encodeRoute,
   normalizeRouteStart,
   outline,
@@ -34,7 +35,14 @@ export interface RouteEntry {
 }
 
 export type RouteImportResult =
-  | { ok: true; entry: RouteEntry; warnings: string[]; stats?: BuildStats }
+  | {
+      ok: true;
+      entry: RouteEntry;
+      warnings: string[];
+      stats?: BuildStats;
+      /** When the recorded ride passed each place (a GPX with times); absent otherwise. */
+      times?: RouteTimes;
+    }
   | { ok: false; errors: string[] };
 
 /** Index of imported routes (JSON array of ids); each route under `${PREFIX}<id>`. */
@@ -52,6 +60,11 @@ export const ROUTE_STORAGE_BUDGET_CHARS = 2_000_000;
 export const ROUTE_STARTS_KEY = 'freilauf.routeStarts.v1';
 /** Start points remembered at most (oldest dropped first). */
 export const MAX_ROUTE_STARTS = 200;
+/**
+ * Recorded passage times of a GPX with `<time>` (≤ 200 numbers, ~1 k characters), per route,
+ * for the weather of that day (docs/adr/0012-historical-wind.md).
+ */
+export const ROUTE_TIMES_KEY_PREFIX = 'freilauf.routeTimes.v1.';
 
 const ENTRY_POINTS = 200;
 
@@ -84,6 +97,8 @@ export class RouteLibrary {
   #imported: Stored[] = [];
   /** Start points by route id (metres > 0), in insertion order. */
   #starts = new Map<string, number>();
+  /** Recorded passage times by route id (null = none), read from storage on first use. */
+  readonly #times = new Map<string, RouteTimes | null>();
   /** Set when the last write to storage failed (quota or blocked). */
   saveFailed = false;
 
@@ -168,12 +183,34 @@ export class RouteLibrary {
     if (!prepared.ok) return prepared;
     const added = this.add(prepared.track);
     if (!added.ok) return added;
+    const times = prepared.times;
+    if (times && added.entry.source === 'imported') {
+      this.#times.set(added.entry.id, times);
+      this.#write(ROUTE_TIMES_KEY_PREFIX + added.entry.id, JSON.stringify(times));
+    }
     return {
       ok: true,
       entry: added.entry,
       warnings: [...parsed.warnings, ...prepared.warnings, ...added.warnings],
       stats: prepared.stats,
+      ...(times ? { times } : {}),
     };
+  }
+
+  /** The recorded passage times of an imported route (from its GPX), or null. */
+  timesOf(id: string): RouteTimes | null {
+    if (!this.#imported.some((i) => i.track.id === id)) return null;
+    const known = this.#times.get(id);
+    if (known !== undefined) return known;
+    let times: RouteTimes | null = null;
+    try {
+      const text = this.#storage?.getItem(ROUTE_TIMES_KEY_PREFIX + id) ?? null;
+      times = text ? decodeRouteTimes(JSON.parse(text)) : null;
+    } catch {
+      times = null;
+    }
+    this.#times.set(id, times);
+    return times;
   }
 
   /** Adds (or replaces, by id) an imported route. Never shadows a built-in. */
@@ -221,11 +258,14 @@ export class RouteLibrary {
     if (this.#starts.delete(id)) {
       this.#write(ROUTE_STARTS_KEY, JSON.stringify(Object.fromEntries(this.#starts)));
     }
-    try {
-      if (this.#storage?.removeItem) this.#storage.removeItem(ROUTE_KEY_PREFIX + id);
-      else this.#storage?.setItem(ROUTE_KEY_PREFIX + id, '');
-    } catch {
-      // the index no longer lists it; a leftover value is harmless
+    this.#times.delete(id);
+    for (const key of [ROUTE_KEY_PREFIX + id, ROUTE_TIMES_KEY_PREFIX + id]) {
+      try {
+        if (this.#storage?.removeItem) this.#storage.removeItem(key);
+        else this.#storage?.setItem(key, '');
+      } catch {
+        // the index no longer lists it; a leftover value is harmless
+      }
     }
     return true;
   }

@@ -31,6 +31,7 @@ import type { RideRepository } from './rideRepository';
 import {
   type BrowserFetch,
   browserOverpass,
+  browserWeather,
   MemorySceneryStore,
   type SceneryRecordStore,
 } from './sceneryStore';
@@ -61,7 +62,7 @@ export interface BrowserApiDeps {
   sessionHeader?: boolean;
   /** Route scenery files (IndexedDB in the page; memory by default). */
   scenery?: SceneryRecordStore;
-  /** fetch for the Overpass request (default: the page's fetch). */
+  /** fetch for the Overpass and weather requests (default: the page's fetch). */
   fetch?: BrowserFetch;
 }
 
@@ -162,6 +163,10 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
     deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
     () => deps.settings.get().scenery.overpassUrl,
   );
+  const weather = browserWeather(
+    deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    () => deps.settings.get().weather.archiveUrl,
+  );
 
   const api: BrowserApi = {
     simMode: deps.simMode,
@@ -228,6 +233,10 @@ export function createBrowserApi(deps: BrowserApiDeps): BrowserApi {
       save: (routeId, text) => sceneryStore.put(routeId, text),
       remove: (routeId) => sceneryStore.delete(routeId),
       list: () => sceneryStore.list(),
+    },
+    weather: {
+      archive: (requestId, query) => weather.query(requestId, query),
+      cancelArchive: (requestId) => weather.cancel(requestId),
     },
 
     watchRelay: {
